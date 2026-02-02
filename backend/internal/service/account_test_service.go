@@ -13,7 +13,9 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
@@ -380,6 +382,11 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	// Extract and save Codex usage snapshot from response headers (for OAuth accounts)
+	if isOAuth {
+		s.updateCodexUsageFromHeaders(ctx, account.ID, resp.Header)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -844,4 +851,184 @@ func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) er
 	log.Printf("Account test error: %s", errorMsg)
 	s.sendEvent(c, TestEvent{Type: "error", Error: errorMsg})
 	return fmt.Errorf("%s", errorMsg)
+}
+
+// updateCodexUsageFromHeaders extracts Codex usage limits from response headers and saves to account
+func (s *AccountTestService) updateCodexUsageFromHeaders(ctx context.Context, accountID int64, headers http.Header) {
+	updates := make(map[string]any)
+	hasData := false
+
+	// Helper to parse float64 from header
+	parseFloat := func(key string) *float64 {
+		if v := headers.Get(key); v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				return &f
+			}
+		}
+		return nil
+	}
+
+	// Helper to parse int from header
+	parseInt := func(key string) *int {
+		if v := headers.Get(key); v != "" {
+			if i, err := strconv.Atoi(v); err == nil {
+				return &i
+			}
+		}
+		return nil
+	}
+
+	// Primary limits
+	var primaryUsedPercent *float64
+	var primaryResetAfterSeconds, primaryWindowMinutes *int
+	if v := parseFloat("x-codex-primary-used-percent"); v != nil {
+		primaryUsedPercent = v
+		updates["codex_primary_used_percent"] = *v
+		hasData = true
+	}
+	if v := parseInt("x-codex-primary-reset-after-seconds"); v != nil {
+		primaryResetAfterSeconds = v
+		updates["codex_primary_reset_after_seconds"] = *v
+		hasData = true
+	}
+	if v := parseInt("x-codex-primary-window-minutes"); v != nil {
+		primaryWindowMinutes = v
+		updates["codex_primary_window_minutes"] = *v
+		hasData = true
+	}
+
+	// Secondary limits
+	var secondaryUsedPercent *float64
+	var secondaryResetAfterSeconds, secondaryWindowMinutes *int
+	if v := parseFloat("x-codex-secondary-used-percent"); v != nil {
+		secondaryUsedPercent = v
+		updates["codex_secondary_used_percent"] = *v
+		hasData = true
+	}
+	if v := parseInt("x-codex-secondary-reset-after-seconds"); v != nil {
+		secondaryResetAfterSeconds = v
+		updates["codex_secondary_reset_after_seconds"] = *v
+		hasData = true
+	}
+	if v := parseInt("x-codex-secondary-window-minutes"); v != nil {
+		secondaryWindowMinutes = v
+		updates["codex_secondary_window_minutes"] = *v
+		hasData = true
+	}
+
+	// Overflow ratio
+	if v := parseFloat("x-codex-primary-over-secondary-limit-percent"); v != nil {
+		updates["codex_primary_over_secondary_percent"] = *v
+		hasData = true
+	}
+
+	if !hasData {
+		return
+	}
+
+	updates["codex_usage_updated_at"] = time.Now().Format(time.RFC3339)
+
+	// Normalize to canonical 5h/7d fields based on window_minutes
+	var primaryWindowMins, secondaryWindowMins int
+	var hasPrimaryWindow, hasSecondaryWindow bool
+
+	if primaryWindowMinutes != nil {
+		primaryWindowMins = *primaryWindowMinutes
+		hasPrimaryWindow = true
+	}
+	if secondaryWindowMinutes != nil {
+		secondaryWindowMins = *secondaryWindowMinutes
+		hasSecondaryWindow = true
+	}
+
+	// Determine which is 5h and which is 7d
+	var use5hFromPrimary, use7dFromPrimary bool
+	var use5hFromSecondary, use7dFromSecondary bool
+
+	if hasPrimaryWindow && hasSecondaryWindow {
+		if primaryWindowMins < secondaryWindowMins {
+			use5hFromPrimary = true
+			use7dFromSecondary = true
+		} else {
+			use5hFromSecondary = true
+			use7dFromPrimary = true
+		}
+	} else if hasPrimaryWindow {
+		if primaryWindowMins <= 360 {
+			use5hFromPrimary = true
+		} else {
+			use7dFromPrimary = true
+		}
+	} else if hasSecondaryWindow {
+		if secondaryWindowMins <= 360 {
+			use5hFromSecondary = true
+		} else {
+			use7dFromSecondary = true
+		}
+	} else {
+		// Fallback assumption: primary=7d, secondary=5h
+		if secondaryUsedPercent != nil || secondaryResetAfterSeconds != nil || secondaryWindowMinutes != nil {
+			use5hFromSecondary = true
+		}
+		if primaryUsedPercent != nil || primaryResetAfterSeconds != nil || primaryWindowMinutes != nil {
+			use7dFromPrimary = true
+		}
+	}
+
+	// Write canonical 5h fields
+	if use5hFromPrimary {
+		if primaryUsedPercent != nil {
+			updates["codex_5h_used_percent"] = *primaryUsedPercent
+		}
+		if primaryResetAfterSeconds != nil {
+			updates["codex_5h_reset_after_seconds"] = *primaryResetAfterSeconds
+		}
+		if primaryWindowMinutes != nil {
+			updates["codex_5h_window_minutes"] = *primaryWindowMinutes
+		}
+	} else if use5hFromSecondary {
+		if secondaryUsedPercent != nil {
+			updates["codex_5h_used_percent"] = *secondaryUsedPercent
+		}
+		if secondaryResetAfterSeconds != nil {
+			updates["codex_5h_reset_after_seconds"] = *secondaryResetAfterSeconds
+		}
+		if secondaryWindowMinutes != nil {
+			updates["codex_5h_window_minutes"] = *secondaryWindowMinutes
+		}
+	}
+
+	// Write canonical 7d fields
+	if use7dFromPrimary {
+		if primaryUsedPercent != nil {
+			updates["codex_7d_used_percent"] = *primaryUsedPercent
+		}
+		if primaryResetAfterSeconds != nil {
+			updates["codex_7d_reset_after_seconds"] = *primaryResetAfterSeconds
+		}
+		if primaryWindowMinutes != nil {
+			updates["codex_7d_window_minutes"] = *primaryWindowMinutes
+		}
+	} else if use7dFromSecondary {
+		if secondaryUsedPercent != nil {
+			updates["codex_7d_used_percent"] = *secondaryUsedPercent
+		}
+		if secondaryResetAfterSeconds != nil {
+			updates["codex_7d_reset_after_seconds"] = *secondaryResetAfterSeconds
+		}
+		if secondaryWindowMinutes != nil {
+			updates["codex_7d_window_minutes"] = *secondaryWindowMinutes
+		}
+	}
+
+	// Update account's Extra field asynchronously
+	go func() {
+		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.accountRepo.UpdateExtra(updateCtx, accountID, updates); err != nil {
+			log.Printf("[AccountTestService] Failed to update Codex usage for account %d: %v", accountID, err)
+		} else {
+			log.Printf("[AccountTestService] Updated Codex usage for account %d", accountID)
+		}
+	}()
 }
