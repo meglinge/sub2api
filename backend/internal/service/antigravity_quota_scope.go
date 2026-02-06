@@ -1,6 +1,7 @@
 package service
 
 import (
+	"slices"
 	"strings"
 	"time"
 )
@@ -15,6 +16,21 @@ const (
 	AntigravityQuotaScopeGeminiText  AntigravityQuotaScope = "gemini_text"
 	AntigravityQuotaScopeGeminiImage AntigravityQuotaScope = "gemini_image"
 )
+
+// IsScopeSupported 检查给定的 scope 是否在分组支持的 scope 列表中
+func IsScopeSupported(supportedScopes []string, scope AntigravityQuotaScope) bool {
+	if len(supportedScopes) == 0 {
+		// 未配置时默认全部支持
+		return true
+	}
+	supported := slices.Contains(supportedScopes, string(scope))
+	return supported
+}
+
+// ResolveAntigravityQuotaScope 根据模型名称解析配额域（导出版本）
+func ResolveAntigravityQuotaScope(requestedModel string) (AntigravityQuotaScope, bool) {
+	return resolveAntigravityQuotaScope(requestedModel)
+}
 
 // resolveAntigravityQuotaScope 根据模型名称解析配额域
 func resolveAntigravityQuotaScope(requestedModel string) (AntigravityQuotaScope, bool) {
@@ -88,4 +104,31 @@ func (a *Account) antigravityQuotaScopeResetAt(scope AntigravityQuotaScope) *tim
 		return nil
 	}
 	return &resetAt
+}
+
+var antigravityAllScopes = []AntigravityQuotaScope{
+	AntigravityQuotaScopeClaude,
+	AntigravityQuotaScopeGeminiText,
+	AntigravityQuotaScopeGeminiImage,
+}
+
+func (a *Account) GetAntigravityScopeRateLimits() map[string]int64 {
+	if a == nil || a.Platform != PlatformAntigravity {
+		return nil
+	}
+	now := time.Now()
+	result := make(map[string]int64)
+	for _, scope := range antigravityAllScopes {
+		resetAt := a.antigravityQuotaScopeResetAt(scope)
+		if resetAt != nil && now.Before(*resetAt) {
+			remainingSec := int64(time.Until(*resetAt).Seconds())
+			if remainingSec > 0 {
+				result[string(scope)] = remainingSec
+			}
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }

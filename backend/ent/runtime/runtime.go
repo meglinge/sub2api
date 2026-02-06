@@ -10,6 +10,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/announcement"
 	"github.com/Wei-Shaw/sub2api/ent/announcementread"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
+	"github.com/Wei-Shaw/sub2api/ent/errorpassthroughrule"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
@@ -91,6 +92,14 @@ func init() {
 	apikey.DefaultStatus = apikeyDescStatus.Default.(string)
 	// apikey.StatusValidator is a validator for the "status" field. It is called by the builders before save.
 	apikey.StatusValidator = apikeyDescStatus.Validators[0].(func(string) error)
+	// apikeyDescQuota is the schema descriptor for quota field.
+	apikeyDescQuota := apikeyFields[7].Descriptor()
+	// apikey.DefaultQuota holds the default value on creation for the quota field.
+	apikey.DefaultQuota = apikeyDescQuota.Default.(float64)
+	// apikeyDescQuotaUsed is the schema descriptor for quota_used field.
+	apikeyDescQuotaUsed := apikeyFields[8].Descriptor()
+	// apikey.DefaultQuotaUsed holds the default value on creation for the quota_used field.
+	apikey.DefaultQuotaUsed = apikeyDescQuotaUsed.Default.(float64)
 	accountMixin := schema.Account{}.Mixin()
 	accountMixinHooks1 := accountMixin[1].Hooks()
 	account.Hooks[0] = accountMixinHooks1[0]
@@ -262,6 +271,61 @@ func init() {
 	announcementreadDescCreatedAt := announcementreadFields[3].Descriptor()
 	// announcementread.DefaultCreatedAt holds the default value on creation for the created_at field.
 	announcementread.DefaultCreatedAt = announcementreadDescCreatedAt.Default.(func() time.Time)
+	errorpassthroughruleMixin := schema.ErrorPassthroughRule{}.Mixin()
+	errorpassthroughruleMixinFields0 := errorpassthroughruleMixin[0].Fields()
+	_ = errorpassthroughruleMixinFields0
+	errorpassthroughruleFields := schema.ErrorPassthroughRule{}.Fields()
+	_ = errorpassthroughruleFields
+	// errorpassthroughruleDescCreatedAt is the schema descriptor for created_at field.
+	errorpassthroughruleDescCreatedAt := errorpassthroughruleMixinFields0[0].Descriptor()
+	// errorpassthroughrule.DefaultCreatedAt holds the default value on creation for the created_at field.
+	errorpassthroughrule.DefaultCreatedAt = errorpassthroughruleDescCreatedAt.Default.(func() time.Time)
+	// errorpassthroughruleDescUpdatedAt is the schema descriptor for updated_at field.
+	errorpassthroughruleDescUpdatedAt := errorpassthroughruleMixinFields0[1].Descriptor()
+	// errorpassthroughrule.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	errorpassthroughrule.DefaultUpdatedAt = errorpassthroughruleDescUpdatedAt.Default.(func() time.Time)
+	// errorpassthroughrule.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	errorpassthroughrule.UpdateDefaultUpdatedAt = errorpassthroughruleDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// errorpassthroughruleDescName is the schema descriptor for name field.
+	errorpassthroughruleDescName := errorpassthroughruleFields[0].Descriptor()
+	// errorpassthroughrule.NameValidator is a validator for the "name" field. It is called by the builders before save.
+	errorpassthroughrule.NameValidator = func() func(string) error {
+		validators := errorpassthroughruleDescName.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(name string) error {
+			for _, fn := range fns {
+				if err := fn(name); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// errorpassthroughruleDescEnabled is the schema descriptor for enabled field.
+	errorpassthroughruleDescEnabled := errorpassthroughruleFields[1].Descriptor()
+	// errorpassthroughrule.DefaultEnabled holds the default value on creation for the enabled field.
+	errorpassthroughrule.DefaultEnabled = errorpassthroughruleDescEnabled.Default.(bool)
+	// errorpassthroughruleDescPriority is the schema descriptor for priority field.
+	errorpassthroughruleDescPriority := errorpassthroughruleFields[2].Descriptor()
+	// errorpassthroughrule.DefaultPriority holds the default value on creation for the priority field.
+	errorpassthroughrule.DefaultPriority = errorpassthroughruleDescPriority.Default.(int)
+	// errorpassthroughruleDescMatchMode is the schema descriptor for match_mode field.
+	errorpassthroughruleDescMatchMode := errorpassthroughruleFields[5].Descriptor()
+	// errorpassthroughrule.DefaultMatchMode holds the default value on creation for the match_mode field.
+	errorpassthroughrule.DefaultMatchMode = errorpassthroughruleDescMatchMode.Default.(string)
+	// errorpassthroughrule.MatchModeValidator is a validator for the "match_mode" field. It is called by the builders before save.
+	errorpassthroughrule.MatchModeValidator = errorpassthroughruleDescMatchMode.Validators[0].(func(string) error)
+	// errorpassthroughruleDescPassthroughCode is the schema descriptor for passthrough_code field.
+	errorpassthroughruleDescPassthroughCode := errorpassthroughruleFields[7].Descriptor()
+	// errorpassthroughrule.DefaultPassthroughCode holds the default value on creation for the passthrough_code field.
+	errorpassthroughrule.DefaultPassthroughCode = errorpassthroughruleDescPassthroughCode.Default.(bool)
+	// errorpassthroughruleDescPassthroughBody is the schema descriptor for passthrough_body field.
+	errorpassthroughruleDescPassthroughBody := errorpassthroughruleFields[9].Descriptor()
+	// errorpassthroughrule.DefaultPassthroughBody holds the default value on creation for the passthrough_body field.
+	errorpassthroughrule.DefaultPassthroughBody = errorpassthroughruleDescPassthroughBody.Default.(bool)
 	groupMixin := schema.Group{}.Mixin()
 	groupMixinHooks1 := groupMixin[1].Hooks()
 	group.Hooks[0] = groupMixinHooks1[0]
@@ -334,9 +398,17 @@ func init() {
 	// group.DefaultClaudeCodeOnly holds the default value on creation for the claude_code_only field.
 	group.DefaultClaudeCodeOnly = groupDescClaudeCodeOnly.Default.(bool)
 	// groupDescModelRoutingEnabled is the schema descriptor for model_routing_enabled field.
-	groupDescModelRoutingEnabled := groupFields[17].Descriptor()
+	groupDescModelRoutingEnabled := groupFields[18].Descriptor()
 	// group.DefaultModelRoutingEnabled holds the default value on creation for the model_routing_enabled field.
 	group.DefaultModelRoutingEnabled = groupDescModelRoutingEnabled.Default.(bool)
+	// groupDescMcpXMLInject is the schema descriptor for mcp_xml_inject field.
+	groupDescMcpXMLInject := groupFields[19].Descriptor()
+	// group.DefaultMcpXMLInject holds the default value on creation for the mcp_xml_inject field.
+	group.DefaultMcpXMLInject = groupDescMcpXMLInject.Default.(bool)
+	// groupDescSupportedModelScopes is the schema descriptor for supported_model_scopes field.
+	groupDescSupportedModelScopes := groupFields[20].Descriptor()
+	// group.DefaultSupportedModelScopes holds the default value on creation for the supported_model_scopes field.
+	group.DefaultSupportedModelScopes = groupDescSupportedModelScopes.Default.([]string)
 	promocodeFields := schema.PromoCode{}.Fields()
 	_ = promocodeFields
 	// promocodeDescCode is the schema descriptor for code field.

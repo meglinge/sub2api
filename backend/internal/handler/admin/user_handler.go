@@ -45,6 +45,9 @@ type UpdateUserRequest struct {
 	Concurrency   *int     `json:"concurrency"`
 	Status        string   `json:"status" binding:"omitempty,oneof=active disabled"`
 	AllowedGroups *[]int64 `json:"allowed_groups"`
+	// GroupRates 用户专属分组倍率配置
+	// map[groupID]*rate，nil 表示删除该分组的专属倍率
+	GroupRates map[int64]*float64 `json:"group_rates"`
 }
 
 // UpdateBalanceRequest represents balance update request
@@ -183,6 +186,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 		Concurrency:   req.Concurrency,
 		Status:        req.Status,
 		AllowedGroups: req.AllowedGroups,
+		GroupRates:    req.GroupRates,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -276,4 +280,45 @@ func (h *UserHandler) GetUserUsage(c *gin.Context) {
 	}
 
 	response.Success(c, stats)
+}
+
+// GetBalanceHistory handles getting user's balance/concurrency change history
+// GET /api/v1/admin/users/:id/balance-history
+// Query params:
+//   - type: filter by record type (balance, admin_balance, concurrency, admin_concurrency, subscription)
+func (h *UserHandler) GetBalanceHistory(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid user ID")
+		return
+	}
+
+	page, pageSize := response.ParsePagination(c)
+	codeType := c.Query("type")
+
+	codes, total, totalRecharged, err := h.adminService.GetUserBalanceHistory(c.Request.Context(), userID, page, pageSize, codeType)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	// Convert to admin DTO (includes notes field for admin visibility)
+	out := make([]dto.AdminRedeemCode, 0, len(codes))
+	for i := range codes {
+		out = append(out, *dto.RedeemCodeFromServiceAdmin(&codes[i]))
+	}
+
+	// Custom response with total_recharged alongside pagination
+	pages := int((total + int64(pageSize) - 1) / int64(pageSize))
+	if pages < 1 {
+		pages = 1
+	}
+	response.Success(c, gin.H{
+		"items":           out,
+		"total":           total,
+		"page":            page,
+		"page_size":       pageSize,
+		"pages":           pages,
+		"total_recharged": totalRecharged,
+	})
 }

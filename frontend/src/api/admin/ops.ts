@@ -136,6 +136,7 @@ export interface OpsThroughputTrendPoint {
   bucket_start: string
   request_count: number
   token_consumed: number
+  switch_count?: number
   qps: number
   tps: number
 }
@@ -284,6 +285,7 @@ export interface OpsSystemMetricsSnapshot {
 
   goroutine_count?: number | null
   concurrency_queue_depth?: number | null
+  account_switch_count?: number | null
 }
 
 export interface OpsJobHeartbeat {
@@ -353,6 +355,7 @@ export interface PlatformAvailability {
   total_accounts: number
   available_count: number
   rate_limit_count: number
+  scope_rate_limit_count?: Record<string, number>
   error_count: number
 }
 
@@ -363,6 +366,7 @@ export interface GroupAvailability {
   total_accounts: number
   available_count: number
   rate_limit_count: number
+  scope_rate_limit_count?: Record<string, number>
   error_count: number
 }
 
@@ -377,6 +381,7 @@ export interface AccountAvailability {
   is_rate_limited: boolean
   rate_limit_reset_at?: string
   rate_limit_remaining_sec?: number
+  scope_rate_limits?: Record<string, number>
   is_overloaded: boolean
   overload_until?: string
   overload_remaining_sec?: number
@@ -776,6 +781,7 @@ export interface OpsAdvancedSettings {
   ignore_count_tokens_errors: boolean
   ignore_context_canceled: boolean
   ignore_no_available_accounts: boolean
+  ignore_invalid_api_key_errors: boolean
   auto_refresh_enabled: boolean
   auto_refresh_interval_seconds: number
 }

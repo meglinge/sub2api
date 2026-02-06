@@ -50,12 +50,17 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 		SetDefaultValidityDays(groupIn.DefaultValidityDays).
 		SetClaudeCodeOnly(groupIn.ClaudeCodeOnly).
 		SetNillableFallbackGroupID(groupIn.FallbackGroupID).
-		SetModelRoutingEnabled(groupIn.ModelRoutingEnabled)
+		SetNillableFallbackGroupIDOnInvalidRequest(groupIn.FallbackGroupIDOnInvalidRequest).
+		SetModelRoutingEnabled(groupIn.ModelRoutingEnabled).
+		SetMcpXMLInject(groupIn.MCPXMLInject)
 
 	// 设置模型路由配置
 	if groupIn.ModelRouting != nil {
 		builder = builder.SetModelRouting(groupIn.ModelRouting)
 	}
+
+	// 设置支持的模型系列（始终设置，空数组表示不限制）
+	builder = builder.SetSupportedModelScopes(groupIn.SupportedModelScopes)
 
 	created, err := builder.Save(ctx)
 	if err == nil {
@@ -87,7 +92,6 @@ func (r *groupRepository) GetByIDLite(ctx context.Context, id int64) (*service.G
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrGroupNotFound, nil)
 	}
-
 	return groupEntityToService(m), nil
 }
 
@@ -108,13 +112,20 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetNillableImagePrice4k(groupIn.ImagePrice4K).
 		SetDefaultValidityDays(groupIn.DefaultValidityDays).
 		SetClaudeCodeOnly(groupIn.ClaudeCodeOnly).
-		SetModelRoutingEnabled(groupIn.ModelRoutingEnabled)
+		SetModelRoutingEnabled(groupIn.ModelRoutingEnabled).
+		SetMcpXMLInject(groupIn.MCPXMLInject)
 
 	// 处理 FallbackGroupID：nil 时清除，否则设置
 	if groupIn.FallbackGroupID != nil {
 		builder = builder.SetFallbackGroupID(*groupIn.FallbackGroupID)
 	} else {
 		builder = builder.ClearFallbackGroupID()
+	}
+	// 处理 FallbackGroupIDOnInvalidRequest：nil 时清除，否则设置
+	if groupIn.FallbackGroupIDOnInvalidRequest != nil {
+		builder = builder.SetFallbackGroupIDOnInvalidRequest(*groupIn.FallbackGroupIDOnInvalidRequest)
+	} else {
+		builder = builder.ClearFallbackGroupIDOnInvalidRequest()
 	}
 
 	// 处理 ModelRouting：nil 时清除，否则设置
@@ -123,6 +134,9 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 	} else {
 		builder = builder.ClearModelRouting()
 	}
+
+	// 处理 SupportedModelScopes（始终设置，空数组表示不限制）
+	builder = builder.SetSupportedModelScopes(groupIn.SupportedModelScopes)
 
 	updated, err := builder.Save(ctx)
 	if err != nil {
@@ -424,4 +438,62 @@ func (r *groupRepository) loadAccountCounts(ctx context.Context, groupIDs []int6
 	}
 
 	return counts, nil
+}
+
+// GetAccountIDsByGroupIDs 获取多个分组的所有账号 ID（去重）
+func (r *groupRepository) GetAccountIDsByGroupIDs(ctx context.Context, groupIDs []int64) ([]int64, error) {
+	if len(groupIDs) == 0 {
+		return nil, nil
+	}
+
+	rows, err := r.sql.QueryContext(
+		ctx,
+		"SELECT DISTINCT account_id FROM account_groups WHERE group_id = ANY($1) ORDER BY account_id",
+		pq.Array(groupIDs),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var accountIDs []int64
+	for rows.Next() {
+		var accountID int64
+		if err := rows.Scan(&accountID); err != nil {
+			return nil, err
+		}
+		accountIDs = append(accountIDs, accountID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return accountIDs, nil
+}
+
+// BindAccountsToGroup 将多个账号绑定到指定分组（批量插入，忽略已存在的绑定）
+func (r *groupRepository) BindAccountsToGroup(ctx context.Context, groupID int64, accountIDs []int64) error {
+	if len(accountIDs) == 0 {
+		return nil
+	}
+
+	// 使用 INSERT ... ON CONFLICT DO NOTHING 忽略已存在的绑定
+	_, err := r.sql.ExecContext(
+		ctx,
+		`INSERT INTO account_groups (account_id, group_id, priority, created_at)
+		 SELECT unnest($1::bigint[]), $2, 50, NOW()
+		 ON CONFLICT (account_id, group_id) DO NOTHING`,
+		pq.Array(accountIDs),
+		groupID,
+	)
+	if err != nil {
+		return err
+	}
+
+	// 发送调度器事件
+	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupID, nil); err != nil {
+		log.Printf("[SchedulerOutbox] enqueue bind accounts to group failed: group=%d err=%v", groupID, err)
+	}
+
+	return nil
 }
