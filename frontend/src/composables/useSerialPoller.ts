@@ -10,7 +10,11 @@
 
 import { ref, computed, onScopeDispose, unref, type Ref, type ComputedRef } from 'vue'
 import axios from 'axios'
-import type { ApiClientError } from '@/api/client'
+
+interface ApiClientError {
+  status?: number
+  retryAfter?: number
+}
 
 export type SerialPollerConcurrency = 'abortPrevious' | 'ignoreIfRunning'
 
