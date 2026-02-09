@@ -728,6 +728,18 @@ func (s *PricingService) GetStatus() map[string]any {
 	}
 }
 
+// ListAllPricing 返回所有价格数据（用于管理后台展示）
+func (s *PricingService) ListAllPricing() map[string]*LiteLLMModelPricing {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string]*LiteLLMModelPricing, len(s.pricingData))
+	for k, v := range s.pricingData {
+		result[k] = v
+	}
+	return result
+}
+
 // ForceUpdate 强制更新
 func (s *PricingService) ForceUpdate() error {
 	return s.downloadPricingData()

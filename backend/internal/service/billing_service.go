@@ -366,6 +366,52 @@ func (s *BillingService) ForceUpdatePricing() error {
 	return fmt.Errorf("pricing service not initialized")
 }
 
+// GetAllPricing 获取所有价格数据（用于管理后台展示）
+func (s *BillingService) GetAllPricing() map[string]*ModelPricingInfo {
+	result := make(map[string]*ModelPricingInfo)
+
+	if s.pricingService != nil {
+		allPricing := s.pricingService.ListAllPricing()
+		for model, pricing := range allPricing {
+			result[model] = &ModelPricingInfo{
+				InputCostPerToken:           pricing.InputCostPerToken,
+				OutputCostPerToken:          pricing.OutputCostPerToken,
+				CacheCreationInputTokenCost: pricing.CacheCreationInputTokenCost,
+				CacheReadInputTokenCost:     pricing.CacheReadInputTokenCost,
+				Provider:                    pricing.LiteLLMProvider,
+				Mode:                        pricing.Mode,
+				SupportsPromptCaching:       pricing.SupportsPromptCaching,
+				OutputCostPerImage:          pricing.OutputCostPerImage,
+			}
+		}
+	}
+
+	return result
+}
+
+// ModelPricingInfo 价格信息（用于API返回）
+type ModelPricingInfo struct {
+	InputCostPerToken           float64 `json:"input_cost_per_token"`
+	OutputCostPerToken          float64 `json:"output_cost_per_token"`
+	CacheCreationInputTokenCost float64 `json:"cache_creation_input_token_cost,omitempty"`
+	CacheReadInputTokenCost     float64 `json:"cache_read_input_token_cost,omitempty"`
+	Provider                    string  `json:"provider"`
+	Mode                        string  `json:"mode"`
+	SupportsPromptCaching       bool    `json:"supports_prompt_caching"`
+	OutputCostPerImage          float64 `json:"output_cost_per_image,omitempty"`
+}
+
+// GetPricingConfig 获取价格配置
+func (s *BillingService) GetPricingConfig() map[string]any {
+	return map[string]any{
+		"remote_url":                  s.cfg.Pricing.RemoteURL,
+		"hash_url":                    s.cfg.Pricing.HashURL,
+		"data_dir":                    s.cfg.Pricing.DataDir,
+		"update_interval_hours":       s.cfg.Pricing.UpdateIntervalHours,
+		"hash_check_interval_minutes": s.cfg.Pricing.HashCheckIntervalMinutes,
+	}
+}
+
 // ImagePriceConfig 图片计费配置
 type ImagePriceConfig struct {
 	Price1K *float64 // 1K 尺寸价格（nil 表示使用默认值）

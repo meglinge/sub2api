@@ -338,6 +338,19 @@ const routes: RouteRecordRaw[] = [
     }
   },
 
+  {
+    path: '/admin/pricing',
+    name: 'AdminPricing',
+    component: () => import('@/views/admin/PricingView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Model Pricing',
+      titleKey: 'admin.pricing.title',
+      descriptionKey: 'admin.pricing.description'
+    }
+  },
+
   // ==================== 404 Not Found ====================
   {
     path: '/:pathMatch(.*)*',

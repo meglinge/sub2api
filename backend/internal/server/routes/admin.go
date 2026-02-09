@@ -70,6 +70,9 @@ func RegisterAdminRoutes(
 
 		// 错误透传规则管理
 		registerErrorPassthroughRoutes(admin, h)
+
+		// 价格管理
+		registerPricingRoutes(admin, h)
 	}
 }
 
@@ -397,6 +400,16 @@ func registerUserAttributeRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		attrs.PUT("/reorder", h.Admin.UserAttribute.ReorderDefinitions)
 		attrs.PUT("/:id", h.Admin.UserAttribute.UpdateDefinition)
 		attrs.DELETE("/:id", h.Admin.UserAttribute.DeleteDefinition)
+	}
+}
+
+func registerPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	pricing := admin.Group("/pricing")
+	{
+		pricing.GET("", h.Admin.Pricing.ListPricing)
+		pricing.GET("/status", h.Admin.Pricing.GetStatus)
+		pricing.POST("/update", h.Admin.Pricing.ForceUpdate)
+		pricing.GET("/lookup", h.Admin.Pricing.LookupModel)
 	}
 }
 
