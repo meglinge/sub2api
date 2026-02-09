@@ -386,6 +386,21 @@ func (s *BillingService) GetAllPricing() map[string]*ModelPricingInfo {
 		}
 	}
 
+	// 如果动态数据为空，补充硬编码回退价格
+	if len(result) == 0 {
+		for model, pricing := range s.fallbackPrices {
+			result[model] = &ModelPricingInfo{
+				InputCostPerToken:           pricing.InputPricePerToken,
+				OutputCostPerToken:          pricing.OutputPricePerToken,
+				CacheCreationInputTokenCost: pricing.CacheCreationPricePerToken,
+				CacheReadInputTokenCost:     pricing.CacheReadPricePerToken,
+				Provider:                    "anthropic",
+				Mode:                        "chat",
+				SupportsPromptCaching:       true,
+			}
+		}
+	}
+
 	return result
 }
 
