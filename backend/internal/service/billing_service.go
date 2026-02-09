@@ -366,6 +366,14 @@ func (s *BillingService) ForceUpdatePricing() error {
 	return fmt.Errorf("pricing service not initialized")
 }
 
+// ImportPricingData 从上传的JSON数据导入价格
+func (s *BillingService) ImportPricingData(data []byte) (int, error) {
+	if s.pricingService != nil {
+		return s.pricingService.ImportPricingData(data)
+	}
+	return 0, fmt.Errorf("pricing service not initialized")
+}
+
 // GetAllPricing 获取所有价格数据（用于管理后台展示）
 func (s *BillingService) GetAllPricing() map[string]*ModelPricingInfo {
 	result := make(map[string]*ModelPricingInfo)
@@ -382,21 +390,6 @@ func (s *BillingService) GetAllPricing() map[string]*ModelPricingInfo {
 				Mode:                        pricing.Mode,
 				SupportsPromptCaching:       pricing.SupportsPromptCaching,
 				OutputCostPerImage:          pricing.OutputCostPerImage,
-			}
-		}
-	}
-
-	// 如果动态数据为空，补充硬编码回退价格
-	if len(result) == 0 {
-		for model, pricing := range s.fallbackPrices {
-			result[model] = &ModelPricingInfo{
-				InputCostPerToken:           pricing.InputPricePerToken,
-				OutputCostPerToken:          pricing.OutputPricePerToken,
-				CacheCreationInputTokenCost: pricing.CacheCreationPricePerToken,
-				CacheReadInputTokenCost:     pricing.CacheReadPricePerToken,
-				Provider:                    "anthropic",
-				Mode:                        "chat",
-				SupportsPromptCaching:       true,
 			}
 		}
 	}

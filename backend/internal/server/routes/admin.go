@@ -409,6 +409,7 @@ func registerPricingRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		pricing.GET("", h.Admin.Pricing.ListPricing)
 		pricing.GET("/status", h.Admin.Pricing.GetStatus)
 		pricing.POST("/update", h.Admin.Pricing.ForceUpdate)
+		pricing.POST("/upload", h.Admin.Pricing.UploadPricing)
 		pricing.GET("/lookup", h.Admin.Pricing.LookupModel)
 	}
 }

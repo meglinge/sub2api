@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -148,5 +149,47 @@ func (h *PricingHandler) LookupModel(c *gin.Context) {
 			"cache_creation_input_token_cost": pricing.CacheCreationPricePerToken,
 			"cache_read_input_token_cost":     pricing.CacheReadPricePerToken,
 		},
+	})
+}
+
+// UploadPricing 手动上传价格JSON文件
+// POST /api/v1/admin/pricing/upload
+func (h *PricingHandler) UploadPricing(c *gin.Context) {
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "No file uploaded")
+		return
+	}
+	defer file.Close()
+
+	// 限制文件大小 50MB
+	if header.Size > 50*1024*1024 {
+		response.Error(c, http.StatusBadRequest, "File too large (max 50MB)")
+		return
+	}
+
+	// 检查文件扩展名
+	if !strings.HasSuffix(strings.ToLower(header.Filename), ".json") {
+		response.Error(c, http.StatusBadRequest, "Only JSON files are accepted")
+		return
+	}
+
+	body, err := io.ReadAll(file)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Failed to read file: "+err.Error())
+		return
+	}
+
+	count, err := h.billingService.ImportPricingData(body)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "Failed to import pricing data: "+err.Error())
+		return
+	}
+
+	status := h.billingService.GetPricingServiceStatus()
+	response.Success(c, gin.H{
+		"message":     "Pricing data imported successfully",
+		"model_count": count,
+		"status":      status,
 	})
 }

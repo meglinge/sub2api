@@ -13,18 +13,37 @@
                 {{ t('admin.pricing.status.description') }}
               </p>
             </div>
-            <button
-              @click="forceUpdate"
-              :disabled="updating"
-              class="btn btn-primary btn-sm"
-            >
-              <svg v-if="updating" class="mr-1 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              {{ updating ? t('admin.pricing.updating') : t('admin.pricing.forceUpdate') }}
-            </button>
+            <div class="flex gap-2">
+              <button
+                @click="forceUpdate"
+                :disabled="updating"
+                class="btn btn-primary btn-sm"
+              >
+                <svg v-if="updating" class="mr-1 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                {{ updating ? t('admin.pricing.updating') : t('admin.pricing.forceUpdate') }}
+              </button>
+              <label
+                class="btn btn-sm cursor-pointer"
+                :class="uploading ? 'opacity-50 pointer-events-none' : ''"
+              >
+                <svg v-if="uploading" class="mr-1 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <svg v-else class="mr-1 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                </svg>
+                {{ uploading ? t('admin.pricing.uploading') : t('admin.pricing.uploadFile') }}
+                <input type="file" accept=".json" class="hidden" @change="handleFileUpload" :disabled="uploading" />
+              </label>
+            </div>
           </div>
+        </div>
+        <div v-if="uploadMessage" class="mx-6 mb-4 rounded-lg border p-3 text-sm" :class="uploadError ? 'border-red-200 bg-red-50 text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400' : 'border-green-200 bg-green-50 text-green-600 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400'">
+          {{ uploadMessage }}
         </div>
         <div class="grid grid-cols-2 gap-4 p-6 md:grid-cols-4" v-if="status">
           <div>
@@ -179,6 +198,9 @@ const { t } = useI18n()
 
 const loading = ref(false)
 const updating = ref(false)
+const uploading = ref(false)
+const uploadMessage = ref('')
+const uploadError = ref(false)
 const lookingUp = ref(false)
 const items = ref<ModelPricingItem[]>([])
 const providers = ref<string[]>([])
@@ -251,6 +273,28 @@ const forceUpdate = async () => {
     console.error('Failed to update pricing:', error)
   } finally {
     updating.value = false
+  }
+}
+
+const handleFileUpload = async (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  uploading.value = true
+  uploadMessage.value = ''
+  uploadError.value = false
+  try {
+    const result = await pricingAPI.upload(file)
+    uploadMessage.value = `${result.message} (${result.model_count} models)`
+    uploadError.value = false
+    await loadData()
+  } catch (error: any) {
+    uploadMessage.value = error.message || 'Upload failed'
+    uploadError.value = true
+  } finally {
+    uploading.value = false
+    target.value = ''
   }
 }
 

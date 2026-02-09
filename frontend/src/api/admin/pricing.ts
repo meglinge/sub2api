@@ -75,6 +75,25 @@ export async function forceUpdatePricing(): Promise<PricingUpdateResponse> {
   return data
 }
 
+export interface PricingUploadResponse {
+  message: string
+  model_count: number
+  status: {
+    model_count: number
+    last_updated: string
+    local_hash: string
+  }
+}
+
+export async function uploadPricing(file: File): Promise<PricingUploadResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const { data } = await apiClient.post<PricingUploadResponse>('/admin/pricing/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+  return data
+}
+
 export async function lookupModel(model: string): Promise<ModelLookupResponse> {
   const { data } = await apiClient.get<ModelLookupResponse>('/admin/pricing/lookup', { params: { model } })
   return data
@@ -84,7 +103,8 @@ export const pricingAPI = {
   list: listPricing,
   getStatus: getPricingStatus,
   forceUpdate: forceUpdatePricing,
-  lookupModel
+  lookupModel,
+  upload: uploadPricing
 }
 
 export default pricingAPI

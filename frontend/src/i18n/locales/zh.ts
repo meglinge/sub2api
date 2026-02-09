@@ -2552,6 +2552,8 @@ export default {
       description: '查看和管理模型计费价格',
       forceUpdate: '强制更新',
       updating: '更新中...',
+      uploadFile: '上传文件',
+      uploading: '上传中...',
       status: {
         title: '价格服务状态',
         description: '当前价格数据源和更新配置',

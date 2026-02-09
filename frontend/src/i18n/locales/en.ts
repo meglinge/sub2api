@@ -2386,6 +2386,8 @@ export default {
       description: 'View and manage model pricing data',
       forceUpdate: 'Force Update',
       updating: 'Updating...',
+      uploadFile: 'Upload File',
+      uploading: 'Uploading...',
       status: {
         title: 'Pricing Service Status',
         description: 'Current pricing data source and update configuration',

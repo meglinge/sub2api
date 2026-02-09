@@ -745,6 +745,38 @@ func (s *PricingService) ForceUpdate() error {
 	return s.downloadPricingData()
 }
 
+// ImportPricingData 从上传的JSON数据导入价格（手动上传）
+func (s *PricingService) ImportPricingData(body []byte) (int, error) {
+	data, err := s.parsePricingData(body)
+	if err != nil {
+		return 0, fmt.Errorf("parse pricing data: %w", err)
+	}
+
+	// 保存到本地文件
+	pricingFile := s.getPricingFilePath()
+	if err := os.WriteFile(pricingFile, body, 0644); err != nil {
+		log.Printf("[Pricing] Failed to save uploaded file: %v", err)
+	}
+
+	// 保存哈希
+	hash := sha256.Sum256(body)
+	hashStr := hex.EncodeToString(hash[:])
+	hashFile := s.getHashFilePath()
+	if err := os.WriteFile(hashFile, []byte(hashStr+"\n"), 0644); err != nil {
+		log.Printf("[Pricing] Failed to save hash: %v", err)
+	}
+
+	// 更新内存数据
+	s.mu.Lock()
+	s.pricingData = data
+	s.lastUpdated = time.Now()
+	s.localHash = hashStr
+	s.mu.Unlock()
+
+	log.Printf("[Pricing] Imported %d models from uploaded file", len(data))
+	return len(data), nil
+}
+
 // getPricingFilePath 获取价格文件路径
 func (s *PricingService) getPricingFilePath() string {
 	return filepath.Join(s.cfg.Pricing.DataDir, "model_pricing.json")
