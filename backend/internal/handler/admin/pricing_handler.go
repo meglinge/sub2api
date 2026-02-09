@@ -160,7 +160,7 @@ func (h *PricingHandler) UploadPricing(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "No file uploaded")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// 限制文件大小 50MB
 	if header.Size > 50*1024*1024 {
