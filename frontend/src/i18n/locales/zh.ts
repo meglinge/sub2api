@@ -866,8 +866,8 @@ export default {
       editUser: '编辑用户',
       deleteUser: '删除用户',
       deleteConfirmMessage: "确定要删除用户 '{email}' 吗？此操作无法撤销。",
-      searchPlaceholder: '搜索用户邮箱或用户名、备注、支持模糊查询...',
-      searchUsers: '搜索用户邮箱或用户名、备注、支持模糊查询',
+      searchPlaceholder: '邮箱/用户名/备注/API Key 模糊搜索...',
+      searchUsers: '邮箱/用户名/备注/API Key 模糊搜索',
       roleFilter: '角色筛选',
       allRoles: '全部角色',
       allStatus: '全部状态',
@@ -1398,9 +1398,22 @@ export default {
       syncResult: '同步结果',
       syncResultSummary: '创建 {created}，更新 {updated}，跳过 {skipped}，失败 {failed}',
       syncErrors: '错误/跳过详情',
-      syncCompleted: '同步完成：创建 {created}，更新 {updated}',
-      syncCompletedWithErrors: '同步完成但有错误：失败 {failed}（创建 {created}，更新 {updated}）',
+      syncCompleted: '同步完成：创建 {created}，更新 {updated}，跳过 {skipped}',
+      syncCompletedWithErrors: '同步完成但有错误：失败 {failed}（创建 {created}，更新 {updated}，跳过 {skipped}）',
       syncFailed: '同步失败',
+      crsPreview: '预览',
+      crsPreviewing: '预览中...',
+      crsPreviewFailed: '预览失败',
+      crsExistingAccounts: '将自动更新的已有账号',
+      crsNewAccounts: '新账号（可选择）',
+      crsSelectAll: '全选',
+      crsSelectNone: '全不选',
+      crsNoNewAccounts: '所有 CRS 账号均已同步。',
+      crsWillUpdate: '将更新 {count} 个已有账号。',
+      crsSelectedCount: '已选择 {count} 个新账号',
+      crsUpdateBehaviorNote:
+        '已有账号仅同步 CRS 返回的字段，缺失字段保持原值；凭据按键合并，不会清空未下发的键；未勾选"同步代理"时保留原有代理。',
+      crsBack: '返回',
       editAccount: '编辑账号',
       deleteAccount: '删除账号',
       deleteConfirmMessage: "确定要删除账号 '{name}' 吗？",
@@ -1481,6 +1494,7 @@ export default {
         googleOauth: 'Google OAuth',
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
+        antigravityApikey: '通过 Base URL + API Key 连接',
         upstream: '对接上游',
         upstreamDesc: '通过 Base URL + API Key 连接上游',
         api_key: 'API Key',
@@ -1759,7 +1773,7 @@ export default {
       // Upstream type
       upstream: {
         baseUrl: '上游 Base URL',
-        baseUrlHint: '上游 Antigravity 服务的地址，例如：https://s.konstants.xyz',
+        baseUrlHint: '上游 Antigravity 服务的地址，例如：https://cloudcode-pa.googleapis.com',
         apiKey: '上游 API Key',
         apiKeyHint: '上游服务的 API Key',
         pleaseEnterBaseUrl: '请输入上游 Base URL',
@@ -1900,7 +1914,15 @@ export default {
           authCodeHint: '您可以直接复制整个链接或仅复制 code 参数值，系统会自动识别',
           failedToGenerateUrl: '生成 Antigravity 授权链接失败',
           missingExchangeParams: '缺少 code / session_id / state',
-          failedToExchangeCode: 'Antigravity 授权码兑换失败'
+          failedToExchangeCode: 'Antigravity 授权码兑换失败',
+          // Refresh Token auth
+          refreshTokenAuth: '手动输入 RT',
+          refreshTokenDesc: '输入您已有的 Antigravity Refresh Token，支持批量输入（每行一个），系统将自动验证并创建账号。',
+          refreshTokenPlaceholder: '粘贴您的 Antigravity Refresh Token...\n支持多个，每行一个',
+          validating: '验证中...',
+          validateAndCreate: '验证并创建账号',
+          pleaseEnterRefreshToken: '请输入 Refresh Token',
+          failedToValidateRT: '验证 Refresh Token 失败'
         }
       },
       // Gemini specific (platform-wide)
@@ -2279,7 +2301,7 @@ export default {
       allStatus: '全部状态',
       unused: '未使用',
       used: '已使用',
-      searchCodes: '搜索兑换码...',
+      searchCodes: '搜索兑换码或邮箱...',
       exportCsv: '导出 CSV',
       deleteAllUnused: '删除全部未使用',
       deleteCodeConfirm: '确定要删除此兑换码吗？此操作无法撤销。',
@@ -3554,6 +3576,7 @@ export default {
       custom: '自定义',
       code: '状态码',
       body: '消息体',
+      skipMonitoring: '跳过监控',
 
       // Columns
       columns: {
@@ -3598,6 +3621,8 @@ export default {
         passthroughBody: '透传上游错误信息',
         customMessage: '自定义错误信息',
         customMessagePlaceholder: '返回给客户端的错误信息...',
+        skipMonitoring: '跳过运维监控记录',
+        skipMonitoringHint: '开启后，匹配此规则的错误不会被记录到运维监控中',
         enabled: '启用此规则'
       },
 

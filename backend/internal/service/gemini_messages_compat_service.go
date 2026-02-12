@@ -770,6 +770,14 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 			break
 		}
 
+		// 错误策略优先：匹配则跳过重试直接处理。
+		if matched, rebuilt := s.checkErrorPolicyInLoop(ctx, account, resp); matched {
+			resp = rebuilt
+			break
+		} else {
+			resp = rebuilt
+		}
+
 		if resp.StatusCode >= 400 && s.shouldRetryGeminiUpstreamError(account, resp.StatusCode) {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 			_ = resp.Body.Close()
@@ -839,7 +847,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 				if upstreamReqID == "" {
 					upstreamReqID = resp.Header.Get("x-goog-request-id")
 				}
-				return nil, s.writeGeminiMappedError(c, account, resp.StatusCode, upstreamReqID, respBody)
+				return nil, s.writeGeminiMappedError(c, account, http.StatusInternalServerError, upstreamReqID, respBody)
 			case ErrorPolicyMatched, ErrorPolicyTempUnscheduled:
 				s.handleGeminiUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 				upstreamReqID := resp.Header.Get(requestIDHeader)
@@ -872,6 +880,37 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 
 		// ErrorPolicyNone → 原有逻辑
 		s.handleGeminiUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+		// 精确匹配服务端配置类 400 错误，触发 failover + 临时封禁
+		if resp.StatusCode == http.StatusBadRequest {
+			msg400 := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+			if isGoogleProjectConfigError(msg400) {
+				upstreamReqID := resp.Header.Get(requestIDHeader)
+				if upstreamReqID == "" {
+					upstreamReqID = resp.Header.Get("x-goog-request-id")
+				}
+				upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+				upstreamDetail := ""
+				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+					if maxBytes <= 0 {
+						maxBytes = 2048
+					}
+					upstreamDetail = truncateString(string(respBody), maxBytes)
+				}
+				log.Printf("[Gemini] status=400 google_config_error failover=true upstream_message=%q account=%d", upstreamMsg, account.ID)
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  upstreamReqID,
+					Kind:               "failover",
+					Message:            upstreamMsg,
+					Detail:             upstreamDetail,
+				})
+				return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameAccount: true}
+			}
+		}
 		if s.shouldFailoverGeminiUpstreamError(resp.StatusCode) {
 			upstreamReqID := resp.Header.Get(requestIDHeader)
 			if upstreamReqID == "" {
@@ -1176,6 +1215,14 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			return nil, s.writeGoogleError(c, http.StatusBadGateway, "Upstream request failed after retries: "+safeErr)
 		}
 
+		// 错误策略优先：匹配则跳过重试直接处理。
+		if matched, rebuilt := s.checkErrorPolicyInLoop(ctx, account, resp); matched {
+			resp = rebuilt
+			break
+		} else {
+			resp = rebuilt
+		}
+
 		if resp.StatusCode >= 400 && s.shouldRetryGeminiUpstreamError(account, resp.StatusCode) {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 			_ = resp.Body.Close()
@@ -1283,7 +1330,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 				if contentType == "" {
 					contentType = "application/json"
 				}
-				c.Data(resp.StatusCode, contentType, respBody)
+				c.Data(http.StatusInternalServerError, contentType, respBody)
 				return nil, fmt.Errorf("gemini upstream error: %d (skipped by error policy)", resp.StatusCode)
 			case ErrorPolicyMatched, ErrorPolicyTempUnscheduled:
 				s.handleGeminiUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
@@ -1314,6 +1361,34 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 
 		// ErrorPolicyNone → 原有逻辑
 		s.handleGeminiUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+		// 精确匹配服务端配置类 400 错误，触发 failover + 临时封禁
+		if resp.StatusCode == http.StatusBadRequest {
+			msg400 := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+			if isGoogleProjectConfigError(msg400) {
+				evBody := unwrapIfNeeded(isOAuth, respBody)
+				upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(evBody)))
+				upstreamDetail := ""
+				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+					if maxBytes <= 0 {
+						maxBytes = 2048
+					}
+					upstreamDetail = truncateString(string(evBody), maxBytes)
+				}
+				log.Printf("[Gemini] status=400 google_config_error failover=true upstream_message=%q account=%d", upstreamMsg, account.ID)
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  requestID,
+					Kind:               "failover",
+					Message:            upstreamMsg,
+					Detail:             upstreamDetail,
+				})
+				return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: evBody, RetryableOnSameAccount: true}
+			}
+		}
 		if s.shouldFailoverGeminiUpstreamError(resp.StatusCode) {
 			evBody := unwrapIfNeeded(isOAuth, respBody)
 			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(evBody))
@@ -1423,6 +1498,26 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		ImageCount:   imageCount,
 		ImageSize:    imageSize,
 	}, nil
+}
+
+// checkErrorPolicyInLoop 在重试循环内预检查错误策略。
+// 返回 true 表示策略已匹配（调用者应 break），resp 已重建可直接使用。
+// 返回 false 表示 ErrorPolicyNone，resp 已重建，调用者继续走重试逻辑。
+func (s *GeminiMessagesCompatService) checkErrorPolicyInLoop(
+	ctx context.Context, account *Account, resp *http.Response,
+) (matched bool, rebuilt *http.Response) {
+	if resp.StatusCode < 400 || s.rateLimitService == nil {
+		return false, resp
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	_ = resp.Body.Close()
+	rebuilt = &http.Response{
+		StatusCode: resp.StatusCode,
+		Header:     resp.Header.Clone(),
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+	policy := s.rateLimitService.CheckErrorPolicy(ctx, account, resp.StatusCode, body)
+	return policy != ErrorPolicyNone, rebuilt
 }
 
 func (s *GeminiMessagesCompatService) shouldRetryGeminiUpstreamError(account *Account, statusCode int) bool {
@@ -2568,11 +2663,12 @@ func extractGeminiUsage(geminiResp map[string]any) *ClaudeUsage {
 	prompt, _ := asInt(usageMeta["promptTokenCount"])
 	cand, _ := asInt(usageMeta["candidatesTokenCount"])
 	cached, _ := asInt(usageMeta["cachedContentTokenCount"])
+	thoughts, _ := asInt(usageMeta["thoughtsTokenCount"])
 	// 注意：Gemini 的 promptTokenCount 包含 cachedContentTokenCount，
 	// 但 Claude 的 input_tokens 不包含 cache_read_input_tokens，需要减去
 	return &ClaudeUsage{
 		InputTokens:          prompt - cached,
-		OutputTokens:         cand,
+		OutputTokens:         cand + thoughts,
 		CacheReadInputTokens: cached,
 	}
 }
@@ -2597,6 +2693,10 @@ func asInt(v any) (int, bool) {
 }
 
 func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, body []byte) {
+	// 遵守自定义错误码策略：未命中则跳过所有限流处理
+	if !account.ShouldHandleErrorCode(statusCode) {
+		return
+	}
 	if s.rateLimitService != nil && (statusCode == 401 || statusCode == 403 || statusCode == 529) {
 		s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body)
 		return

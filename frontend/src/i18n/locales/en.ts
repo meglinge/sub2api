@@ -842,7 +842,7 @@ export default {
       createUser: 'Create User',
       editUser: 'Edit User',
       deleteUser: 'Delete User',
-      searchUsers: 'Search users...',
+      searchUsers: 'Search by email, username, notes, or API key...',
       allRoles: 'All Roles',
       allStatus: 'All Status',
       admin: 'Admin',
@@ -1310,10 +1310,23 @@ export default {
       syncResult: 'Sync Result',
       syncResultSummary: 'Created {created}, updated {updated}, skipped {skipped}, failed {failed}',
       syncErrors: 'Errors / Skipped Details',
-      syncCompleted: 'Sync completed: created {created}, updated {updated}',
+      syncCompleted: 'Sync completed: created {created}, updated {updated}, skipped {skipped}',
       syncCompletedWithErrors:
-        'Sync completed with errors: failed {failed} (created {created}, updated {updated})',
+        'Sync completed with errors: failed {failed} (created {created}, updated {updated}, skipped {skipped})',
       syncFailed: 'Sync failed',
+      crsPreview: 'Preview',
+      crsPreviewing: 'Previewing...',
+      crsPreviewFailed: 'Preview failed',
+      crsExistingAccounts: 'Existing accounts (will be updated)',
+      crsNewAccounts: 'New accounts (select to sync)',
+      crsSelectAll: 'Select all',
+      crsSelectNone: 'Select none',
+      crsNoNewAccounts: 'All CRS accounts are already synced.',
+      crsWillUpdate: 'Will update {count} existing accounts.',
+      crsSelectedCount: '{count} new accounts selected',
+      crsUpdateBehaviorNote:
+        'Existing accounts only sync fields returned by CRS; missing fields keep their current values. Credentials are merged by key — keys not returned by CRS are preserved. Proxies are kept when "Sync proxies" is unchecked.',
+      crsBack: 'Back',
       editAccount: 'Edit Account',
       deleteAccount: 'Delete Account',
       searchAccounts: 'Search accounts...',
@@ -1347,6 +1360,7 @@ export default {
         googleOauth: 'Google OAuth',
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
+        antigravityApikey: 'Connect via Base URL + API Key',
         upstream: 'Upstream',
         upstreamDesc: 'Connect via Base URL + API Key'
       },
@@ -1613,7 +1627,7 @@ export default {
       // Upstream type
       upstream: {
         baseUrl: 'Upstream Base URL',
-        baseUrlHint: 'The address of the upstream Antigravity service, e.g., https://s.konstants.xyz',
+        baseUrlHint: 'The address of the upstream Antigravity service, e.g., https://cloudcode-pa.googleapis.com',
         apiKey: 'Upstream API Key',
         apiKeyHint: 'API Key for the upstream service',
         pleaseEnterBaseUrl: 'Please enter upstream Base URL',
@@ -1761,13 +1775,20 @@ export default {
           authCode: 'Authorization URL or Code',
           authCodePlaceholder:
             'Option 1: Copy the complete URL\n(http://localhost:xxx/auth/callback?code=...)\nOption 2: Copy only the code parameter value',
-          authCodeHint: 'You can copy the entire URL or just the code parameter value, the system will auto-detect',
-          failedToGenerateUrl: 'Failed to generate Antigravity auth URL',
-          missingExchangeParams: 'Missing code, session ID, or state',
-          failedToExchangeCode: 'Failed to exchange Antigravity auth code'
-        }
-	      },
-      // Gemini specific (platform-wide)
+                    authCodeHint: 'You can copy the entire URL or just the code parameter value, the system will auto-detect',
+                    failedToGenerateUrl: 'Failed to generate Antigravity auth URL',
+                    missingExchangeParams: 'Missing code, session ID, or state',
+                    failedToExchangeCode: 'Failed to exchange Antigravity auth code',
+                    // Refresh Token auth
+                    refreshTokenAuth: 'Manual RT',
+                    refreshTokenDesc: 'Enter your existing Antigravity Refresh Token. Supports batch input (one per line). The system will automatically validate and create accounts.',
+                    refreshTokenPlaceholder: 'Paste your Antigravity Refresh Token...\nSupports multiple tokens, one per line',
+                    validating: 'Validating...',
+                    validateAndCreate: 'Validate & Create',
+                    pleaseEnterRefreshToken: 'Please enter Refresh Token',
+                    failedToValidateRT: 'Failed to validate Refresh Token'
+                  }
+                },      // Gemini specific (platform-wide)
       gemini: {
         helpButton: 'Help',
         helpDialog: {
@@ -2116,7 +2137,7 @@ export default {
       title: 'Redeem Code Management',
       description: 'Generate and manage redeem codes',
       generateCodes: 'Generate Codes',
-      searchCodes: 'Search codes...',
+      searchCodes: 'Search codes or email...',
       allTypes: 'All Types',
       allStatus: 'All Status',
       balance: 'Balance',
@@ -3380,6 +3401,7 @@ export default {
       custom: 'Custom',
       code: 'Code',
       body: 'Body',
+      skipMonitoring: 'Skip Monitoring',
 
       // Columns
       columns: {
@@ -3424,6 +3446,8 @@ export default {
         passthroughBody: 'Passthrough upstream error message',
         customMessage: 'Custom error message',
         customMessagePlaceholder: 'Error message to return to client...',
+        skipMonitoring: 'Skip monitoring',
+        skipMonitoringHint: 'When enabled, errors matching this rule will not be recorded in ops monitoring',
         enabled: 'Enable this rule'
       },
 
