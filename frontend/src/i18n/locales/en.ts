@@ -577,6 +577,10 @@ export default {
     description: 'View and analyze your API usage history',
     costDetails: 'Cost Breakdown',
     tokenDetails: 'Token Breakdown',
+    cacheTtlOverriddenHint: 'Cache TTL Override enabled',
+    cacheTtlOverriddenLabel: 'TTL Override',
+    cacheTtlOverridden5m: 'Billed as 5m',
+    cacheTtlOverridden1h: 'Billed as 1h',
     totalRequests: 'Total Requests',
     totalTokens: 'Total Tokens',
     totalCost: 'Total Cost',
@@ -1336,6 +1340,7 @@ export default {
       allPlatforms: 'All Platforms',
       allTypes: 'All Types',
       allStatus: 'All Status',
+      allGroups: 'All Groups',
       oauthType: 'OAuth',
       setupToken: 'Setup Token',
       apiKey: 'API Key',
@@ -1345,7 +1350,7 @@ export default {
       schedulableEnabled: 'Scheduling enabled',
       schedulableDisabled: 'Scheduling disabled',
       failedToToggleSchedulable: 'Failed to toggle scheduling status',
-      allGroups: '{count} groups total',
+      groupCountTotal: '{count} groups total',
       platforms: {
         anthropic: 'Anthropic',
         claude: 'Claude',
@@ -1595,6 +1600,12 @@ export default {
         sessionIdMasking: {
           label: 'Session ID Masking',
           hint: 'When enabled, fixes the session ID in metadata.user_id for 15 minutes, making upstream think requests come from the same session'
+        },
+        cacheTTLOverride: {
+          label: 'Cache TTL Override',
+          hint: 'Force all cache creation tokens to be billed as the selected TTL tier (5m or 1h)',
+          target: 'Target TTL',
+          targetHint: 'Select the TTL tier for billing'
         }
       },
       expired: 'Expired',
@@ -2360,6 +2371,8 @@ export default {
       inputTokens: 'Input Tokens',
       outputTokens: 'Output Tokens',
       cacheCreationTokens: 'Cache Creation Tokens',
+      cacheCreation5mTokens: 'Cache Write',
+      cacheCreation1hTokens: 'Cache Write',
       cacheReadTokens: 'Cache Read Tokens',
       failedToLoad: 'Failed to load usage records',
       billingType: 'Billing Type',

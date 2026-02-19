@@ -583,6 +583,10 @@ export default {
     description: '查看和分析您的 API 使用历史',
     costDetails: '成本明细',
     tokenDetails: 'Token 明细',
+    cacheTtlOverriddenHint: '缓存 TTL Override 已启用',
+    cacheTtlOverriddenLabel: 'TTL 替换',
+    cacheTtlOverridden5m: '按 5m 计费',
+    cacheTtlOverridden1h: '按 1h 计费',
     totalRequests: '总请求数',
     totalTokens: '总 Token',
     totalCost: '总消费',
@@ -1427,6 +1431,7 @@ export default {
       allPlatforms: '全部平台',
       allTypes: '全部类型',
       allStatus: '全部状态',
+      allGroups: '全部分组',
       oauthType: 'OAuth',
       // Schedulable toggle
       schedulable: '参与调度',
@@ -1434,7 +1439,7 @@ export default {
       schedulableEnabled: '调度已开启',
       schedulableDisabled: '调度已关闭',
       failedToToggleSchedulable: '切换调度状态失败',
-      allGroups: '共 {count} 个分组',
+      groupCountTotal: '共 {count} 个分组',
       columns: {
         name: '名称',
         platformType: '平台/类型',
@@ -1741,6 +1746,12 @@ export default {
         sessionIdMasking: {
           label: '会话 ID 伪装',
           hint: '启用后将在 15 分钟内固定 metadata.user_id 中的 session ID，使上游认为请求来自同一会话'
+        },
+        cacheTTLOverride: {
+          label: '缓存 TTL 强制替换',
+          hint: '将所有缓存创建 token 强制按指定的 TTL 类型（5分钟或1小时）计费',
+          target: '目标 TTL',
+          targetHint: '选择计费使用的 TTL 类型'
         }
       },
       expired: '已过期',
@@ -2527,6 +2538,8 @@ export default {
       inputTokens: '输入 Token',
       outputTokens: '输出 Token',
       cacheCreationTokens: '缓存创建 Token',
+      cacheCreation5mTokens: '缓存创建',
+      cacheCreation1hTokens: '缓存创建',
       cacheReadTokens: '缓存读取 Token',
       failedToLoad: '加载使用记录失败',
       billingType: '计费类型',
