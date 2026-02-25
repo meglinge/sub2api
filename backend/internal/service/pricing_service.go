@@ -773,7 +773,7 @@ func (s *PricingService) ImportPricingData(body []byte) (int, error) {
 	// 保存到本地文件
 	pricingFile := s.getPricingFilePath()
 	if err := os.WriteFile(pricingFile, body, 0644); err != nil {
-		log.Printf("[Pricing] Failed to save uploaded file: %v", err)
+		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to save uploaded file: %v", err)
 	}
 
 	// 保存哈希
@@ -781,7 +781,7 @@ func (s *PricingService) ImportPricingData(body []byte) (int, error) {
 	hashStr := hex.EncodeToString(hash[:])
 	hashFile := s.getHashFilePath()
 	if err := os.WriteFile(hashFile, []byte(hashStr+"\n"), 0644); err != nil {
-		log.Printf("[Pricing] Failed to save hash: %v", err)
+		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to save hash: %v", err)
 	}
 
 	// 更新内存数据
@@ -791,7 +791,7 @@ func (s *PricingService) ImportPricingData(body []byte) (int, error) {
 	s.localHash = hashStr
 	s.mu.Unlock()
 
-	log.Printf("[Pricing] Imported %d models from uploaded file", len(data))
+	logger.LegacyPrintf("service.pricing", "[Pricing] Imported %d models from uploaded file", len(data))
 	return len(data), nil
 }
 
