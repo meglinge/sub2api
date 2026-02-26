@@ -87,6 +87,7 @@ type CreateUserInput struct {
 	Password      string
 	Username      string
 	Notes         string
+	Role          string
 	Balance       float64
 	Concurrency   int
 	AllowedGroups []int64
@@ -97,6 +98,7 @@ type UpdateUserInput struct {
 	Password      string
 	Username      *string
 	Notes         *string
+	Role          string
 	Balance       *float64 // 使用指针区分"未提供"和"设置为0"
 	Concurrency   *int     // 使用指针区分"未提供"和"设置为0"
 	Status        string
@@ -472,11 +474,15 @@ func (s *adminServiceImpl) GetUser(ctx context.Context, id int64) (*User, error)
 }
 
 func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInput) (*User, error) {
+	role := RoleUser
+	if input.Role == RoleAdmin {
+		role = RoleAdmin
+	}
 	user := &User{
 		Email:         input.Email,
 		Username:      input.Username,
 		Notes:         input.Notes,
-		Role:          RoleUser, // Always create as regular user, never admin
+		Role:          role,
 		Balance:       input.Balance,
 		Concurrency:   input.Concurrency,
 		Status:        StatusActive,
@@ -524,6 +530,10 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 
 	if input.Status != "" {
 		user.Status = input.Status
+	}
+
+	if input.Role == RoleAdmin || input.Role == RoleUser {
+		user.Role = input.Role
 	}
 
 	if input.Concurrency != nil {

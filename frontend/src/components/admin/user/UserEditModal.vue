@@ -37,6 +37,13 @@
         <label class="input-label">{{ t('admin.users.columns.concurrency') }}</label>
         <input v-model.number="form.concurrency" type="number" class="input" />
       </div>
+      <div>
+        <label class="input-label">{{ t('admin.users.columns.role') }}</label>
+        <select v-model="form.role" class="input">
+          <option value="user">{{ t('admin.users.user') }}</option>
+          <option value="admin">{{ t('admin.users.admin') }}</option>
+        </select>
+      </div>
       <UserAttributeForm v-model="form.customAttributes" :user-id="user?.id" />
     </form>
     <template #footer>
@@ -66,11 +73,11 @@ const emit = defineEmits(['close', 'success'])
 const { t } = useI18n(); const appStore = useAppStore(); const { copyToClipboard } = useClipboard()
 
 const submitting = ref(false); const passwordCopied = ref(false)
-const form = reactive({ email: '', password: '', username: '', notes: '', concurrency: 1, customAttributes: {} as UserAttributeValuesMap })
+const form = reactive({ email: '', password: '', username: '', notes: '', concurrency: 1, role: 'user' as string, customAttributes: {} as UserAttributeValuesMap })
 
 watch(() => props.user, (u) => {
   if (u) {
-    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', concurrency: u.concurrency, customAttributes: {} })
+    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', concurrency: u.concurrency, role: u.role || 'user', customAttributes: {} })
     passwordCopied.value = false
   }
 }, { immediate: true })
@@ -97,7 +104,7 @@ const handleUpdateUser = async () => {
   }
   submitting.value = true
   try {
-    const data: any = { email: form.email, username: form.username, notes: form.notes, concurrency: form.concurrency }
+    const data: any = { email: form.email, username: form.username, notes: form.notes, concurrency: form.concurrency, role: form.role }
     if (form.password.trim()) data.password = form.password.trim()
     await adminAPI.users.update(props.user.id, data)
     if (Object.keys(form.customAttributes).length > 0) await adminAPI.userAttributes.updateUserAttributeValues(props.user.id, form.customAttributes)
