@@ -44,6 +44,14 @@
           <option value="admin">{{ t('admin.users.admin') }}</option>
         </select>
       </div>
+      <div>
+        <label class="input-label">{{ t('admin.users.soraStorageQuota') }}</label>
+        <div class="flex items-center gap-2">
+          <input v-model.number="form.sora_storage_quota_gb" type="number" min="0" step="0.1" class="input" placeholder="0" />
+          <span class="shrink-0 text-sm text-gray-500">GB</span>
+        </div>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.users.soraStorageQuotaHint') }}</p>
+      </div>
       <UserAttributeForm v-model="form.customAttributes" :user-id="user?.id" />
     </form>
     <template #footer>
@@ -73,11 +81,11 @@ const emit = defineEmits(['close', 'success'])
 const { t } = useI18n(); const appStore = useAppStore(); const { copyToClipboard } = useClipboard()
 
 const submitting = ref(false); const passwordCopied = ref(false)
-const form = reactive({ email: '', password: '', username: '', notes: '', concurrency: 1, role: 'user' as string, customAttributes: {} as UserAttributeValuesMap })
+const form = reactive({ email: '', password: '', username: '', notes: '', concurrency: 1, role: 'user' as string, sora_storage_quota_gb: 0, customAttributes: {} as UserAttributeValuesMap })
 
 watch(() => props.user, (u) => {
   if (u) {
-    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', concurrency: u.concurrency, role: u.role || 'user', customAttributes: {} })
+    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', concurrency: u.concurrency, role: u.role || 'user', sora_storage_quota_gb: Number(((u.sora_storage_quota_bytes || 0) / (1024 * 1024 * 1024)).toFixed(2)), customAttributes: {} })
     passwordCopied.value = false
   }
 }, { immediate: true })
@@ -104,7 +112,7 @@ const handleUpdateUser = async () => {
   }
   submitting.value = true
   try {
-    const data: any = { email: form.email, username: form.username, notes: form.notes, concurrency: form.concurrency, role: form.role }
+    const data: any = { email: form.email, username: form.username, notes: form.notes, concurrency: form.concurrency, role: form.role, sora_storage_quota_bytes: Math.round((form.sora_storage_quota_gb || 0) * 1024 * 1024 * 1024) }
     if (form.password.trim()) data.password = form.password.trim()
     await adminAPI.users.update(props.user.id, data)
     if (Object.keys(form.customAttributes).length > 0) await adminAPI.userAttributes.updateUserAttributeValues(props.user.id, form.customAttributes)
