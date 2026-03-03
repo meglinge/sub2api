@@ -1248,6 +1248,59 @@ func TestOpenAIValidateUpstreamBaseURLEnabledEnforcesAllowlist(t *testing.T) {
 	}
 }
 
+func TestBuildOpenAIResponsesURLForRequestPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		base        string
+		requestPath string
+		want        string
+	}{
+		{
+			name:        "default responses endpoint",
+			base:        "https://api.openai.com",
+			requestPath: "/v1/responses",
+			want:        "https://api.openai.com/v1/responses",
+		},
+		{
+			name:        "compact endpoint from v1 base",
+			base:        "https://api.openai.com/v1",
+			requestPath: "/v1/responses/compact",
+			want:        "https://api.openai.com/v1/responses/compact",
+		},
+		{
+			name:        "compact endpoint from responses base",
+			base:        "https://api.openai.com/v1/responses",
+			requestPath: "/responses/compact",
+			want:        "https://api.openai.com/v1/responses/compact",
+		},
+		{
+			name:        "chatgpt codex compact endpoint",
+			base:        "https://chatgpt.com/backend-api/codex/responses",
+			requestPath: "/v1/responses/compact",
+			want:        "https://chatgpt.com/backend-api/codex/responses/compact",
+		},
+		{
+			name:        "already compact endpoint remains unchanged",
+			base:        "https://api.openai.com/v1/responses/compact",
+			requestPath: "/v1/responses/compact",
+			want:        "https://api.openai.com/v1/responses/compact",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := buildOpenAIResponsesURLForRequestPath(tt.base, tt.requestPath)
+			if got != tt.want {
+				t.Fatalf("buildOpenAIResponsesURLForRequestPath(%q, %q) = %q, want %q", tt.base, tt.requestPath, got, tt.want)
+			}
+		})
+	}
+}
+
 // ==================== P1-08 修复：model 替换性能优化测试 ====================
 
 func TestReplaceModelInSSELine(t *testing.T) {

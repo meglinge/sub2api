@@ -2183,10 +2183,14 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	body []byte,
 	token string,
 ) (*http.Request, error) {
-	targetURL := openaiPlatformAPIURL
+	requestPath := ""
+	if c != nil && c.Request != nil && c.Request.URL != nil {
+		requestPath = c.Request.URL.Path
+	}
+	targetURL := buildOpenAIResponsesURLForRequestPath(openaiPlatformAPIURL, requestPath)
 	switch account.Type {
 	case AccountTypeOAuth:
-		targetURL = chatgptCodexURL
+		targetURL = buildOpenAIResponsesURLForRequestPath(chatgptCodexURL, requestPath)
 	case AccountTypeAPIKey:
 		baseURL := account.GetOpenAIBaseURL()
 		if baseURL != "" {
@@ -2194,7 +2198,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 			if err != nil {
 				return nil, err
 			}
-			targetURL = buildOpenAIResponsesURL(validatedURL)
+			targetURL = buildOpenAIResponsesURLForRequestPath(validatedURL, requestPath)
 		}
 	}
 
@@ -2556,26 +2560,31 @@ func writeOpenAIPassthroughResponseHeaders(dst http.Header, src http.Header, fil
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
+	requestPath := ""
+	if c != nil && c.Request != nil && c.Request.URL != nil {
+		requestPath = c.Request.URL.Path
+	}
+
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {
 	case AccountTypeOAuth:
 		// OAuth accounts use ChatGPT internal API
-		targetURL = chatgptCodexURL
+		targetURL = buildOpenAIResponsesURLForRequestPath(chatgptCodexURL, requestPath)
 	case AccountTypeAPIKey:
 		// API Key accounts use Platform API or custom base URL
 		baseURL := account.GetOpenAIBaseURL()
 		if baseURL == "" {
-			targetURL = openaiPlatformAPIURL
+			targetURL = buildOpenAIResponsesURLForRequestPath(openaiPlatformAPIURL, requestPath)
 		} else {
 			validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 			if err != nil {
 				return nil, err
 			}
-			targetURL = buildOpenAIResponsesURL(validatedURL)
+			targetURL = buildOpenAIResponsesURLForRequestPath(validatedURL, requestPath)
 		}
 	default:
-		targetURL = openaiPlatformAPIURL
+		targetURL = buildOpenAIResponsesURLForRequestPath(openaiPlatformAPIURL, requestPath)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
@@ -3349,6 +3358,28 @@ func buildOpenAIResponsesURL(base string) string {
 		return normalized + "/responses"
 	}
 	return normalized + "/v1/responses"
+}
+
+func buildOpenAIResponsesURLForRequestPath(base, requestPath string) string {
+	normalizedPath := strings.TrimRight(strings.TrimSpace(requestPath), "/")
+	if strings.HasSuffix(normalizedPath, "/responses/compact") {
+		return buildOpenAIResponsesCompactURL(base)
+	}
+	return buildOpenAIResponsesURL(base)
+}
+
+func buildOpenAIResponsesCompactURL(base string) string {
+	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
+	if strings.HasSuffix(normalized, "/responses/compact") {
+		return normalized
+	}
+	if strings.HasSuffix(normalized, "/responses") {
+		return normalized + "/compact"
+	}
+	if strings.HasSuffix(normalized, "/v1") {
+		return normalized + "/responses/compact"
+	}
+	return normalized + "/v1/responses/compact"
 }
 
 func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
