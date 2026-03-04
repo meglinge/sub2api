@@ -801,6 +801,86 @@ func TestOpenAIGatewayService_APIKeyPassthrough_CompactUsesCompactEndpoint(t *te
 	require.Equal(t, "Bearer sk-api-key", upstream.lastReq.Header.Get("Authorization"))
 }
 
+func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesCompactEndpointAndSanitizedBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader(nil))
+	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.104.0")
+
+	originalBody := []byte(`{"model":"gpt-5.2-codex","stream":true,"store":true,"instructions":"compact-it","input":[{"type":"text","text":"hi"}]}`)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-compact-oauth"}},
+		Body:       io.NopCloser(strings.NewReader(`{"output":[],"usage":{"input_tokens":9,"output_tokens":4,"input_tokens_details":{"cached_tokens":2}}}`)),
+	}
+	upstream := &httpUpstreamRecorder{resp: resp}
+
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		httpUpstream: upstream,
+	}
+
+	account := &Account{
+		ID:             458,
+		Name:           "oauth-compact",
+		Platform:       PlatformOpenAI,
+		Type:           AccountTypeOAuth,
+		Concurrency:    1,
+		Credentials:    map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"},
+		Extra:          map[string]any{"openai_passthrough": true},
+		Status:         StatusActive,
+		Schedulable:    true,
+		RateMultiplier: f64p(1),
+	}
+
+	result, err := svc.Forward(context.Background(), c, account, originalBody)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.Stream)
+	require.Equal(t, 9, result.Usage.InputTokens)
+	require.Equal(t, 4, result.Usage.OutputTokens)
+	require.Equal(t, 2, result.Usage.CacheReadInputTokens)
+
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses/compact", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer oauth-token", upstream.lastReq.Header.Get("Authorization"))
+	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Accept"))
+	require.Equal(t, "chatgpt-acc", upstream.lastReq.Header.Get("chatgpt-account-id"))
+	require.Equal(t, "compact-it", strings.TrimSpace(gjson.GetBytes(upstream.lastBody, "instructions").String()))
+	require.Equal(t, "hi", gjson.GetBytes(upstream.lastBody, "input.0.text").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "store").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "stream").Exists())
+}
+
+func TestNormalizeOpenAIPassthroughOAuthBodyByRequestPath(t *testing.T) {
+	t.Parallel()
+
+	t.Run("responses_forces_store_false_and_stream_true", func(t *testing.T) {
+		t.Parallel()
+
+		input := []byte(`{"model":"gpt-5.2","store":true,"stream":false}`)
+		normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(input, "/v1/responses")
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.Equal(t, false, gjson.GetBytes(normalized, "store").Bool())
+		require.Equal(t, true, gjson.GetBytes(normalized, "stream").Bool())
+	})
+
+	t.Run("compact_removes_store_and_stream", func(t *testing.T) {
+		t.Parallel()
+
+		input := []byte(`{"model":"gpt-5.2-codex","store":false,"stream":true}`)
+		normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(input, "/v1/responses/compact")
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.False(t, gjson.GetBytes(normalized, "store").Exists())
+		require.False(t, gjson.GetBytes(normalized, "stream").Exists())
+		require.Equal(t, "gpt-5.2-codex", gjson.GetBytes(normalized, "model").String())
+	})
+}
+
 func TestOpenAIGatewayService_OAuthPassthrough_WarnOnTimeoutHeadersForStream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	logSink, restore := captureStructuredLog(t)

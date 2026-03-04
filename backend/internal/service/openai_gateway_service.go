@@ -2001,6 +2001,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	reqStream bool,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
+	requestPath := openAIPassthroughRequestPath(c)
+	isCompactRequest := isOpenAIResponsesCompactPath(requestPath)
+
 	if account != nil && account.Type == AccountTypeOAuth {
 		if rejectReason := detectOpenAIPassthroughInstructionsRejectReason(reqModel, body); rejectReason != "" {
 			rejectMsg := "OpenAI codex passthrough requires a non-empty instructions field"
@@ -2025,14 +2028,20 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			return nil, fmt.Errorf("openai passthrough rejected before upstream: %s", rejectReason)
 		}
 
-		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBody(body)
+		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBody(body, requestPath)
 		if err != nil {
 			return nil, err
 		}
 		if normalized {
 			body = normalizedBody
+		}
+		if !isCompactRequest && normalized {
 			reqStream = true
 		}
+	}
+
+	if isCompactRequest {
+		reqStream = false
 	}
 
 	logger.LegacyPrintf("service.openai_gateway",
@@ -2183,10 +2192,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	body []byte,
 	token string,
 ) (*http.Request, error) {
-	requestPath := ""
-	if c != nil && c.Request != nil && c.Request.URL != nil {
-		requestPath = c.Request.URL.Path
-	}
+	requestPath := openAIPassthroughRequestPath(c)
+	isCompactRequest := isOpenAIResponsesCompactPath(requestPath)
 	targetURL := buildOpenAIResponsesURLForRequestPath(openaiPlatformAPIURL, requestPath)
 	switch account.Type {
 	case AccountTypeOAuth:
@@ -2235,7 +2242,11 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 			req.Header.Set("chatgpt-account-id", chatgptAccountID)
 		}
 		if req.Header.Get("accept") == "" {
-			req.Header.Set("accept", "text/event-stream")
+			if isCompactRequest {
+				req.Header.Set("accept", "application/json")
+			} else {
+				req.Header.Set("accept", "text/event-stream")
+			}
 		}
 		if req.Header.Get("OpenAI-Beta") == "" {
 			req.Header.Set("OpenAI-Beta", "responses=experimental")
@@ -3368,6 +3379,18 @@ func buildOpenAIResponsesURLForRequestPath(base, requestPath string) string {
 	return buildOpenAIResponsesURL(base)
 }
 
+func openAIPassthroughRequestPath(c *gin.Context) string {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Request.URL.Path)
+}
+
+func isOpenAIResponsesCompactPath(requestPath string) bool {
+	normalizedPath := strings.TrimRight(strings.TrimSpace(requestPath), "/")
+	return strings.HasSuffix(normalizedPath, "/responses/compact")
+}
+
 func buildOpenAIResponsesCompactURL(base string) string {
 	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
 	if strings.HasSuffix(normalized, "/responses/compact") {
@@ -3773,9 +3796,17 @@ func extractOpenAIRequestMetaFromBody(body []byte) (model string, stream bool, p
 	return model, stream, promptCacheKey
 }
 
-// normalizeOpenAIPassthroughOAuthBody 将透传 OAuth 请求体收敛为旧链路关键行为：
-// 1) store=false 2) stream=true
-func normalizeOpenAIPassthroughOAuthBody(body []byte) ([]byte, bool, error) {
+// normalizeOpenAIPassthroughOAuthBody 将 OAuth 透传请求体按端点做收敛：
+// - /responses：保持旧链路关键行为（store=false, stream=true）
+// - /responses/compact：移除 store/stream，避免上游参数校验失败
+func normalizeOpenAIPassthroughOAuthBody(body []byte, requestPath string) ([]byte, bool, error) {
+	if isOpenAIResponsesCompactPath(requestPath) {
+		return normalizeOpenAIPassthroughOAuthCompactBody(body)
+	}
+	return normalizeOpenAIPassthroughOAuthResponsesBody(body)
+}
+
+func normalizeOpenAIPassthroughOAuthResponsesBody(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
@@ -3796,6 +3827,35 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte) ([]byte, bool, error) {
 		next, err := sjson.SetBytes(normalized, "stream", true)
 		if err != nil {
 			return body, false, fmt.Errorf("normalize passthrough body stream=true: %w", err)
+		}
+		normalized = next
+		changed = true
+	}
+
+	return normalized, changed, nil
+}
+
+func normalizeOpenAIPassthroughOAuthCompactBody(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 {
+		return body, false, nil
+	}
+
+	normalized := body
+	changed := false
+
+	if store := gjson.GetBytes(normalized, "store"); store.Exists() {
+		next, err := sjson.DeleteBytes(normalized, "store")
+		if err != nil {
+			return body, false, fmt.Errorf("normalize compact body remove store: %w", err)
+		}
+		normalized = next
+		changed = true
+	}
+
+	if stream := gjson.GetBytes(normalized, "stream"); stream.Exists() {
+		next, err := sjson.DeleteBytes(normalized, "stream")
+		if err != nil {
+			return body, false, fmt.Errorf("normalize compact body remove stream: %w", err)
 		}
 		normalized = next
 		changed = true
