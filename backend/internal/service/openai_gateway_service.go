@@ -1442,6 +1442,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	originalBody := body
 	reqModel, reqStream, promptCacheKey := extractOpenAIRequestMetaFromBody(body)
 	originalModel := reqModel
+	requestPath := openAIPassthroughRequestPath(c)
+	isCompactRequest := isOpenAIResponsesCompactPath(requestPath)
+	if isCompactRequest {
+		reqStream = false
+	}
 
 	isCodexCLI := openai.IsCodexCLIRequest(c.GetHeader("User-Agent")) || (s.cfg != nil && s.cfg.Gateway.ForceCodexCLI)
 	wsDecision := s.getOpenAIWSProtocolResolver().Resolve(account)
@@ -1493,6 +1498,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	if v, ok := reqBody["stream"].(bool); ok {
 		reqStream = v
+	}
+	if isCompactRequest {
+		reqStream = false
 	}
 	if promptCacheKey == "" {
 		if v, ok := reqBody["prompt_cache_key"].(string); ok {
@@ -1592,8 +1600,21 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
+	if isCompactRequest {
+		if _, has := reqBody["store"]; has {
+			delete(reqBody, "store")
+			bodyModified = true
+			markPatchDelete("store")
+		}
+		if _, has := reqBody["stream"]; has {
+			delete(reqBody, "stream")
+			bodyModified = true
+			markPatchDelete("stream")
+		}
+	}
+
 	if account.Type == AccountTypeOAuth {
-		codexResult := applyCodexOAuthTransform(reqBody, isCodexCLI)
+		codexResult := applyCodexOAuthTransformByRequestType(reqBody, isCodexCLI, isCompactRequest)
 		if codexResult.Modified {
 			bodyModified = true
 			disablePatch()
@@ -2003,6 +2024,16 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 ) (*OpenAIForwardResult, error) {
 	requestPath := openAIPassthroughRequestPath(c)
 	isCompactRequest := isOpenAIResponsesCompactPath(requestPath)
+	if isCompactRequest {
+		normalizedBody, normalized, err := normalizeOpenAICompactRequestBody(body)
+		if err != nil {
+			return nil, err
+		}
+		if normalized {
+			body = normalizedBody
+		}
+		reqStream = false
+	}
 
 	if account != nil && account.Type == AccountTypeOAuth {
 		if rejectReason := detectOpenAIPassthroughInstructionsRejectReason(reqModel, body); rejectReason != "" {
@@ -2028,15 +2059,17 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			return nil, fmt.Errorf("openai passthrough rejected before upstream: %s", rejectReason)
 		}
 
-		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBody(body, requestPath)
-		if err != nil {
-			return nil, err
-		}
-		if normalized {
-			body = normalizedBody
-		}
-		if !isCompactRequest && normalized {
-			reqStream = true
+		if !isCompactRequest {
+			normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBody(body, requestPath)
+			if err != nil {
+				return nil, err
+			}
+			if normalized {
+				body = normalizedBody
+			}
+			if normalized {
+				reqStream = true
+			}
 		}
 	}
 
@@ -2575,6 +2608,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	if c != nil && c.Request != nil && c.Request.URL != nil {
 		requestPath = c.Request.URL.Path
 	}
+	isCompactRequest := isOpenAIResponsesCompactPath(requestPath)
 
 	// Determine target URL based on account type
 	var targetURL string
@@ -2633,7 +2667,11 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		} else {
 			req.Header.Set("originator", "opencode")
 		}
-		req.Header.Set("accept", "text/event-stream")
+		if isCompactRequest {
+			req.Header.Set("accept", "application/json")
+		} else {
+			req.Header.Set("accept", "text/event-stream")
+		}
 		if promptCacheKey != "" {
 			req.Header.Set("conversation_id", promptCacheKey)
 			req.Header.Set("session_id", promptCacheKey)
@@ -3801,7 +3839,7 @@ func extractOpenAIRequestMetaFromBody(body []byte) (model string, stream bool, p
 // - /responses/compact：移除 store/stream，避免上游参数校验失败
 func normalizeOpenAIPassthroughOAuthBody(body []byte, requestPath string) ([]byte, bool, error) {
 	if isOpenAIResponsesCompactPath(requestPath) {
-		return normalizeOpenAIPassthroughOAuthCompactBody(body)
+		return normalizeOpenAICompactRequestBody(body)
 	}
 	return normalizeOpenAIPassthroughOAuthResponsesBody(body)
 }
@@ -3835,7 +3873,7 @@ func normalizeOpenAIPassthroughOAuthResponsesBody(body []byte) ([]byte, bool, er
 	return normalized, changed, nil
 }
 
-func normalizeOpenAIPassthroughOAuthCompactBody(body []byte) ([]byte, bool, error) {
+func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}

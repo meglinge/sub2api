@@ -105,6 +105,24 @@ func TestApplyCodexOAuthTransform_NonContinuationDefaultsStoreFalseAndStripsIDs(
 	require.False(t, hasID)
 }
 
+func TestApplyCodexOAuthTransform_CompactRemovesStoreAndStream(t *testing.T) {
+	reqBody := map[string]any{
+		"model":        "gpt-5.3-codex",
+		"store":        false,
+		"stream":       true,
+		"instructions": "compact-it",
+	}
+
+	result := applyCodexOAuthTransformByRequestType(reqBody, true, true)
+	require.True(t, result.Modified)
+	_, hasStore := reqBody["store"]
+	_, hasStream := reqBody["stream"]
+	require.False(t, hasStore)
+	require.False(t, hasStream)
+	require.Equal(t, "gpt-5.3-codex", reqBody["model"])
+	require.Equal(t, "compact-it", reqBody["instructions"])
+}
+
 func TestFilterCodexInput_RemovesItemReferenceWhenNotPreserved(t *testing.T) {
 	input := []any{
 		map[string]any{"type": "item_reference", "id": "ref1"},
