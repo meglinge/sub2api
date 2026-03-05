@@ -31,6 +31,7 @@ func ProvideAdminHandlers(
 	errorPassthroughHandler *admin.ErrorPassthroughHandler,
 	pricingHandler *admin.PricingHandler,
 	apiKeyHandler *admin.AdminAPIKeyHandler,
+	scheduledTestHandler *admin.ScheduledTestHandler,
 ) *AdminHandlers {
 	return &AdminHandlers{
 		Dashboard:        dashboardHandler,
@@ -55,6 +56,7 @@ func ProvideAdminHandlers(
 		ErrorPassthrough: errorPassthroughHandler,
 		Pricing:          pricingHandler,
 		APIKey:           apiKeyHandler,
+		ScheduledTest:    scheduledTestHandler,
 	}
 }
 
@@ -144,6 +146,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewErrorPassthroughHandler,
 	admin.NewPricingHandler,
 	admin.NewAdminAPIKeyHandler,
+	admin.NewScheduledTestHandler,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,
