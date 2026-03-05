@@ -5140,7 +5140,7 @@
     "supports_vision": true,
     "supports_web_search": true
   },
-  "gpt-5.4-codex": {
+  "gpt-5.4": {
     "cache_read_input_token_cost": 1.75e-07,
     "cache_read_input_token_cost_priority": 3.5e-07,
     "input_cost_per_token": 1.75e-06,

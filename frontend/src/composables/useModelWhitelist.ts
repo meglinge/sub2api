@@ -27,7 +27,7 @@ const openaiModels = [
   // GPT-5.3 系列
   'gpt-5.3-codex', 'gpt-5.3-codex-spark',
   // GPT-5.4 系列
-  'gpt-5.4-codex', 'gpt-5.4-codex-spark',
+  'gpt-5.4',
   'chatgpt-4o-latest',
   'gpt-4o-audio-preview', 'gpt-4o-realtime-preview'
 ]
