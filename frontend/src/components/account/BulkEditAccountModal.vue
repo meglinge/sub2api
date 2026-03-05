@@ -916,6 +916,8 @@ const allModels = [
   { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
   { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
   { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' },
+  { value: 'gpt-5.4-codex', label: 'GPT-5.4 Codex' },
+  { value: 'gpt-5.4-codex-spark', label: 'GPT-5.4 Codex Spark' },
   { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
   { value: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
   { value: 'gpt-5.2-2025-12-11', label: 'GPT-5.2' },

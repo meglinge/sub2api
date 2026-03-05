@@ -9,6 +9,22 @@ import (
 var codexCLIInstructions string
 
 var codexModelMap = map[string]string{
+	"gpt-5.4":                    "gpt-5.4-codex",
+	"gpt-5.4-none":               "gpt-5.4-codex",
+	"gpt-5.4-low":                "gpt-5.4-codex",
+	"gpt-5.4-medium":             "gpt-5.4-codex",
+	"gpt-5.4-high":               "gpt-5.4-codex",
+	"gpt-5.4-xhigh":              "gpt-5.4-codex",
+	"gpt-5.4-codex":              "gpt-5.4-codex",
+	"gpt-5.4-codex-spark":        "gpt-5.4-codex",
+	"gpt-5.4-codex-spark-low":    "gpt-5.4-codex",
+	"gpt-5.4-codex-spark-medium": "gpt-5.4-codex",
+	"gpt-5.4-codex-spark-high":   "gpt-5.4-codex",
+	"gpt-5.4-codex-spark-xhigh":  "gpt-5.4-codex",
+	"gpt-5.4-codex-low":          "gpt-5.4-codex",
+	"gpt-5.4-codex-medium":       "gpt-5.4-codex",
+	"gpt-5.4-codex-high":         "gpt-5.4-codex",
+	"gpt-5.4-codex-xhigh":        "gpt-5.4-codex",
 	"gpt-5.3":                    "gpt-5.3-codex",
 	"gpt-5.3-none":               "gpt-5.3-codex",
 	"gpt-5.3-low":                "gpt-5.3-codex",
@@ -170,6 +186,12 @@ func normalizeCodexModel(model string) string {
 
 	normalized := strings.ToLower(modelID)
 
+	if strings.Contains(normalized, "gpt-5.4-codex") || strings.Contains(normalized, "gpt 5.4 codex") {
+		return "gpt-5.4-codex"
+	}
+	if strings.Contains(normalized, "gpt-5.4") || strings.Contains(normalized, "gpt 5.4") {
+		return "gpt-5.4-codex"
+	}
 	if strings.Contains(normalized, "gpt-5.2-codex") || strings.Contains(normalized, "gpt 5.2 codex") {
 		return "gpt-5.2-codex"
 	}
