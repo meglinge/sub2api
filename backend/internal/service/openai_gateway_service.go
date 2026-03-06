@@ -1610,6 +1610,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			markPatchSet("model", normalizedModel)
 		}
 	}
+	if normalizedServiceTier, ok := reqBody["service_tier"].(string); ok {
+		mappedServiceTier := normalizeOpenAIServiceTier(normalizedServiceTier)
+		if mappedServiceTier != "" && mappedServiceTier != normalizedServiceTier {
+			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Normalized service_tier: %s -> %s (account: %s)", normalizedServiceTier, mappedServiceTier, account.Name)
+			reqBody["service_tier"] = mappedServiceTier
+			bodyModified = true
+			markPatchSet("service_tier", mappedServiceTier)
+		}
+	}
 
 	// 规范化 reasoning.effort 参数（minimal -> none），与上游允许值对齐。
 	if reasoning, ok := reqBody["reasoning"].(map[string]any); ok {
@@ -3914,6 +3923,18 @@ func normalizeOpenAIPassthroughOAuthResponsesBody(body []byte) ([]byte, bool, er
 	normalized := body
 	changed := false
 
+	if serviceTier := strings.TrimSpace(gjson.GetBytes(normalized, "service_tier").String()); serviceTier != "" {
+		mappedServiceTier := normalizeOpenAIServiceTier(serviceTier)
+		if mappedServiceTier != "" && mappedServiceTier != serviceTier {
+			next, err := sjson.SetBytes(normalized, "service_tier", mappedServiceTier)
+			if err != nil {
+				return body, false, fmt.Errorf("normalize passthrough body service_tier=%s: %w", mappedServiceTier, err)
+			}
+			normalized = next
+			changed = true
+		}
+	}
+
 	if store := gjson.GetBytes(normalized, "store"); !store.Exists() || store.Type != gjson.False {
 		next, err := sjson.SetBytes(normalized, "store", false)
 		if err != nil {
@@ -3942,6 +3963,18 @@ func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 
 	normalized := body
 	changed := false
+
+	if serviceTier := strings.TrimSpace(gjson.GetBytes(normalized, "service_tier").String()); serviceTier != "" {
+		mappedServiceTier := normalizeOpenAIServiceTier(serviceTier)
+		if mappedServiceTier != "" && mappedServiceTier != serviceTier {
+			next, err := sjson.SetBytes(normalized, "service_tier", mappedServiceTier)
+			if err != nil {
+				return body, false, fmt.Errorf("normalize compact body service_tier=%s: %w", mappedServiceTier, err)
+			}
+			normalized = next
+			changed = true
+		}
+	}
 
 	if store := gjson.GetBytes(normalized, "store"); store.Exists() {
 		next, err := sjson.DeleteBytes(normalized, "store")

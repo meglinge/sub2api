@@ -914,24 +914,26 @@ func TestNormalizeOpenAIPassthroughOAuthBodyByRequestPath(t *testing.T) {
 	t.Run("responses_forces_store_false_and_stream_true", func(t *testing.T) {
 		t.Parallel()
 
-		input := []byte(`{"model":"gpt-5.2","store":true,"stream":false}`)
+		input := []byte(`{"model":"gpt-5.2","store":true,"stream":false,"service_tier":"fast"}`)
 		normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(input, "/v1/responses")
 		require.NoError(t, err)
 		require.True(t, changed)
 		require.Equal(t, false, gjson.GetBytes(normalized, "store").Bool())
 		require.Equal(t, true, gjson.GetBytes(normalized, "stream").Bool())
+		require.Equal(t, "priority", gjson.GetBytes(normalized, "service_tier").String())
 	})
 
 	t.Run("compact_removes_store_and_stream", func(t *testing.T) {
 		t.Parallel()
 
-		input := []byte(`{"model":"gpt-5.2-codex","store":false,"stream":true}`)
+		input := []byte(`{"model":"gpt-5.2-codex","store":false,"stream":true,"service_tier":"fast"}`)
 		normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(input, "/v1/responses/compact")
 		require.NoError(t, err)
 		require.True(t, changed)
 		require.False(t, gjson.GetBytes(normalized, "store").Exists())
 		require.False(t, gjson.GetBytes(normalized, "stream").Exists())
 		require.Equal(t, "gpt-5.2-codex", gjson.GetBytes(normalized, "model").String())
+		require.Equal(t, "priority", gjson.GetBytes(normalized, "service_tier").String())
 	})
 }
 

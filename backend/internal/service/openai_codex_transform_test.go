@@ -123,6 +123,18 @@ func TestApplyCodexOAuthTransform_CompactRemovesStoreAndStream(t *testing.T) {
 	require.Equal(t, "compact-it", reqBody["instructions"])
 }
 
+func TestApplyCodexOAuthTransform_NormalizesFastServiceTierToPriority(t *testing.T) {
+	reqBody := map[string]any{
+		"model":        "gpt-5.4",
+		"service_tier": "fast",
+	}
+
+	result := applyCodexOAuthTransform(reqBody, true)
+
+	require.True(t, result.Modified)
+	require.Equal(t, "priority", reqBody["service_tier"])
+}
+
 func TestFilterCodexInput_RemovesItemReferenceWhenNotPreserved(t *testing.T) {
 	input := []any{
 		map[string]any{"type": "item_reference", "id": "ref1"},
