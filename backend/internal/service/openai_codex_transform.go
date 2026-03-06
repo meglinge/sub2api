@@ -98,9 +98,6 @@ func applyCodexOAuthTransformByRequestType(reqBody map[string]any, isCodexCLI bo
 		}
 		result.NormalizedModel = normalizedModel
 	}
-	if normalizeOpenAIServiceTierInRequest(reqBody) {
-		result.Modified = true
-	}
 
 	// /responses/compact 不接受 store/stream 字段。
 	if isCompactRequest {
@@ -220,42 +217,6 @@ func normalizeCodexModel(model string) string {
 	}
 
 	return "gpt-5.1"
-}
-
-func normalizeOpenAIServiceTier(raw string) string {
-	value := strings.ToLower(strings.TrimSpace(raw))
-	switch value {
-	case "":
-		return ""
-	case "fast":
-		return "priority"
-	case "priority":
-		return "priority"
-	case "flex":
-		return "flex"
-	default:
-		return strings.TrimSpace(raw)
-	}
-}
-
-func normalizeOpenAIServiceTierInRequest(reqBody map[string]any) bool {
-	raw, ok := reqBody["service_tier"]
-	if !ok || raw == nil {
-		return false
-	}
-
-	value, ok := raw.(string)
-	if !ok {
-		return false
-	}
-
-	normalized := normalizeOpenAIServiceTier(value)
-	if normalized == "" || normalized == value {
-		return false
-	}
-
-	reqBody["service_tier"] = normalized
-	return true
 }
 
 func getNormalizedCodexModel(modelID string) string {
