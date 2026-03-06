@@ -1610,10 +1610,22 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			markPatchSet("model", normalizedModel)
 		}
 	}
-	if normalizedServiceTier, ok := reqBody["service_tier"].(string); ok {
-		mappedServiceTier := normalizeOpenAIServiceTier(normalizedServiceTier)
-		if mappedServiceTier != "" && mappedServiceTier != normalizedServiceTier {
-			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Normalized service_tier: %s -> %s (account: %s)", normalizedServiceTier, mappedServiceTier, account.Name)
+	if rawServiceTier, ok := reqBody["service_tier"].(string); ok {
+		mappedServiceTier := normalizeOpenAIServiceTier(rawServiceTier)
+		if mappedServiceTier == "" {
+			mappedServiceTier = strings.TrimSpace(rawServiceTier)
+		}
+		logger.LegacyPrintf(
+			"service.openai_gateway",
+			"[OpenAI] Incoming service_tier: raw=%s normalized=%s (account: %s, type: %s, isCodexCLI: %v)",
+			rawServiceTier,
+			mappedServiceTier,
+			account.Name,
+			account.Type,
+			isCodexCLI,
+		)
+		if mappedServiceTier != "" && mappedServiceTier != rawServiceTier {
+			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Normalized service_tier: %s -> %s (account: %s)", rawServiceTier, mappedServiceTier, account.Name)
 			reqBody["service_tier"] = mappedServiceTier
 			bodyModified = true
 			markPatchSet("service_tier", mappedServiceTier)
