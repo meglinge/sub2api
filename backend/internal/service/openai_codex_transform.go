@@ -15,6 +15,7 @@ var codexModelMap = map[string]string{
 	"gpt-5.4-medium":             "gpt-5.4",
 	"gpt-5.4-high":               "gpt-5.4",
 	"gpt-5.4-xhigh":              "gpt-5.4",
+	"gpt-5.4-chat-latest":        "gpt-5.4",
 	"gpt-5.3":                    "gpt-5.3-codex",
 	"gpt-5.3-none":               "gpt-5.3-codex",
 	"gpt-5.3-low":                "gpt-5.3-codex",
