@@ -389,6 +389,32 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		}
 	})
 
+	t.Run("skips_responses_compact_post_routes", func(t *testing.T) {
+		provider := &mockSettingsProvider{
+			settings: map[string]string{"test": "value"},
+		}
+
+		server, err := NewFrontendServer(provider)
+		require.NoError(t, err)
+
+		router := gin.New()
+		router.Use(server.Middleware())
+		nextCalled := false
+		router.POST("/responses/compact", func(c *gin.Context) {
+			nextCalled = true
+			c.String(http.StatusOK, `{"ok":true}`)
+		})
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/responses/compact", strings.NewReader(`{"model":"gpt-5"}`))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		assert.True(t, nextCalled, "next handler should be called for compact API route")
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.JSONEq(t, `{"ok":true}`, w.Body.String())
+	})
+
 	t.Run("serves_index_for_spa_routes", func(t *testing.T) {
 		provider := &mockSettingsProvider{
 			settings: map[string]string{"test": "value"},

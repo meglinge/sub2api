@@ -25,6 +25,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
@@ -49,6 +50,8 @@ const (
 	openAIWSRetryBackoffInitialDefault = 120 * time.Millisecond
 	openAIWSRetryBackoffMaxDefault     = 2 * time.Second
 	openAIWSRetryJitterRatioDefault    = 0.2
+	openAICompactSessionSeedKey        = "openai_compact_session_seed"
+	codexCLIVersion                    = "0.104.0"
 )
 
 // OpenAI allowed headers whitelist (for non-passthrough).
@@ -204,12 +207,18 @@ type OpenAIUsage struct {
 type OpenAIForwardResult struct {
 	RequestID string
 	Usage     OpenAIUsage
-	Model     string
+	Model     string // 原始模型（用于响应和日志显示）
+	// BillingModel is the model used for cost calculation.
+	// When non-empty, CalculateCost uses this instead of Model.
+	// This is set by the Anthropic Messages conversion path where
+	// the mapped upstream model differs from the client-facing model.
+	BillingModel string
 	// ReasoningEffort is extracted from request body (reasoning.effort) or derived from model suffix.
 	// Stored for usage records display; nil means not provided / not applicable.
 	ReasoningEffort *string
 	Stream          bool
 	OpenAIWSMode    bool
+	ResponseHeaders http.Header
 	Duration        time.Duration
 	FirstTokenMs    *int
 }
@@ -825,8 +834,10 @@ func logOpenAIInstructionsRequiredDebug(
 	}
 
 	userAgent := ""
+	originator := ""
 	if c != nil {
 		userAgent = strings.TrimSpace(c.GetHeader("User-Agent"))
+		originator = strings.TrimSpace(c.GetHeader("originator"))
 	}
 
 	fields := []zap.Field{
@@ -836,7 +847,7 @@ func logOpenAIInstructionsRequiredDebug(
 		zap.Int("upstream_status_code", upstreamStatusCode),
 		zap.String("upstream_error_message", msg),
 		zap.String("request_user_agent", userAgent),
-		zap.Bool("codex_official_client_match", openai.IsCodexCLIRequest(userAgent)),
+		zap.Bool("codex_official_client_match", openai.IsCodexOfficialClientByHeaders(userAgent, originator)),
 	}
 	fields = appendCodexCLIOnlyRejectedRequestFields(fields, c, requestBody)
 
@@ -897,6 +908,22 @@ func isOpenAIInstructionsRequiredError(upstreamStatusCode int, upstreamMsg strin
 	return false
 }
 
+// ExtractSessionID extracts the raw session ID from headers or body without hashing.
+// Used by ForwardAsAnthropic to pass as prompt_cache_key for upstream cache.
+func (s *OpenAIGatewayService) ExtractSessionID(c *gin.Context, body []byte) string {
+	if c == nil {
+		return ""
+	}
+	sessionID := strings.TrimSpace(c.GetHeader("session_id"))
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(c.GetHeader("conversation_id"))
+	}
+	if sessionID == "" && len(body) > 0 {
+		sessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
+	}
+	return sessionID
+}
+
 // GenerateSessionHash generates a sticky-session hash for OpenAI requests.
 //
 // Priority:
@@ -918,6 +945,7 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) 
 	if sessionID == "" {
 		return ""
 	}
+	c.Set(openAICompactSessionSeedKey, sessionID)
 
 	currentHash, legacyHash := deriveOpenAISessionHashes(sessionID)
 	attachOpenAILegacySessionHashToGin(c, legacyHash)
@@ -941,6 +969,18 @@ func (s *OpenAIGatewayService) GenerateSessionHashWithFallback(c *gin.Context, b
 	currentHash, legacyHash := deriveOpenAISessionHashes(seed)
 	attachOpenAILegacySessionHashToGin(c, legacyHash)
 	return currentHash
+}
+
+func resolveOpenAIUpstreamOriginator(c *gin.Context, isOfficialClient bool) string {
+	if c != nil {
+		if originator := strings.TrimSpace(c.GetHeader("originator")); originator != "" {
+			return originator
+		}
+	}
+	if isOfficialClient {
+		return "codex_cli_rs"
+	}
+	return "opencode"
 }
 
 // BindStickySession sets session -> account binding with standard TTL.
@@ -1469,7 +1509,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		reqStream = false
 	}
 
-	isCodexCLI := openai.IsCodexCLIRequest(c.GetHeader("User-Agent")) || (s.cfg != nil && s.cfg.Gateway.ForceCodexCLI)
+	isCodexCLI := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) || (s.cfg != nil && s.cfg.Gateway.ForceCodexCLI)
 	wsDecision := s.getOpenAIWSProtocolResolver().Resolve(account)
 	clientTransport := GetOpenAIClientTransport(c)
 	// 仅允许 WS 入站请求走 WS 上游，避免出现 HTTP -> WS 协议混用。
@@ -1580,13 +1620,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		patchDisabled = true
 	}
 
-	// 非透传模式下，保持历史行为：非 Codex CLI 请求在 instructions 为空时注入默认指令。
-	if !isCodexCLI && isInstructionsEmpty(reqBody) {
-		if instructions := strings.TrimSpace(GetOpenCodeInstructions()); instructions != "" {
-			reqBody["instructions"] = instructions
-			bodyModified = true
-			markPatchSet("instructions", instructions)
-		}
+	// 非透传模式下，instructions 为空时注入默认指令。
+	if isInstructionsEmpty(reqBody) {
+		reqBody["instructions"] = "You are a helpful coding assistant."
+		bodyModified = true
+		markPatchSet("instructions", "You are a helpful coding assistant.")
 	}
 
 	// 对所有请求执行模型映射（包含 Codex CLI）。
@@ -2088,10 +2126,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			if normalized {
 				body = normalizedBody
 			}
-			if normalized {
-				reqStream = true
-			}
 		}
+		reqStream = gjson.GetBytes(body, "stream").Bool()
 	}
 
 	if isCompactRequest {
@@ -2262,7 +2298,6 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 			targetURL = buildOpenAIResponsesURLForRequestPath(validatedURL, requestPath)
 		}
 	}
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -2295,12 +2330,16 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		if chatgptAccountID := account.GetChatGPTAccountID(); chatgptAccountID != "" {
 			req.Header.Set("chatgpt-account-id", chatgptAccountID)
 		}
-		if req.Header.Get("accept") == "" {
-			if isCompactRequest {
-				req.Header.Set("accept", "application/json")
-			} else {
-				req.Header.Set("accept", "text/event-stream")
+		if isCompactRequest {
+			req.Header.Set("accept", "application/json")
+			if req.Header.Get("version") == "" {
+				req.Header.Set("version", codexCLIVersion)
 			}
+			if req.Header.Get("session_id") == "" {
+				req.Header.Set("session_id", resolveOpenAICompactSessionID(c))
+			}
+		} else if req.Header.Get("accept") == "" {
+			req.Header.Set("accept", "text/event-stream")
 		}
 		if req.Header.Get("OpenAI-Beta") == "" {
 			req.Header.Set("OpenAI-Beta", "responses=experimental")
@@ -2652,7 +2691,6 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	default:
 		targetURL = buildOpenAIResponsesURLForRequestPath(openaiPlatformAPIURL, requestPath)
 	}
-
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -2683,13 +2721,15 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	}
 	if account.Type == AccountTypeOAuth {
 		req.Header.Set("OpenAI-Beta", "responses=experimental")
-		if isCodexCLI {
-			req.Header.Set("originator", "codex_cli_rs")
-		} else {
-			req.Header.Set("originator", "opencode")
-		}
+		req.Header.Set("originator", resolveOpenAIUpstreamOriginator(c, isCodexCLI))
 		if isCompactRequest {
 			req.Header.Set("accept", "application/json")
+			if req.Header.Get("version") == "" {
+				req.Header.Set("version", codexCLIVersion)
+			}
+			if req.Header.Get("session_id") == "" {
+				req.Header.Set("session_id", resolveOpenAICompactSessionID(c))
+			}
 		} else {
 			req.Header.Set("accept", "text/event-stream")
 		}
@@ -3484,11 +3524,21 @@ func buildOpenAIResponsesURL(base string) string {
 }
 
 func buildOpenAIResponsesURLForRequestPath(base, requestPath string) string {
-	normalizedPath := strings.TrimRight(strings.TrimSpace(requestPath), "/")
-	if strings.HasSuffix(normalizedPath, "/responses/compact") {
-		return buildOpenAIResponsesCompactURL(base)
+	suffix := openAIResponsesRequestPathSuffixFromPath(requestPath)
+	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
+	if suffix == "" {
+		return buildOpenAIResponsesURL(normalized)
 	}
-	return buildOpenAIResponsesURL(base)
+	if strings.HasSuffix(normalized, "/responses"+suffix) {
+		return normalized
+	}
+	if strings.HasSuffix(normalized, "/responses") {
+		return normalized + suffix
+	}
+	if strings.HasSuffix(normalized, "/v1") {
+		return normalized + "/responses" + suffix
+	}
+	return normalized + "/v1/responses" + suffix
 }
 
 func openAIPassthroughRequestPath(c *gin.Context) string {
@@ -3499,22 +3549,93 @@ func openAIPassthroughRequestPath(c *gin.Context) string {
 }
 
 func isOpenAIResponsesCompactPath(requestPath string) bool {
-	normalizedPath := strings.TrimRight(strings.TrimSpace(requestPath), "/")
-	return strings.HasSuffix(normalizedPath, "/responses/compact")
+	suffix := strings.TrimSpace(openAIResponsesRequestPathSuffixFromPath(requestPath))
+	return suffix == "/compact" || strings.HasPrefix(suffix, "/compact/")
 }
 
-func buildOpenAIResponsesCompactURL(base string) string {
-	normalized := strings.TrimRight(strings.TrimSpace(base), "/")
-	if strings.HasSuffix(normalized, "/responses/compact") {
-		return normalized
+func IsOpenAIResponsesCompactPathForTest(c *gin.Context) bool {
+	return isOpenAIResponsesCompactPath(openAIPassthroughRequestPath(c))
+}
+
+func OpenAICompactSessionSeedKeyForTest() string {
+	return openAICompactSessionSeedKey
+}
+
+func NormalizeOpenAICompactRequestBodyForTest(body []byte) ([]byte, bool, error) {
+	return normalizeOpenAICompactRequestBody(body)
+}
+
+func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 {
+		return body, false, nil
 	}
-	if strings.HasSuffix(normalized, "/responses") {
-		return normalized + "/compact"
+
+	normalized := []byte(`{}`)
+	for _, field := range []string{"model", "input", "instructions", "previous_response_id"} {
+		value := gjson.GetBytes(body, field)
+		if !value.Exists() {
+			continue
+		}
+		next, err := sjson.SetRawBytes(normalized, field, []byte(value.Raw))
+		if err != nil {
+			return body, false, fmt.Errorf("normalize compact body %s: %w", field, err)
+		}
+		normalized = next
 	}
-	if strings.HasSuffix(normalized, "/v1") {
-		return normalized + "/responses/compact"
+
+	if bytes.Equal(bytes.TrimSpace(body), bytes.TrimSpace(normalized)) {
+		return body, false, nil
 	}
-	return normalized + "/v1/responses/compact"
+	return normalized, true, nil
+}
+
+func resolveOpenAICompactSessionID(c *gin.Context) string {
+	if c != nil {
+		if sessionID := strings.TrimSpace(c.GetHeader("session_id")); sessionID != "" {
+			return sessionID
+		}
+		if conversationID := strings.TrimSpace(c.GetHeader("conversation_id")); conversationID != "" {
+			return conversationID
+		}
+		if seed, ok := c.Get(openAICompactSessionSeedKey); ok {
+			if seedStr, ok := seed.(string); ok && strings.TrimSpace(seedStr) != "" {
+				return strings.TrimSpace(seedStr)
+			}
+		}
+	}
+	return uuid.NewString()
+}
+
+func openAIResponsesRequestPathSuffix(c *gin.Context) string {
+	return openAIResponsesRequestPathSuffixFromPath(openAIPassthroughRequestPath(c))
+}
+
+func openAIResponsesRequestPathSuffixFromPath(requestPath string) string {
+	normalizedPath := strings.TrimRight(strings.TrimSpace(requestPath), "/")
+	if normalizedPath == "" {
+		return ""
+	}
+	idx := strings.LastIndex(normalizedPath, "/responses")
+	if idx < 0 {
+		return ""
+	}
+	suffix := normalizedPath[idx+len("/responses"):]
+	if suffix == "" || suffix == "/" {
+		return ""
+	}
+	if !strings.HasPrefix(suffix, "/") {
+		return ""
+	}
+	return suffix
+}
+
+func appendOpenAIResponsesRequestPathSuffix(baseURL, suffix string) string {
+	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	trimmedSuffix := strings.TrimSpace(suffix)
+	if trimmedBase == "" || trimmedSuffix == "" {
+		return trimmedBase
+	}
+	return trimmedBase + trimmedSuffix
 }
 
 func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
@@ -3574,7 +3695,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		multiplier = resolver.Resolve(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
 	}
 
-	cost, err := s.billingService.CalculateCost(result.Model, tokens, multiplier)
+	billingModel := result.Model
+	if result.BillingModel != "" {
+		billingModel = result.BillingModel
+	}
+	cost, err := s.billingService.CalculateCost(billingModel, tokens, multiplier)
 	if err != nil {
 		cost = &CostBreakdown{ActualCost: 0}
 	}
@@ -3594,7 +3719,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		APIKeyID:              apiKey.ID,
 		AccountID:             account.ID,
 		RequestID:             result.RequestID,
-		Model:                 result.Model,
+		Model:                 billingModel,
 		ReasoningEffort:       result.ReasoningEffort,
 		InputTokens:           actualInputTokens,
 		OutputTokens:          result.Usage.OutputTokens,
@@ -3839,6 +3964,15 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 	}()
 }
 
+func (s *OpenAIGatewayService) UpdateCodexUsageSnapshotFromHeaders(ctx context.Context, accountID int64, headers http.Header) {
+	if accountID <= 0 || headers == nil {
+		return
+	}
+	if snapshot := ParseCodexRateLimitHeaders(headers); snapshot != nil {
+		s.updateCodexUsageSnapshot(ctx, accountID, snapshot)
+	}
+}
+
 func getOpenAIReasoningEffortFromReqBody(reqBody map[string]any) (value string, present bool) {
 	if reqBody == nil {
 		return "", false
@@ -3922,40 +4056,10 @@ func normalizeOpenAIPassthroughOAuthResponsesBody(body []byte) ([]byte, bool, er
 		normalized = next
 		changed = true
 	}
-
 	if stream := gjson.GetBytes(normalized, "stream"); !stream.Exists() || stream.Type != gjson.True {
 		next, err := sjson.SetBytes(normalized, "stream", true)
 		if err != nil {
 			return body, false, fmt.Errorf("normalize passthrough body stream=true: %w", err)
-		}
-		normalized = next
-		changed = true
-	}
-
-	return normalized, changed, nil
-}
-
-func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
-	if len(body) == 0 {
-		return body, false, nil
-	}
-
-	normalized := body
-	changed := false
-
-	if store := gjson.GetBytes(normalized, "store"); store.Exists() {
-		next, err := sjson.DeleteBytes(normalized, "store")
-		if err != nil {
-			return body, false, fmt.Errorf("normalize compact body remove store: %w", err)
-		}
-		normalized = next
-		changed = true
-	}
-
-	if stream := gjson.GetBytes(normalized, "stream"); stream.Exists() {
-		next, err := sjson.DeleteBytes(normalized, "stream")
-		if err != nil {
-			return body, false, fmt.Errorf("normalize compact body remove stream: %w", err)
 		}
 		normalized = next
 		changed = true
