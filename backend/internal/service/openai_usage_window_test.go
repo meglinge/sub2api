@@ -57,7 +57,7 @@ func TestEvaluateOpenAIUsageWindow_PastResetTurnsUnknown(t *testing.T) {
 
 func TestEvaluateOpenAIUsageWindow_StaleYellowTurnsUnknown(t *testing.T) {
 	now := time.Now().UTC()
-	updatedAt := now.Add(-(openAIUsageWindowStaleTTL + 5*time.Minute)).Format(time.RFC3339)
+	updatedAt := now.Add(-(openAIUsageWindowStaleTTLDefault + 5*time.Minute)).Format(time.RFC3339)
 
 	eval := evaluateOpenAIUsageWindow(&Account{
 		ID:       4,
@@ -70,4 +70,25 @@ func TestEvaluateOpenAIUsageWindow_StaleYellowTurnsUnknown(t *testing.T) {
 
 	require.Equal(t, openAIUsageWindowStateUnknown, eval.State)
 	require.True(t, eval.NeedsProbe)
+}
+
+func TestEvaluateOpenAIUsageWindowWithConfig_UsesCustomThresholds(t *testing.T) {
+	now := time.Now().UTC()
+	updatedAt := now.Format(time.RFC3339)
+
+	eval := evaluateOpenAIUsageWindowWithConfig(&Account{
+		ID:       5,
+		Platform: PlatformOpenAI,
+		Extra: map[string]any{
+			"codex_5h_used_percent":  75.0,
+			"codex_usage_updated_at": updatedAt,
+		},
+	}, now, openAIUsageWindowConfig{
+		Yellow5hPercent: 70,
+		Yellow7dPercent: 90,
+		StaleTTL:        30 * time.Minute,
+	})
+
+	require.Equal(t, openAIUsageWindowStateYellow, eval.State)
+	require.False(t, eval.NeedsProbe)
 }

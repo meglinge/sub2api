@@ -3805,7 +3805,7 @@ func (s *OpenAIGatewayService) SelectAccountByPreviousResponseID(
 	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
 		return nil, nil
 	}
-	windowEval := evaluateOpenAIUsageWindow(account, time.Now())
+	windowEval := evaluateOpenAIUsageWindowWithConfig(account, time.Now(), s.openAIUsageWindowConfig())
 	s.maybeRefreshOpenAIUsageWindowAsync(account, windowEval)
 	if windowEval.State == openAIUsageWindowStateRed {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)

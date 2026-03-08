@@ -1004,6 +1004,69 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_PrefersGreenOverYellowW
 	}
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_UsageWindowThresholdsAreConfigurable(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(30004)
+	now := time.Now().UTC()
+
+	accounts := []Account{
+		{
+			ID:          34001,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			Extra: map[string]any{
+				"codex_5h_used_percent":  80.0,
+				"codex_5h_reset_at":      now.Add(40 * time.Minute).Format(time.RFC3339),
+				"codex_usage_updated_at": now.Format(time.RFC3339),
+			},
+		},
+		{
+			ID:          34002,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			LastUsedAt:  int64PtrTimeForTest(now.Add(-2 * time.Hour)),
+		},
+	}
+
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.UsageWindow.Yellow5HPercent = 70
+	cfg.Gateway.OpenAIWS.UsageWindow.Yellow7DPercent = 90
+	cfg.Gateway.OpenAIWS.UsageWindow.SnapshotStaleSeconds = 1800
+
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: accounts},
+		cache:              &stubGatewayCache{},
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"window_threshold_configurable",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(34002), selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
 func int64PtrForTest(v int64) *int64 {
 	return &v
 }

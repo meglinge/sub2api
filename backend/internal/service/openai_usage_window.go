@@ -3,10 +3,16 @@ package service
 import "time"
 
 const (
-	openAIUsageWindowYellow5hPercent = 85.0
-	openAIUsageWindowYellow7dPercent = 90.0
-	openAIUsageWindowStaleTTL        = 30 * time.Minute
+	openAIUsageWindowYellow5hPercentDefault = 85.0
+	openAIUsageWindowYellow7dPercentDefault = 90.0
+	openAIUsageWindowStaleTTLDefault        = 30 * time.Minute
 )
+
+type openAIUsageWindowConfig struct {
+	Yellow5hPercent float64
+	Yellow7dPercent float64
+	StaleTTL        time.Duration
+}
 
 type openAIUsageWindowState uint8
 
@@ -44,6 +50,28 @@ func (e openAIUsageWindowEvaluation) windowFactor() float64 {
 }
 
 func evaluateOpenAIUsageWindow(account *Account, now time.Time) openAIUsageWindowEvaluation {
+	return evaluateOpenAIUsageWindowWithConfig(account, now, defaultOpenAIUsageWindowConfig())
+}
+
+func defaultOpenAIUsageWindowConfig() openAIUsageWindowConfig {
+	return openAIUsageWindowConfig{
+		Yellow5hPercent: openAIUsageWindowYellow5hPercentDefault,
+		Yellow7dPercent: openAIUsageWindowYellow7dPercentDefault,
+		StaleTTL:        openAIUsageWindowStaleTTLDefault,
+	}
+}
+
+func evaluateOpenAIUsageWindowWithConfig(account *Account, now time.Time, cfg openAIUsageWindowConfig) openAIUsageWindowEvaluation {
+	if cfg.Yellow5hPercent <= 0 {
+		cfg.Yellow5hPercent = openAIUsageWindowYellow5hPercentDefault
+	}
+	if cfg.Yellow7dPercent <= 0 {
+		cfg.Yellow7dPercent = openAIUsageWindowYellow7dPercentDefault
+	}
+	if cfg.StaleTTL <= 0 {
+		cfg.StaleTTL = openAIUsageWindowStaleTTLDefault
+	}
+
 	eval := openAIUsageWindowEvaluation{
 		State: openAIUsageWindowStateUnknown,
 	}
@@ -65,8 +93,8 @@ func evaluateOpenAIUsageWindow(account *Account, now time.Time) openAIUsageWindo
 		eval.Reset7dAt = progress7d.ResetsAt
 	}
 
-	state5h, known5h := classifyOpenAIUsageProgress(progress5h, updatedAt, openAIUsageWindowYellow5hPercent, now)
-	state7d, known7d := classifyOpenAIUsageProgress(progress7d, updatedAt, openAIUsageWindowYellow7dPercent, now)
+	state5h, known5h := classifyOpenAIUsageProgress(progress5h, updatedAt, cfg.Yellow5hPercent, now, cfg.StaleTTL)
+	state7d, known7d := classifyOpenAIUsageProgress(progress7d, updatedAt, cfg.Yellow7dPercent, now, cfg.StaleTTL)
 
 	switch {
 	case state5h == openAIUsageWindowStateRed || state7d == openAIUsageWindowStateRed:
@@ -84,7 +112,7 @@ func evaluateOpenAIUsageWindow(account *Account, now time.Time) openAIUsageWindo
 	}
 
 	eval.NeedsProbe = eval.State == openAIUsageWindowStateUnknown
-	if updatedAt != nil && now.Sub(*updatedAt) > openAIUsageWindowStaleTTL && eval.State != openAIUsageWindowStateGreen {
+	if updatedAt != nil && now.Sub(*updatedAt) > cfg.StaleTTL && eval.State != openAIUsageWindowStateGreen {
 		eval.State = openAIUsageWindowStateUnknown
 		eval.NeedsProbe = true
 	}
@@ -92,7 +120,7 @@ func evaluateOpenAIUsageWindow(account *Account, now time.Time) openAIUsageWindo
 	return eval
 }
 
-func classifyOpenAIUsageProgress(progress *UsageProgress, updatedAt *time.Time, yellowThreshold float64, now time.Time) (openAIUsageWindowState, bool) {
+func classifyOpenAIUsageProgress(progress *UsageProgress, updatedAt *time.Time, yellowThreshold float64, now time.Time, staleTTL time.Duration) (openAIUsageWindowState, bool) {
 	if progress == nil {
 		return openAIUsageWindowStateUnknown, false
 	}
@@ -104,12 +132,12 @@ func classifyOpenAIUsageProgress(progress *UsageProgress, updatedAt *time.Time, 
 	utilization := progress.Utilization
 	switch {
 	case utilization >= 100:
-		if updatedAt != nil && now.Sub(*updatedAt) > openAIUsageWindowStaleTTL {
+		if updatedAt != nil && now.Sub(*updatedAt) > staleTTL {
 			return openAIUsageWindowStateUnknown, true
 		}
 		return openAIUsageWindowStateRed, true
 	case utilization >= yellowThreshold:
-		if updatedAt != nil && now.Sub(*updatedAt) > openAIUsageWindowStaleTTL {
+		if updatedAt != nil && now.Sub(*updatedAt) > staleTTL {
 			return openAIUsageWindowStateUnknown, true
 		}
 		return openAIUsageWindowStateYellow, true
@@ -138,13 +166,17 @@ func openAICodexUsageUpdatedAt(extra map[string]any) *time.Time {
 }
 
 func partitionOpenAIWindowCandidates(accounts []*Account, now time.Time) (preferred []openAIWindowAccountCandidate, degraded []openAIWindowAccountCandidate) {
+	return partitionOpenAIWindowCandidatesWithConfig(accounts, now, defaultOpenAIUsageWindowConfig())
+}
+
+func partitionOpenAIWindowCandidatesWithConfig(accounts []*Account, now time.Time, cfg openAIUsageWindowConfig) (preferred []openAIWindowAccountCandidate, degraded []openAIWindowAccountCandidate) {
 	if len(accounts) == 0 {
 		return nil, nil
 	}
 	preferred = make([]openAIWindowAccountCandidate, 0, len(accounts))
 	degraded = make([]openAIWindowAccountCandidate, 0, len(accounts))
 	for _, account := range accounts {
-		eval := evaluateOpenAIUsageWindow(account, now)
+		eval := evaluateOpenAIUsageWindowWithConfig(account, now, cfg)
 		candidate := openAIWindowAccountCandidate{
 			account: account,
 			window:  eval,

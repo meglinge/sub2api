@@ -117,6 +117,15 @@ func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	if cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds != 3600 {
 		t.Fatalf("Gateway.OpenAIWS.StickyResponseIDTTLSeconds = %d, want 3600", cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds)
 	}
+	if cfg.Gateway.OpenAIWS.UsageWindow.Yellow5HPercent != 85.0 {
+		t.Fatalf("Gateway.OpenAIWS.UsageWindow.Yellow5HPercent = %v, want 85.0", cfg.Gateway.OpenAIWS.UsageWindow.Yellow5HPercent)
+	}
+	if cfg.Gateway.OpenAIWS.UsageWindow.Yellow7DPercent != 90.0 {
+		t.Fatalf("Gateway.OpenAIWS.UsageWindow.Yellow7DPercent = %v, want 90.0", cfg.Gateway.OpenAIWS.UsageWindow.Yellow7DPercent)
+	}
+	if cfg.Gateway.OpenAIWS.UsageWindow.SnapshotStaleSeconds != 1800 {
+		t.Fatalf("Gateway.OpenAIWS.UsageWindow.SnapshotStaleSeconds = %d, want 1800", cfg.Gateway.OpenAIWS.UsageWindow.SnapshotStaleSeconds)
+	}
 	if cfg.Gateway.OpenAIWS.FallbackCooldownSeconds != 30 {
 		t.Fatalf("Gateway.OpenAIWS.FallbackCooldownSeconds = %d, want 30", cfg.Gateway.OpenAIWS.FallbackCooldownSeconds)
 	}
@@ -1409,6 +1418,21 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 			name:    "sticky_previous_response_ttl_seconds 不能为负数",
 			mutate:  func(c *Config) { c.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds = -1 },
 			wantErr: "gateway.openai_ws.sticky_previous_response_ttl_seconds",
+		},
+		{
+			name:    "usage_window.yellow_5h_percent 必须在 (0,100]",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.UsageWindow.Yellow5HPercent = 0 },
+			wantErr: "gateway.openai_ws.usage_window.yellow_5h_percent",
+		},
+		{
+			name:    "usage_window.yellow_7d_percent 必须在 (0,100]",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.UsageWindow.Yellow7DPercent = 101 },
+			wantErr: "gateway.openai_ws.usage_window.yellow_7d_percent",
+		},
+		{
+			name:    "usage_window.snapshot_stale_seconds 必须为正数",
+			mutate:  func(c *Config) { c.Gateway.OpenAIWS.UsageWindow.SnapshotStaleSeconds = 0 },
+			wantErr: "gateway.openai_ws.usage_window.snapshot_stale_seconds",
 		},
 		{
 			name:    "scheduler_score_weights 不能为负数",

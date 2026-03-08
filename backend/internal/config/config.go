@@ -594,7 +594,14 @@ type GatewayOpenAIWSConfig struct {
 	// StickyPreviousResponseTTLSeconds: 兼容旧键（当新键未设置时回退）
 	StickyPreviousResponseTTLSeconds int `mapstructure:"sticky_previous_response_ttl_seconds"`
 
+	UsageWindow           GatewayOpenAIWSUsageWindowConfig     `mapstructure:"usage_window"`
 	SchedulerScoreWeights GatewayOpenAIWSSchedulerScoreWeights `mapstructure:"scheduler_score_weights"`
+}
+
+type GatewayOpenAIWSUsageWindowConfig struct {
+	Yellow5HPercent      float64 `mapstructure:"yellow_5h_percent"`
+	Yellow7DPercent      float64 `mapstructure:"yellow_7d_percent"`
+	SnapshotStaleSeconds int     `mapstructure:"snapshot_stale_seconds"`
 }
 
 // GatewayOpenAIWSSchedulerScoreWeights 账号调度打分权重。
@@ -1373,6 +1380,9 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.metadata_bridge_enabled", true)
 	viper.SetDefault("gateway.openai_ws.sticky_response_id_ttl_seconds", 3600)
 	viper.SetDefault("gateway.openai_ws.sticky_previous_response_ttl_seconds", 3600)
+	viper.SetDefault("gateway.openai_ws.usage_window.yellow_5h_percent", 85.0)
+	viper.SetDefault("gateway.openai_ws.usage_window.yellow_7d_percent", 90.0)
+	viper.SetDefault("gateway.openai_ws.usage_window.snapshot_stale_seconds", 1800)
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.priority", 1.0)
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.load", 1.0)
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.queue", 0.7)
@@ -2071,6 +2081,15 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds < 0 {
 		return fmt.Errorf("gateway.openai_ws.sticky_previous_response_ttl_seconds must be non-negative")
+	}
+	if c.Gateway.OpenAIWS.UsageWindow.Yellow5HPercent <= 0 || c.Gateway.OpenAIWS.UsageWindow.Yellow5HPercent > 100 {
+		return fmt.Errorf("gateway.openai_ws.usage_window.yellow_5h_percent must be in (0,100]")
+	}
+	if c.Gateway.OpenAIWS.UsageWindow.Yellow7DPercent <= 0 || c.Gateway.OpenAIWS.UsageWindow.Yellow7DPercent > 100 {
+		return fmt.Errorf("gateway.openai_ws.usage_window.yellow_7d_percent must be in (0,100]")
+	}
+	if c.Gateway.OpenAIWS.UsageWindow.SnapshotStaleSeconds <= 0 {
+		return fmt.Errorf("gateway.openai_ws.usage_window.snapshot_stale_seconds must be positive")
 	}
 	if c.Gateway.OpenAIWS.SchedulerScoreWeights.Priority < 0 ||
 		c.Gateway.OpenAIWS.SchedulerScoreWeights.Load < 0 ||

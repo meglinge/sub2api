@@ -389,6 +389,23 @@ func (s *OpenAIGatewayService) maybeRefreshOpenAIUsageWindowAsync(account *Accou
 	}()
 }
 
+func (s *OpenAIGatewayService) openAIUsageWindowConfig() openAIUsageWindowConfig {
+	cfg := defaultOpenAIUsageWindowConfig()
+	if s == nil || s.cfg == nil {
+		return cfg
+	}
+	if s.cfg.Gateway.OpenAIWS.UsageWindow.Yellow5HPercent > 0 {
+		cfg.Yellow5hPercent = s.cfg.Gateway.OpenAIWS.UsageWindow.Yellow5HPercent
+	}
+	if s.cfg.Gateway.OpenAIWS.UsageWindow.Yellow7DPercent > 0 {
+		cfg.Yellow7dPercent = s.cfg.Gateway.OpenAIWS.UsageWindow.Yellow7DPercent
+	}
+	if s.cfg.Gateway.OpenAIWS.UsageWindow.SnapshotStaleSeconds > 0 {
+		cfg.StaleTTL = time.Duration(s.cfg.Gateway.OpenAIWS.UsageWindow.SnapshotStaleSeconds) * time.Second
+	}
+	return cfg
+}
+
 // CloseOpenAIWSPool 关闭 OpenAI WebSocket 连接池的后台 worker 和空闲连接。
 // 应在应用优雅关闭时调用。
 func (s *OpenAIGatewayService) CloseOpenAIWSPool() {
@@ -1131,7 +1148,7 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		return nil
 	}
 
-	windowEval := evaluateOpenAIUsageWindow(account, time.Now())
+	windowEval := evaluateOpenAIUsageWindowWithConfig(account, time.Now(), s.openAIUsageWindowConfig())
 	s.maybeRefreshOpenAIUsageWindowAsync(account, windowEval)
 	if windowEval.State == openAIUsageWindowStateRed {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -1153,6 +1170,7 @@ func (s *OpenAIGatewayService) selectBestAccount(accounts []Account, requestedMo
 	var selected *Account
 	var degraded *Account
 	now := time.Now()
+	windowCfg := s.openAIUsageWindowConfig()
 
 	for i := range accounts {
 		acc := &accounts[i]
@@ -1175,7 +1193,7 @@ func (s *OpenAIGatewayService) selectBestAccount(accounts []Account, requestedMo
 			continue
 		}
 
-		windowEval := evaluateOpenAIUsageWindow(acc, now)
+		windowEval := evaluateOpenAIUsageWindowWithConfig(acc, now, windowCfg)
 		s.maybeRefreshOpenAIUsageWindowAsync(acc, windowEval)
 		if windowEval.State == openAIUsageWindowStateRed {
 			continue
@@ -1318,7 +1336,7 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 				}
 				if !clearSticky && account.IsSchedulable() && account.IsOpenAI() &&
 					(requestedModel == "" || account.IsModelSupported(requestedModel)) {
-					windowEval := evaluateOpenAIUsageWindow(account, time.Now())
+					windowEval := evaluateOpenAIUsageWindowWithConfig(account, time.Now(), s.openAIUsageWindowConfig())
 					s.maybeRefreshOpenAIUsageWindowAsync(account, windowEval)
 					if windowEval.State == openAIUsageWindowStateRed {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -1371,7 +1389,7 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 		rawCandidates = append(rawCandidates, acc)
 	}
 
-	preferredCandidates, degradedCandidates := partitionOpenAIWindowCandidates(rawCandidates, now)
+	preferredCandidates, degradedCandidates := partitionOpenAIWindowCandidatesWithConfig(rawCandidates, now, s.openAIUsageWindowConfig())
 	for _, candidate := range preferredCandidates {
 		s.maybeRefreshOpenAIUsageWindowAsync(candidate.account, candidate.window)
 	}

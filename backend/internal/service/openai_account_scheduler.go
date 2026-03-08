@@ -334,7 +334,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, nil
 	}
-	windowEval := evaluateOpenAIUsageWindow(account, time.Now())
+	windowEval := evaluateOpenAIUsageWindowWithConfig(account, time.Now(), s.service.openAIUsageWindowConfig())
 	s.service.maybeRefreshOpenAIUsageWindowAsync(account, windowEval)
 	if windowEval.State == openAIUsageWindowStateRed {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
@@ -666,7 +666,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		return nil, 0, 0, 0, errors.New("no available OpenAI accounts")
 	}
 
-	preferredCandidates, degradedCandidates := partitionOpenAIWindowCandidates(rawCandidates, now)
+	preferredCandidates, degradedCandidates := partitionOpenAIWindowCandidatesWithConfig(rawCandidates, now, s.service.openAIUsageWindowConfig())
 	for _, candidate := range preferredCandidates {
 		s.service.maybeRefreshOpenAIUsageWindowAsync(candidate.account, candidate.window)
 	}

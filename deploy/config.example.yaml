@@ -277,6 +277,13 @@ gateway:
     sticky_response_id_ttl_seconds: 3600
     # 兼容旧键：当 sticky_response_id_ttl_seconds 缺失时回退该值
     sticky_previous_response_ttl_seconds: 3600
+    usage_window:
+      # 5 小时窗口进入 Yellow 的阈值（百分比）
+      yellow_5h_percent: 85
+      # 7 天窗口进入 Yellow 的阈值（百分比）
+      yellow_7d_percent: 90
+      # Codex 窗口快照超过该秒数视为陈旧，进入 Unknown 并触发异步回探
+      snapshot_stale_seconds: 1800
     scheduler_score_weights:
       priority: 1.0
       load: 1.0
