@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - master
+      - dev
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -45,7 +46,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
             type=sha,prefix=,format=short
             type=raw,value={{date 'YYYYMMDD-HHmmss'}}
 
