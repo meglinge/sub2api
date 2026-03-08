@@ -18,6 +18,10 @@ const (
 	openAIAccountScheduleLayerPreviousResponse = "previous_response_id"
 	openAIAccountScheduleLayerSessionSticky    = "session_hash"
 	openAIAccountScheduleLayerLoadBalance      = "load_balance"
+
+	openAIAccountWindowScoreWeight = 0.75
+	openAIAccountRecencyWeight     = 0.25
+	openAIAccountJitterWeight      = 0.001
 )
 
 type OpenAIAccountScheduleRequest struct {
@@ -330,6 +334,12 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, nil
 	}
+	windowEval := evaluateOpenAIUsageWindow(account, time.Now())
+	s.service.maybeRefreshOpenAIUsageWindowAsync(account, windowEval)
+	if windowEval.State == openAIUsageWindowStateRed {
+		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		return nil, nil
+	}
 
 	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 	if acquireErr == nil && result.Acquired {
@@ -364,6 +374,7 @@ type openAIAccountCandidateScore struct {
 	errorRate float64
 	ttft      float64
 	hasTTFT   bool
+	window    openAIUsageWindowEvaluation
 }
 
 type openAIAccountCandidateHeap []openAIAccountCandidateScore
@@ -409,6 +420,14 @@ func isOpenAIAccountCandidateBetter(left openAIAccountCandidateScore, right open
 	}
 	if left.loadInfo.WaitingCount != right.loadInfo.WaitingCount {
 		return left.loadInfo.WaitingCount < right.loadInfo.WaitingCount
+	}
+	switch {
+	case left.account.LastUsedAt == nil && right.account.LastUsedAt != nil:
+		return true
+	case left.account.LastUsedAt != nil && right.account.LastUsedAt == nil:
+		return false
+	case left.account.LastUsedAt != nil && right.account.LastUsedAt != nil && !left.account.LastUsedAt.Equal(*right.account.LastUsedAt):
+		return left.account.LastUsedAt.Before(*right.account.LastUsedAt)
 	}
 	return left.account.ID < right.account.ID
 }
@@ -558,6 +577,59 @@ func buildOpenAIWeightedSelectionOrder(
 	return order
 }
 
+func openAIRecencyFactor(lastUsedAt *time.Time, now time.Time, minAge, maxAge float64, hasSamples bool) float64 {
+	if lastUsedAt == nil {
+		return 1.0
+	}
+	if !hasSamples || maxAge <= minAge {
+		return 0.5
+	}
+	ageSeconds := now.Sub(*lastUsedAt).Seconds()
+	if ageSeconds < minAge {
+		ageSeconds = minAge
+	}
+	if ageSeconds > maxAge {
+		ageSeconds = maxAge
+	}
+	return clamp01((ageSeconds - minAge) / (maxAge - minAge))
+}
+
+func openAISelectionJitterFactor(req OpenAIAccountScheduleRequest, accountID int64) float64 {
+	seed := deriveOpenAISelectionSeed(req) ^ (uint64(accountID) * 0x9e3779b97f4a7c15)
+	rng := newOpenAISelectionRNG(seed)
+	return rng.nextFloat64()
+}
+
+func openAIDynamicTopK(base, candidateCount, unknownCount int) int {
+	if base <= 0 {
+		base = 1
+	}
+	if candidateCount <= base {
+		return candidateCount
+	}
+
+	expanded := base
+	if candidateCount >= base*2 {
+		expanded = base * 2
+	}
+	if candidateCount >= 32 && expanded < 16 {
+		expanded = 16
+	}
+	if unknownCount > 0 && candidateCount >= base*3 && expanded < base*3 {
+		expanded = base * 3
+	}
+	if expanded > 24 {
+		expanded = 24
+	}
+	if expanded > candidateCount {
+		expanded = candidateCount
+	}
+	if expanded < 1 {
+		expanded = 1
+	}
+	return expanded
+}
+
 func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
@@ -570,8 +642,8 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		return nil, 0, 0, 0, errors.New("no available OpenAI accounts")
 	}
 
-	filtered := make([]*Account, 0, len(accounts))
-	loadReq := make([]AccountWithConcurrency, 0, len(accounts))
+	now := time.Now()
+	rawCandidates := make([]*Account, 0, len(accounts))
 	for i := range accounts {
 		account := &accounts[i]
 		if req.ExcludedIDs != nil {
@@ -588,14 +660,34 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		if !s.isAccountTransportCompatible(account, req.RequiredTransport) {
 			continue
 		}
-		filtered = append(filtered, account)
-		loadReq = append(loadReq, AccountWithConcurrency{
-			ID:             account.ID,
-			MaxConcurrency: account.EffectiveLoadFactor(),
-		})
+		rawCandidates = append(rawCandidates, account)
 	}
-	if len(filtered) == 0 {
+	if len(rawCandidates) == 0 {
 		return nil, 0, 0, 0, errors.New("no available OpenAI accounts")
+	}
+
+	preferredCandidates, degradedCandidates := partitionOpenAIWindowCandidates(rawCandidates, now)
+	for _, candidate := range preferredCandidates {
+		s.service.maybeRefreshOpenAIUsageWindowAsync(candidate.account, candidate.window)
+	}
+	for _, candidate := range degradedCandidates {
+		s.service.maybeRefreshOpenAIUsageWindowAsync(candidate.account, candidate.window)
+	}
+
+	activeCandidates := preferredCandidates
+	if len(activeCandidates) == 0 {
+		activeCandidates = degradedCandidates
+	}
+	if len(activeCandidates) == 0 {
+		return nil, 0, 0, 0, errors.New("no available OpenAI accounts")
+	}
+
+	loadReq := make([]AccountWithConcurrency, 0, len(activeCandidates))
+	for _, candidate := range activeCandidates {
+		loadReq = append(loadReq, AccountWithConcurrency{
+			ID:             candidate.account.ID,
+			MaxConcurrency: candidate.account.EffectiveLoadFactor(),
+		})
 	}
 
 	loadMap := map[int64]*AccountLoadInfo{}
@@ -605,14 +697,19 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		}
 	}
 
-	minPriority, maxPriority := filtered[0].Priority, filtered[0].Priority
+	minPriority, maxPriority := activeCandidates[0].account.Priority, activeCandidates[0].account.Priority
 	maxWaiting := 1
 	loadRateSum := 0.0
 	loadRateSumSquares := 0.0
 	minTTFT, maxTTFT := 0.0, 0.0
 	hasTTFTSample := false
-	candidates := make([]openAIAccountCandidateScore, 0, len(filtered))
-	for _, account := range filtered {
+	minAge := 0.0
+	maxAge := 0.0
+	hasAgeSamples := false
+	unknownCount := 0
+	candidates := make([]openAIAccountCandidateScore, 0, len(activeCandidates))
+	for _, candidate := range activeCandidates {
+		account := candidate.account
 		loadInfo := loadMap[account.ID]
 		if loadInfo == nil {
 			loadInfo = &AccountLoadInfo{AccountID: account.ID}
@@ -643,12 +740,33 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		loadRate := float64(loadInfo.LoadRate)
 		loadRateSum += loadRate
 		loadRateSumSquares += loadRate * loadRate
+		if account.LastUsedAt != nil {
+			ageSeconds := now.Sub(*account.LastUsedAt).Seconds()
+			if ageSeconds < 0 {
+				ageSeconds = 0
+			}
+			if !hasAgeSamples {
+				minAge, maxAge = ageSeconds, ageSeconds
+				hasAgeSamples = true
+			} else {
+				if ageSeconds < minAge {
+					minAge = ageSeconds
+				}
+				if ageSeconds > maxAge {
+					maxAge = ageSeconds
+				}
+			}
+		}
+		if candidate.window.State == openAIUsageWindowStateUnknown {
+			unknownCount++
+		}
 		candidates = append(candidates, openAIAccountCandidateScore{
 			account:   account,
 			loadInfo:  loadInfo,
 			errorRate: errorRate,
 			ttft:      ttft,
 			hasTTFT:   hasTTFT,
+			window:    candidate.window,
 		})
 	}
 	loadSkew := calcLoadSkewByMoments(loadRateSum, loadRateSumSquares, len(candidates))
@@ -667,21 +785,21 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		if item.hasTTFT && hasTTFTSample && maxTTFT > minTTFT {
 			ttftFactor = 1 - clamp01((item.ttft-minTTFT)/(maxTTFT-minTTFT))
 		}
+		recencyFactor := openAIRecencyFactor(item.account.LastUsedAt, now, minAge, maxAge, hasAgeSamples)
+		windowFactor := item.window.windowFactor()
+		jitterFactor := openAISelectionJitterFactor(req, item.account.ID)
 
 		item.score = weights.Priority*priorityFactor +
 			weights.Load*loadFactor +
 			weights.Queue*queueFactor +
 			weights.ErrorRate*errorFactor +
-			weights.TTFT*ttftFactor
+			weights.TTFT*ttftFactor +
+			openAIAccountWindowScoreWeight*windowFactor +
+			openAIAccountRecencyWeight*recencyFactor +
+			openAIAccountJitterWeight*jitterFactor
 	}
 
-	topK := s.service.openAIWSLBTopK()
-	if topK > len(candidates) {
-		topK = len(candidates)
-	}
-	if topK <= 0 {
-		topK = 1
-	}
+	topK := openAIDynamicTopK(s.service.openAIWSLBTopK(), len(candidates), unknownCount)
 	rankedCandidates := selectTopKOpenAICandidates(candidates, topK)
 	selectionOrder := buildOpenAIWeightedSelectionOrder(rankedCandidates, req)
 

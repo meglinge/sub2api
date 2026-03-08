@@ -836,6 +836,178 @@ func TestDefaultOpenAIAccountScheduler_IsAccountTransportCompatible_Branches(t *
 	require.True(t, scheduler.isAccountTransportCompatible(account, OpenAIUpstreamTransportResponsesWebsocketV2))
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_SkipsStickyAccountInRedWindow(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(30001)
+	now := time.Now().UTC()
+
+	accounts := []Account{
+		{
+			ID:          31001,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			Extra: map[string]any{
+				"codex_5h_used_percent":  100.0,
+				"codex_5h_reset_at":      now.Add(30 * time.Minute).Format(time.RFC3339),
+				"codex_usage_updated_at": now.Format(time.RFC3339),
+			},
+		},
+		{
+			ID:          31002,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    1,
+		},
+	}
+
+	cache := &stubGatewayCache{
+		sessionBindings: map[string]int64{
+			"openai:window_sticky_red": 31001,
+		},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: accounts},
+		cache:              cache,
+		cfg:                &config.Config{},
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"window_sticky_red",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(31002), selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	require.Equal(t, int64(31002), cache.sessionBindings["openai:window_sticky_red"])
+	require.Equal(t, 1, cache.deletedSessions["openai:window_sticky_red"])
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_ExpiredWindowReturnsToPool(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(30002)
+	now := time.Now().UTC()
+
+	account := Account{
+		ID:          32001,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+		Extra: map[string]any{
+			"codex_5h_used_percent":  100.0,
+			"codex_5h_reset_at":      now.Add(-3 * time.Minute).Format(time.RFC3339),
+			"codex_usage_updated_at": now.Add(-15 * time.Minute).Format(time.RFC3339),
+		},
+	}
+
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: []Account{account}},
+		cache:              &stubGatewayCache{},
+		cfg:                &config.Config{},
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"window_recovered",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, account.ID, selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_PrefersGreenOverYellowWindow(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(30003)
+	now := time.Now().UTC()
+
+	accounts := []Account{
+		{
+			ID:          33001,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			Extra: map[string]any{
+				"codex_5h_used_percent":  96.0,
+				"codex_5h_reset_at":      now.Add(40 * time.Minute).Format(time.RFC3339),
+				"codex_usage_updated_at": now.Format(time.RFC3339),
+			},
+		},
+		{
+			ID:          33002,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			LastUsedAt:  int64PtrTimeForTest(now.Add(-2 * time.Hour)),
+		},
+	}
+
+	svc := &OpenAIGatewayService{
+		accountRepo:        stubOpenAIAccountRepo{accounts: accounts},
+		cache:              &stubGatewayCache{},
+		cfg:                &config.Config{},
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"window_green_over_yellow",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportAny,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(33002), selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
 func int64PtrForTest(v int64) *int64 {
+	return &v
+}
+
+func int64PtrTimeForTest(v time.Time) *time.Time {
 	return &v
 }

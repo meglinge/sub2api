@@ -284,6 +284,7 @@ type OpenAIGatewayService struct {
 	openaiAccountStats            *openAIAccountRuntimeStats
 
 	openaiWSFallbackUntil sync.Map // key: int64(accountID), value: time.Time
+	openaiUsageProbeCache sync.Map // key: int64(accountID), value: time.Time
 	openaiWSRetryMetrics  openAIWSRetryMetrics
 	responseHeaderFilter  *responseheaders.CompiledHeaderFilter
 }
@@ -345,6 +346,47 @@ func (s *OpenAIGatewayService) billingDeps() *billingDeps {
 		billingCacheService: s.billingCacheService,
 		deferredService:     s.deferredService,
 	}
+}
+
+func (s *OpenAIGatewayService) shouldProbeOpenAICodexSnapshot(accountID int64, now time.Time) bool {
+	if s == nil || accountID <= 0 {
+		return false
+	}
+	if cached, ok := s.openaiUsageProbeCache.Load(accountID); ok {
+		if ts, ok := cached.(time.Time); ok && now.Sub(ts) < openAIProbeCacheTTL {
+			return false
+		}
+	}
+	s.openaiUsageProbeCache.Store(accountID, now)
+	return true
+}
+
+func (s *OpenAIGatewayService) maybeRefreshOpenAIUsageWindowAsync(account *Account, eval openAIUsageWindowEvaluation) {
+	if s == nil || account == nil || !eval.NeedsProbe {
+		return
+	}
+	if !account.IsOpenAIOAuth() {
+		return
+	}
+	if strings.TrimSpace(account.GetOpenAIAccessToken()) == "" {
+		return
+	}
+	now := time.Now()
+	if !s.shouldProbeOpenAICodexSnapshot(account.ID, now) {
+		return
+	}
+
+	accountCopy := *account
+	go func() {
+		probeCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		probeSvc := &AccountUsageService{
+			accountRepo: s.accountRepo,
+		}
+		if _, err := probeSvc.probeOpenAICodexSnapshot(probeCtx, &accountCopy); err != nil {
+			logger.LegacyPrintf("service.openai_gateway", "openai codex usage probe failed: account=%d err=%v", accountCopy.ID, err)
+		}
+	}()
 }
 
 // CloseOpenAIWSPool 关闭 OpenAI WebSocket 连接池的后台 worker 和空闲连接。
@@ -1089,6 +1131,13 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		return nil
 	}
 
+	windowEval := evaluateOpenAIUsageWindow(account, time.Now())
+	s.maybeRefreshOpenAIUsageWindowAsync(account, windowEval)
+	if windowEval.State == openAIUsageWindowStateRed {
+		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+		return nil
+	}
+
 	// 刷新会话 TTL 并返回账号
 	// Refresh session TTL and return account
 	_ = s.refreshStickySessionTTL(ctx, groupID, sessionHash, openaiStickySessionTTL)
@@ -1102,6 +1151,8 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 // Returns nil if no available account.
 func (s *OpenAIGatewayService) selectBestAccount(accounts []Account, requestedModel string, excludedIDs map[int64]struct{}) *Account {
 	var selected *Account
+	var degraded *Account
+	now := time.Now()
 
 	for i := range accounts {
 		acc := &accounts[i]
@@ -1124,6 +1175,18 @@ func (s *OpenAIGatewayService) selectBestAccount(accounts []Account, requestedMo
 			continue
 		}
 
+		windowEval := evaluateOpenAIUsageWindow(acc, now)
+		s.maybeRefreshOpenAIUsageWindowAsync(acc, windowEval)
+		if windowEval.State == openAIUsageWindowStateRed {
+			continue
+		}
+		if windowEval.State == openAIUsageWindowStateYellow {
+			if degraded == nil || s.isBetterAccount(acc, degraded) {
+				degraded = acc
+			}
+			continue
+		}
+
 		// 选择优先级最高且最久未使用的账号
 		// Select highest priority and least recently used
 		if selected == nil {
@@ -1134,6 +1197,14 @@ func (s *OpenAIGatewayService) selectBestAccount(accounts []Account, requestedMo
 		if s.isBetterAccount(acc, selected) {
 			selected = acc
 		}
+	}
+
+	if selected != nil {
+		return selected
+	}
+
+	if degraded != nil {
+		return degraded
 	}
 
 	return selected
@@ -1247,27 +1318,33 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 				}
 				if !clearSticky && account.IsSchedulable() && account.IsOpenAI() &&
 					(requestedModel == "" || account.IsModelSupported(requestedModel)) {
-					result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
-					if err == nil && result.Acquired {
-						_ = s.refreshStickySessionTTL(ctx, groupID, sessionHash, openaiStickySessionTTL)
-						return &AccountSelectionResult{
-							Account:     account,
-							Acquired:    true,
-							ReleaseFunc: result.ReleaseFunc,
-						}, nil
-					}
+					windowEval := evaluateOpenAIUsageWindow(account, time.Now())
+					s.maybeRefreshOpenAIUsageWindowAsync(account, windowEval)
+					if windowEval.State == openAIUsageWindowStateRed {
+						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+					} else {
+						result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
+						if err == nil && result.Acquired {
+							_ = s.refreshStickySessionTTL(ctx, groupID, sessionHash, openaiStickySessionTTL)
+							return &AccountSelectionResult{
+								Account:     account,
+								Acquired:    true,
+								ReleaseFunc: result.ReleaseFunc,
+							}, nil
+						}
 
-					waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, accountID)
-					if waitingCount < cfg.StickySessionMaxWaiting {
-						return &AccountSelectionResult{
-							Account: account,
-							WaitPlan: &AccountWaitPlan{
-								AccountID:      accountID,
-								MaxConcurrency: account.Concurrency,
-								Timeout:        cfg.StickySessionWaitTimeout,
-								MaxWaiting:     cfg.StickySessionMaxWaiting,
-							},
-						}, nil
+						waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, accountID)
+						if waitingCount < cfg.StickySessionMaxWaiting {
+							return &AccountSelectionResult{
+								Account: account,
+								WaitPlan: &AccountWaitPlan{
+									AccountID:      accountID,
+									MaxConcurrency: account.Concurrency,
+									Timeout:        cfg.StickySessionWaitTimeout,
+									MaxWaiting:     cfg.StickySessionMaxWaiting,
+								},
+							}, nil
+						}
 					}
 				}
 			}
@@ -1275,7 +1352,8 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 	}
 
 	// ============ Layer 2: Load-aware selection ============
-	candidates := make([]*Account, 0, len(accounts))
+	rawCandidates := make([]*Account, 0, len(accounts))
+	now := time.Now()
 	for i := range accounts {
 		acc := &accounts[i]
 		if isExcluded(acc.ID) {
@@ -1290,7 +1368,26 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 		if requestedModel != "" && !acc.IsModelSupported(requestedModel) {
 			continue
 		}
-		candidates = append(candidates, acc)
+		rawCandidates = append(rawCandidates, acc)
+	}
+
+	preferredCandidates, degradedCandidates := partitionOpenAIWindowCandidates(rawCandidates, now)
+	for _, candidate := range preferredCandidates {
+		s.maybeRefreshOpenAIUsageWindowAsync(candidate.account, candidate.window)
+	}
+	for _, candidate := range degradedCandidates {
+		s.maybeRefreshOpenAIUsageWindowAsync(candidate.account, candidate.window)
+	}
+
+	candidates := make([]*Account, 0, len(rawCandidates))
+	if len(preferredCandidates) > 0 {
+		for _, candidate := range preferredCandidates {
+			candidates = append(candidates, candidate.account)
+		}
+	} else {
+		for _, candidate := range degradedCandidates {
+			candidates = append(candidates, candidate.account)
+		}
 	}
 
 	if len(candidates) == 0 {
