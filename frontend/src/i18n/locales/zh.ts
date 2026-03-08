@@ -3965,6 +3965,16 @@ export default {
         minVersionPlaceholder: '例如 2.1.63',
         minVersionHint: '拒绝低于此版本的 Claude Code 客户端请求（semver 格式）。留空则不检查版本。'
       },
+      openaiUsageWindow: {
+        title: 'OpenAI 用量窗口调度',
+        description: '配置 OpenAI 账号进入降级调度与快照回探的阈值。',
+        yellow5hPercent: '5 小时 Yellow 阈值（%）',
+        yellow5hPercentHint: '当 5 小时窗口使用率达到该阈值时，账号进入 Yellow；若存在更健康的账号，则不再优先接收新流量。',
+        yellow7dPercent: '7 天 Yellow 阈值（%）',
+        yellow7dPercentHint: '当 7 天窗口使用率达到该阈值时，账号进入 Yellow；只会在更健康账号不足时才被继续使用。',
+        snapshotStaleSeconds: '快照过期秒数',
+        snapshotStaleSecondsHint: 'Codex 用量快照超过该时间后会视为 Unknown，并触发异步回探以避免账号长期睡死。'
+      },
       scheduling: {
         title: '网关调度设置',
         description: '控制 API Key 的调度行为',

@@ -151,6 +151,45 @@ func ProvideRateLimitService(
 	return svc
 }
 
+func ProvideOpenAIGatewayService(
+	accountRepo AccountRepository,
+	usageLogRepo UsageLogRepository,
+	userRepo UserRepository,
+	userSubRepo UserSubscriptionRepository,
+	userGroupRateRepo UserGroupRateRepository,
+	cache GatewayCache,
+	cfg *config.Config,
+	schedulerSnapshot *SchedulerSnapshotService,
+	concurrencyService *ConcurrencyService,
+	billingService *BillingService,
+	rateLimitService *RateLimitService,
+	billingCacheService *BillingCacheService,
+	httpUpstream HTTPUpstream,
+	deferredService *DeferredService,
+	openAITokenProvider *OpenAITokenProvider,
+	settingService *SettingService,
+) *OpenAIGatewayService {
+	svc := NewOpenAIGatewayService(
+		accountRepo,
+		usageLogRepo,
+		userRepo,
+		userSubRepo,
+		userGroupRateRepo,
+		cache,
+		cfg,
+		schedulerSnapshot,
+		concurrencyService,
+		billingService,
+		rateLimitService,
+		billingCacheService,
+		httpUpstream,
+		deferredService,
+		openAITokenProvider,
+	)
+	svc.SetSettingService(settingService)
+	return svc
+}
+
 // ProvideOpsMetricsCollector creates and starts OpsMetricsCollector.
 func ProvideOpsMetricsCollector(
 	opsRepo OpsRepository,
@@ -346,7 +385,7 @@ var ProviderSet = wire.NewSet(
 	ProvideSoraSDKClient,
 	wire.Bind(new(SoraClient), new(*SoraSDKClient)),
 	NewSoraGatewayService,
-	NewOpenAIGatewayService,
+	ProvideOpenAIGatewayService,
 	NewOAuthService,
 	NewOpenAIOAuthService,
 	NewGeminiOAuthService,

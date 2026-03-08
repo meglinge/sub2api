@@ -3792,6 +3792,19 @@ export default {
         minVersionHint:
           'Reject Claude Code clients below this version (semver format). Leave empty to disable version check.'
       },
+      openaiUsageWindow: {
+        title: 'OpenAI Usage Window Scheduling',
+        description: 'Tune when OpenAI accounts enter degraded scheduling or stale snapshot reprobe.',
+        yellow5hPercent: '5h Yellow Threshold (%)',
+        yellow5hPercentHint:
+          'When 5-hour usage reaches this percentage, the account enters Yellow and avoids new scheduling when Green accounts exist.',
+        yellow7dPercent: '7d Yellow Threshold (%)',
+        yellow7dPercentHint:
+          'When 7-day usage reaches this percentage, the account enters Yellow and is only used after healthier accounts.',
+        snapshotStaleSeconds: 'Snapshot Stale Seconds',
+        snapshotStaleSecondsHint:
+          'If Codex usage snapshot is older than this, it is treated as Unknown and will trigger async reprobe.'
+      },
       scheduling: {
         title: 'Gateway Scheduling Settings',
         description: 'Control API Key scheduling behavior',

@@ -79,6 +79,9 @@ export interface SystemSettings {
 
   // Claude Code version check
   min_claude_code_version: string
+  openai_usage_window_yellow_5h_percent: number
+  openai_usage_window_yellow_7d_percent: number
+  openai_usage_window_snapshot_stale_seconds: number
 
   // 分组隔离
   allow_ungrouped_key_scheduling: boolean
@@ -133,6 +136,9 @@ export interface UpdateSettingsRequest {
   ops_query_mode_default?: 'auto' | 'raw' | 'preagg' | string
   ops_metrics_interval_seconds?: number
   min_claude_code_version?: string
+  openai_usage_window_yellow_5h_percent?: number
+  openai_usage_window_yellow_7d_percent?: number
+  openai_usage_window_snapshot_stale_seconds?: number
   allow_ungrouped_key_scheduling?: boolean
 }
 

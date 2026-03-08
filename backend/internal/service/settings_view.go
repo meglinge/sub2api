@@ -67,6 +67,11 @@ type SystemSettings struct {
 	// Claude Code version check
 	MinClaudeCodeVersion string
 
+	// OpenAI usage window scheduling
+	OpenAIUsageWindowYellow5HPercent      float64
+	OpenAIUsageWindowYellow7DPercent      float64
+	OpenAIUsageWindowSnapshotStaleSeconds int
+
 	// 分组隔离：允许未分组 Key 调度（默认 false → 403）
 	AllowUngroupedKeyScheduling bool
 }

@@ -1,11 +1,72 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
+
+type openAIUsageWindowSettingRepoStub struct {
+	values map[string]string
+}
+
+func (r *openAIUsageWindowSettingRepoStub) Get(_ context.Context, key string) (*Setting, error) {
+	if v, ok := r.values[key]; ok {
+		return &Setting{Key: key, Value: v}, nil
+	}
+	return nil, ErrSettingNotFound
+}
+
+func (r *openAIUsageWindowSettingRepoStub) GetValue(_ context.Context, key string) (string, error) {
+	if v, ok := r.values[key]; ok {
+		return v, nil
+	}
+	return "", ErrSettingNotFound
+}
+
+func (r *openAIUsageWindowSettingRepoStub) Set(_ context.Context, key, value string) error {
+	if r.values == nil {
+		r.values = map[string]string{}
+	}
+	r.values[key] = value
+	return nil
+}
+
+func (r *openAIUsageWindowSettingRepoStub) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	result := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if v, ok := r.values[key]; ok {
+			result[key] = v
+		}
+	}
+	return result, nil
+}
+
+func (r *openAIUsageWindowSettingRepoStub) SetMultiple(_ context.Context, settings map[string]string) error {
+	if r.values == nil {
+		r.values = map[string]string{}
+	}
+	for key, value := range settings {
+		r.values[key] = value
+	}
+	return nil
+}
+
+func (r *openAIUsageWindowSettingRepoStub) GetAll(_ context.Context) (map[string]string, error) {
+	result := make(map[string]string, len(r.values))
+	for key, value := range r.values {
+		result[key] = value
+	}
+	return result, nil
+}
+
+func (r *openAIUsageWindowSettingRepoStub) Delete(_ context.Context, key string) error {
+	delete(r.values, key)
+	return nil
+}
 
 func TestEvaluateOpenAIUsageWindow_NoSnapshotIsUnknown(t *testing.T) {
 	eval := evaluateOpenAIUsageWindow(&Account{
@@ -91,4 +152,38 @@ func TestEvaluateOpenAIUsageWindowWithConfig_UsesCustomThresholds(t *testing.T) 
 
 	require.Equal(t, openAIUsageWindowStateYellow, eval.State)
 	require.False(t, eval.NeedsProbe)
+}
+
+func TestOpenAIGatewayService_OpenAIUsageWindowConfig_PrefersSettingService(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.UsageWindow.Yellow5HPercent = 85
+	cfg.Gateway.OpenAIWS.UsageWindow.Yellow7DPercent = 90
+	cfg.Gateway.OpenAIWS.UsageWindow.SnapshotStaleSeconds = 1800
+
+	settingRepo := &openAIUsageWindowSettingRepoStub{values: map[string]string{
+		SettingKeyOpenAIUsageWindowYellow5HPercent:   "70",
+		SettingKeyOpenAIUsageWindowYellow7DPercent:   "88",
+		SettingKeyOpenAIUsageWindowSnapshotStaleSecs: "900",
+	}}
+	settingService := NewSettingService(settingRepo, cfg)
+
+	svc := &OpenAIGatewayService{cfg: cfg}
+	svc.SetSettingService(settingService)
+
+	windowCfg := svc.openAIUsageWindowConfig()
+	require.Equal(t, 70.0, windowCfg.Yellow5hPercent)
+	require.Equal(t, 88.0, windowCfg.Yellow7dPercent)
+	require.Equal(t, 15*time.Minute, windowCfg.StaleTTL)
+
+	updatedSettings := &SystemSettings{
+		OpenAIUsageWindowYellow5HPercent:      72,
+		OpenAIUsageWindowYellow7DPercent:      86,
+		OpenAIUsageWindowSnapshotStaleSeconds: 600,
+	}
+	require.NoError(t, settingService.UpdateSettings(context.Background(), updatedSettings))
+
+	windowCfg = svc.openAIUsageWindowConfig()
+	require.Equal(t, 72.0, windowCfg.Yellow5hPercent)
+	require.Equal(t, 86.0, windowCfg.Yellow7dPercent)
+	require.Equal(t, 10*time.Minute, windowCfg.StaleTTL)
 }

@@ -79,6 +79,10 @@ type SystemSettings struct {
 
 	MinClaudeCodeVersion string `json:"min_claude_code_version"`
 
+	OpenAIUsageWindowYellow5HPercent      float64 `json:"openai_usage_window_yellow_5h_percent"`
+	OpenAIUsageWindowYellow7DPercent      float64 `json:"openai_usage_window_yellow_7d_percent"`
+	OpenAIUsageWindowSnapshotStaleSeconds int     `json:"openai_usage_window_snapshot_stale_seconds"`
+
 	// 分组隔离
 	AllowUngroupedKeyScheduling bool `json:"allow_ungrouped_key_scheduling"`
 }

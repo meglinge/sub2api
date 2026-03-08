@@ -56,6 +56,14 @@ var minVersionCache atomic.Value // *cachedMinVersion
 // minVersionSF 防止缓存过期时 thundering herd
 var minVersionSF singleflight.Group
 
+type cachedOpenAIUsageWindow struct {
+	cfg       openAIUsageWindowConfig
+	expiresAt int64
+}
+
+var openAIUsageWindowCache atomic.Value // *cachedOpenAIUsageWindow
+var openAIUsageWindowSF singleflight.Group
+
 // minVersionCacheTTL 缓存有效期
 const minVersionCacheTTL = 60 * time.Second
 
@@ -64,6 +72,9 @@ const minVersionErrorTTL = 5 * time.Second
 
 // minVersionDBTimeout singleflight 内 DB 查询超时，独立于请求 context
 const minVersionDBTimeout = 5 * time.Second
+
+const openAIUsageWindowCacheTTL = 60 * time.Second
+const openAIUsageWindowErrorTTL = 5 * time.Second
 
 // DefaultSubscriptionGroupReader validates group references used by default subscriptions.
 type DefaultSubscriptionGroupReader interface {
@@ -458,6 +469,11 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 	// Claude Code version check
 	updates[SettingKeyMinClaudeCodeVersion] = settings.MinClaudeCodeVersion
 
+	// OpenAI usage window scheduling
+	updates[SettingKeyOpenAIUsageWindowYellow5HPercent] = strconv.FormatFloat(settings.OpenAIUsageWindowYellow5HPercent, 'f', -1, 64)
+	updates[SettingKeyOpenAIUsageWindowYellow7DPercent] = strconv.FormatFloat(settings.OpenAIUsageWindowYellow7DPercent, 'f', -1, 64)
+	updates[SettingKeyOpenAIUsageWindowSnapshotStaleSecs] = strconv.Itoa(settings.OpenAIUsageWindowSnapshotStaleSeconds)
+
 	// 分组隔离
 	updates[SettingKeyAllowUngroupedKeyScheduling] = strconv.FormatBool(settings.AllowUngroupedKeyScheduling)
 
@@ -469,6 +485,12 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 			value:     settings.MinClaudeCodeVersion,
 			expiresAt: time.Now().Add(minVersionCacheTTL).UnixNano(),
 		})
+		openAIUsageWindowSF.Forget("openai_usage_window_config")
+		s.refreshOpenAIUsageWindowCache(openAIUsageWindowConfig{
+			Yellow5hPercent: settings.OpenAIUsageWindowYellow5HPercent,
+			Yellow7dPercent: settings.OpenAIUsageWindowYellow7DPercent,
+			StaleTTL:        time.Duration(settings.OpenAIUsageWindowSnapshotStaleSeconds) * time.Second,
+		}, openAIUsageWindowCacheTTL)
 		if s.onUpdate != nil {
 			s.onUpdate() // Invalidate cache after settings update
 		}
@@ -680,6 +702,11 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// Claude Code version check (default: empty = disabled)
 		SettingKeyMinClaudeCodeVersion: "",
 
+		// OpenAI usage window scheduling
+		SettingKeyOpenAIUsageWindowYellow5HPercent:   strconv.FormatFloat(s.cfg.Gateway.OpenAIWS.UsageWindow.Yellow5HPercent, 'f', -1, 64),
+		SettingKeyOpenAIUsageWindowYellow7DPercent:   strconv.FormatFloat(s.cfg.Gateway.OpenAIWS.UsageWindow.Yellow7DPercent, 'f', -1, 64),
+		SettingKeyOpenAIUsageWindowSnapshotStaleSecs: strconv.Itoa(s.cfg.Gateway.OpenAIWS.UsageWindow.SnapshotStaleSeconds),
+
 		// 分组隔离（默认不允许未分组 Key 调度）
 		SettingKeyAllowUngroupedKeyScheduling: "false",
 	}
@@ -813,6 +840,11 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	// Claude Code version check
 	result.MinClaudeCodeVersion = settings[SettingKeyMinClaudeCodeVersion]
 
+	// OpenAI usage window scheduling
+	result.OpenAIUsageWindowYellow5HPercent = s.getFloat64OrDefault(settings, SettingKeyOpenAIUsageWindowYellow5HPercent, s.cfg.Gateway.OpenAIWS.UsageWindow.Yellow5HPercent)
+	result.OpenAIUsageWindowYellow7DPercent = s.getFloat64OrDefault(settings, SettingKeyOpenAIUsageWindowYellow7DPercent, s.cfg.Gateway.OpenAIWS.UsageWindow.Yellow7DPercent)
+	result.OpenAIUsageWindowSnapshotStaleSeconds = s.getIntOrDefault(settings, SettingKeyOpenAIUsageWindowSnapshotStaleSecs, s.cfg.Gateway.OpenAIWS.UsageWindow.SnapshotStaleSeconds)
+
 	// 分组隔离
 	result.AllowUngroupedKeyScheduling = settings[SettingKeyAllowUngroupedKeyScheduling] == "true"
 
@@ -859,6 +891,97 @@ func (s *SettingService) getStringOrDefault(settings map[string]string, key, def
 		return value
 	}
 	return defaultValue
+}
+
+func (s *SettingService) getFloat64OrDefault(settings map[string]string, key string, defaultValue float64) float64 {
+	if value, ok := settings[key]; ok && strings.TrimSpace(value) != "" {
+		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
+			return parsed
+		}
+	}
+	return defaultValue
+}
+
+func (s *SettingService) getIntOrDefault(settings map[string]string, key string, defaultValue int) int {
+	if value, ok := settings[key]; ok && strings.TrimSpace(value) != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			return parsed
+		}
+	}
+	return defaultValue
+}
+
+func (s *SettingService) defaultOpenAIUsageWindowConfig() openAIUsageWindowConfig {
+	cfg := defaultOpenAIUsageWindowConfig()
+	if s == nil || s.cfg == nil {
+		return cfg
+	}
+	if s.cfg.Gateway.OpenAIWS.UsageWindow.Yellow5HPercent > 0 {
+		cfg.Yellow5hPercent = s.cfg.Gateway.OpenAIWS.UsageWindow.Yellow5HPercent
+	}
+	if s.cfg.Gateway.OpenAIWS.UsageWindow.Yellow7DPercent > 0 {
+		cfg.Yellow7dPercent = s.cfg.Gateway.OpenAIWS.UsageWindow.Yellow7DPercent
+	}
+	if s.cfg.Gateway.OpenAIWS.UsageWindow.SnapshotStaleSeconds > 0 {
+		cfg.StaleTTL = time.Duration(s.cfg.Gateway.OpenAIWS.UsageWindow.SnapshotStaleSeconds) * time.Second
+	}
+	return cfg
+}
+
+func (s *SettingService) refreshOpenAIUsageWindowCache(cfg openAIUsageWindowConfig, ttl time.Duration) {
+	openAIUsageWindowCache.Store(&cachedOpenAIUsageWindow{
+		cfg:       cfg,
+		expiresAt: time.Now().Add(ttl).UnixNano(),
+	})
+}
+
+func (s *SettingService) GetOpenAIUsageWindowConfig(ctx context.Context) openAIUsageWindowConfig {
+	defaultCfg := s.defaultOpenAIUsageWindowConfig()
+	if cached, ok := openAIUsageWindowCache.Load().(*cachedOpenAIUsageWindow); ok && cached != nil {
+		if cached.expiresAt > time.Now().UnixNano() {
+			return cached.cfg
+		}
+	}
+
+	const sfKey = "openai_usage_window_config"
+	value, err, _ := openAIUsageWindowSF.Do(sfKey, func() (any, error) {
+		if cached, ok := openAIUsageWindowCache.Load().(*cachedOpenAIUsageWindow); ok && cached != nil {
+			if cached.expiresAt > time.Now().UnixNano() {
+				return cached.cfg, nil
+			}
+		}
+		if s == nil || s.settingRepo == nil {
+			s.refreshOpenAIUsageWindowCache(defaultCfg, openAIUsageWindowCacheTTL)
+			return defaultCfg, nil
+		}
+		queryCtx := ctx
+		if queryCtx == nil {
+			queryCtx = context.Background()
+		}
+		values, err := s.settingRepo.GetMultiple(queryCtx, []string{
+			SettingKeyOpenAIUsageWindowYellow5HPercent,
+			SettingKeyOpenAIUsageWindowYellow7DPercent,
+			SettingKeyOpenAIUsageWindowSnapshotStaleSecs,
+		})
+		if err != nil {
+			s.refreshOpenAIUsageWindowCache(defaultCfg, openAIUsageWindowErrorTTL)
+			return defaultCfg, err
+		}
+
+		cfg := defaultCfg
+		cfg.Yellow5hPercent = s.getFloat64OrDefault(values, SettingKeyOpenAIUsageWindowYellow5HPercent, defaultCfg.Yellow5hPercent)
+		cfg.Yellow7dPercent = s.getFloat64OrDefault(values, SettingKeyOpenAIUsageWindowYellow7DPercent, defaultCfg.Yellow7dPercent)
+		cfg.StaleTTL = time.Duration(s.getIntOrDefault(values, SettingKeyOpenAIUsageWindowSnapshotStaleSecs, int(defaultCfg.StaleTTL/time.Second))) * time.Second
+		s.refreshOpenAIUsageWindowCache(cfg, openAIUsageWindowCacheTTL)
+		return cfg, nil
+	})
+	if err != nil {
+		return defaultCfg
+	}
+	if cfg, ok := value.(openAIUsageWindowConfig); ok {
+		return cfg
+	}
+	return defaultCfg
 }
 
 // IsTurnstileEnabled 检查是否启用 Turnstile 验证
