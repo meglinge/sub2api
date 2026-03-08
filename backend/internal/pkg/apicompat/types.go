@@ -47,6 +47,9 @@ type AnthropicContentBlock struct {
 	// type=thinking
 	Thinking string `json:"thinking,omitempty"`
 
+	// type=image
+	Source *AnthropicImageSource `json:"source,omitempty"`
+
 	// type=tool_use
 	ID    string          `json:"id,omitempty"`
 	Name  string          `json:"name,omitempty"`
@@ -58,9 +61,16 @@ type AnthropicContentBlock struct {
 	IsError   bool            `json:"is_error,omitempty"`
 }
 
+// AnthropicImageSource describes the source data for an image content block.
+type AnthropicImageSource struct {
+	Type      string `json:"type"`       // "base64"
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+
 // AnthropicTool describes a tool available to the model.
 type AnthropicTool struct {
-	Type        string          `json:"type,omitempty"`        // e.g. "web_search_20250305" for server tools
+	Type        string          `json:"type,omitempty"` // e.g. "web_search_20250305" for server tools
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"input_schema"` // JSON Schema object
@@ -176,8 +186,9 @@ type ResponsesInputItem struct {
 
 // ResponsesContentPart is a typed content part in a Responses message.
 type ResponsesContentPart struct {
-	Type string `json:"type"` // "input_text" | "output_text" | "input_image"
-	Text string `json:"text,omitempty"`
+	Type     string `json:"type"` // "input_text" | "output_text" | "input_image"
+	Text     string `json:"text,omitempty"`
+	ImageURL string `json:"image_url,omitempty"` // data URI for input_image
 }
 
 // ResponsesTool describes a tool in the Responses API.
