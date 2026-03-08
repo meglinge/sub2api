@@ -164,11 +164,6 @@ func openAICodexUsageUpdatedAt(extra map[string]any) *time.Time {
 	}
 	return &t
 }
-
-func partitionOpenAIWindowCandidates(accounts []*Account, now time.Time) (preferred []openAIWindowAccountCandidate, degraded []openAIWindowAccountCandidate) {
-	return partitionOpenAIWindowCandidatesWithConfig(accounts, now, defaultOpenAIUsageWindowConfig())
-}
-
 func partitionOpenAIWindowCandidatesWithConfig(accounts []*Account, now time.Time, cfg openAIUsageWindowConfig) (preferred []openAIWindowAccountCandidate, degraded []openAIWindowAccountCandidate) {
 	if len(accounts) == 0 {
 		return nil, nil

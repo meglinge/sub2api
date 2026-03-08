@@ -3792,16 +3792,6 @@ func openAIResponsesRequestPathSuffixFromPath(requestPath string) string {
 	}
 	return suffix
 }
-
-func appendOpenAIResponsesRequestPathSuffix(baseURL, suffix string) string {
-	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	trimmedSuffix := strings.TrimSpace(suffix)
-	if trimmedBase == "" || trimmedSuffix == "" {
-		return trimmedBase
-	}
-	return trimmedBase + trimmedSuffix
-}
-
 func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
 	// 使用 gjson/sjson 精确替换 model 字段，避免全量 JSON 反序列化
 	if m := gjson.GetBytes(body, "model"); m.Exists() && m.Str == fromModel {

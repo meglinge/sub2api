@@ -414,4 +414,3 @@ func writeAnthropicError(c *gin.Context, statusCode int, errType, message string
 		},
 	})
 }
-
