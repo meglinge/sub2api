@@ -132,7 +132,7 @@
       </template>
       <template #table>
         <AccountBulkActionsBar :selected-ids="selIds" @delete="handleBulkDelete" @edit="showBulkEdit = true" @clear="selIds = []" @select-page="selectPage" @toggle-schedulable="handleBulkToggleSchedulable" />
-        <div ref="accountTableRef">
+        <div ref="accountTableRef" class="flex-1 min-h-0 flex flex-col overflow-hidden">
         <DataTable
           :columns="cols"
           :data="accounts"
