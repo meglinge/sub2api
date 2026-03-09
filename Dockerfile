@@ -86,7 +86,8 @@ LABEL org.opencontainers.image.source="https://github.com/Wei-Shaw/sub2api"
 RUN apk add --no-cache \
     ca-certificates \
     tzdata \
-    postgresql16-client \
+    && apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
+    postgresql18-client \
     && rm -rf /var/cache/apk/*
 
 # Create non-root user

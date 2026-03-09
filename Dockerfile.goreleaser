@@ -16,6 +16,8 @@ RUN apk add --no-cache \
     ca-certificates \
     tzdata \
     curl \
+    && apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
+    postgresql18-client \
     && rm -rf /var/cache/apk/*
 
 # Create non-root user
