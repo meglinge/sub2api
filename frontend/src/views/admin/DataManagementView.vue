@@ -333,7 +333,7 @@ async function exportPostgres() {
   pgExporting.value = true
   try {
     const url = getPostgresExportUrl()
-    const token = localStorage.getItem('token')
+    const token = localStorage.getItem('auth_token')
     const resp = await fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
