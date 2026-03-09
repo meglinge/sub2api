@@ -24,7 +24,7 @@ func TestDataManagementHandler_AgentHealthAlways200(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	svc := service.NewDataManagementServiceWithOptions(filepath.Join(t.TempDir(), "missing.sock"), 50*time.Millisecond)
-	h := NewDataManagementHandler(svc)
+	h := NewDataManagementHandler(svc, nil)
 
 	r := gin.New()
 	r.GET("/api/v1/admin/data-management/agent/health", h.GetAgentHealth)
@@ -54,7 +54,7 @@ func TestDataManagementHandler_NonHealthRouteReturns503WhenDisabled(t *testing.T
 	gin.SetMode(gin.TestMode)
 
 	svc := service.NewDataManagementServiceWithOptions(filepath.Join(t.TempDir(), "missing.sock"), 50*time.Millisecond)
-	h := NewDataManagementHandler(svc)
+	h := NewDataManagementHandler(svc, nil)
 
 	r := gin.New()
 	r.GET("/api/v1/admin/data-management/config", h.GetConfig)
