@@ -441,6 +441,9 @@ export interface ApiKey {
   window_5h_start: string | null
   window_1d_start: string | null
   window_7d_start: string | null
+  reset_5h_at: string | null
+  reset_1d_at: string | null
+  reset_7d_at: string | null
 }
 
 export interface CreateApiKeyRequest {
@@ -931,6 +934,7 @@ export interface UsageLog {
   account_id: number | null
   request_id: string
   model: string
+  service_tier?: string | null
   reasoning_effort?: string | null
 
   group_id: number | null
@@ -1491,6 +1495,7 @@ export interface ScheduledTestPlan {
   cron_expression: string
   enabled: boolean
   max_results: number
+  auto_recover: boolean
   last_run_at: string | null
   next_run_at: string | null
   created_at: string
@@ -1515,6 +1520,7 @@ export interface CreateScheduledTestPlanRequest {
   cron_expression: string
   enabled?: boolean
   max_results?: number
+  auto_recover?: boolean
 }
 
 export interface UpdateScheduledTestPlanRequest {
@@ -1522,4 +1528,5 @@ export interface UpdateScheduledTestPlanRequest {
   cron_expression?: string
   enabled?: boolean
   max_results?: number
+  auto_recover?: boolean
 }
