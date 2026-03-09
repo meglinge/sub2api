@@ -375,8 +375,9 @@ const exportingData = ref(false)
 const showColumnDropdown = ref(false)
 const columnDropdownRef = ref<HTMLElement | null>(null)
 const hiddenColumns = reactive<Set<string>>(new Set())
-const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'priority', 'rate_multiplier']
+const DEFAULT_HIDDEN_COLUMNS = ['proxy', 'notes', 'priority', 'rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
+const HIDDEN_COLUMNS_MIGRATION_KEY = 'account-hidden-columns-migration-v1'
 
 // Sorting settings
 const ACCOUNT_SORT_STORAGE_KEY = 'account-table-sort'
@@ -461,9 +462,18 @@ const loadSavedColumns = () => {
     const saved = localStorage.getItem(HIDDEN_COLUMNS_KEY)
     if (saved) {
       const parsed = JSON.parse(saved) as string[]
-      parsed.forEach(key => hiddenColumns.add(key))
+      const migrationApplied = localStorage.getItem(HIDDEN_COLUMNS_MIGRATION_KEY) === 'true'
+      const normalized = migrationApplied
+        ? parsed
+        : parsed.filter((key) => key !== 'today_stats')
+      if (!migrationApplied) {
+        localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify(normalized))
+        localStorage.setItem(HIDDEN_COLUMNS_MIGRATION_KEY, 'true')
+      }
+      normalized.forEach(key => hiddenColumns.add(key))
     } else {
       DEFAULT_HIDDEN_COLUMNS.forEach(key => hiddenColumns.add(key))
+      localStorage.setItem(HIDDEN_COLUMNS_MIGRATION_KEY, 'true')
     }
   } catch (e) {
     console.error('Failed to load saved columns:', e)
