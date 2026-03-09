@@ -214,10 +214,10 @@ func (s *PostgresBackupService) SaveChunk(uploadID string, index int, data io.Re
 		return false, fmt.Errorf("failed to create chunk file: %w", err)
 	}
 	if _, err := io.Copy(f, data); err != nil {
-		f.Close()
+		_ = f.Close()
 		return false, fmt.Errorf("failed to write chunk: %w", err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	s.mu.Lock()
 	sess.Received[index] = true
@@ -262,17 +262,17 @@ func (s *PostgresBackupService) CompleteUpload(ctx context.Context, uploadID, co
 		chunkPath := filepath.Join(sess.Dir, fmt.Sprintf("chunk_%05d", idx))
 		cf, err := os.Open(chunkPath)
 		if err != nil {
-			mf.Close()
+			_ = mf.Close()
 			return fmt.Errorf("failed to open chunk %d: %w", idx, err)
 		}
 		if _, err := io.Copy(mf, cf); err != nil {
-			cf.Close()
-			mf.Close()
+			_ = cf.Close()
+			_ = mf.Close()
 			return fmt.Errorf("failed to copy chunk %d: %w", idx, err)
 		}
-		cf.Close()
+		_ = cf.Close()
 	}
-	mf.Close()
+	_ = mf.Close()
 
 	// Run pg_restore with file path (not stdin) for large files
 	if err := s.RestoreFromFile(ctx, merged); err != nil {
@@ -283,7 +283,7 @@ func (s *PostgresBackupService) CompleteUpload(ctx context.Context, uploadID, co
 	s.mu.Lock()
 	delete(s.sessions, uploadID)
 	s.mu.Unlock()
-	os.RemoveAll(sess.Dir)
+	_ = os.RemoveAll(sess.Dir)
 
 	return nil
 }
@@ -330,7 +330,7 @@ func (s *PostgresBackupService) AbortUpload(uploadID string) {
 	}
 	s.mu.Unlock()
 	if ok {
-		os.RemoveAll(sess.Dir)
+		_ = os.RemoveAll(sess.Dir)
 	}
 }
 
@@ -354,7 +354,7 @@ func (s *PostgresBackupService) cleanupLoop() {
 		for id, sess := range s.sessions {
 			if now.Sub(sess.CreatedAt) > uploadSessionTimeout {
 				delete(s.sessions, id)
-				go os.RemoveAll(sess.Dir)
+				go func(dir string) { _ = os.RemoveAll(dir) }(sess.Dir)
 			}
 		}
 		s.mu.Unlock()

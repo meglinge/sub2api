@@ -586,7 +586,7 @@ func (h *DataManagementHandler) RestorePostgres(c *gin.Context) {
 		response.BadRequest(c, "Missing file: "+err.Error())
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if !strings.HasSuffix(strings.ToLower(header.Filename), ".dump") {
 		response.BadRequest(c, "Only .dump files (pg_dump custom format) are accepted")
@@ -666,7 +666,7 @@ func (h *DataManagementHandler) UploadRestoreChunk(c *gin.Context) {
 		response.BadRequest(c, "Missing chunk file: "+err.Error())
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	allDone, err := h.pgBackupService.SaveChunk(uploadID, index, file)
 	if err != nil {
