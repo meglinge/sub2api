@@ -86,6 +86,7 @@ LABEL org.opencontainers.image.source="https://github.com/Wei-Shaw/sub2api"
 RUN apk add --no-cache \
     ca-certificates \
     tzdata \
+    postgresql16-client \
     && rm -rf /var/cache/apk/*
 
 # Create non-root user

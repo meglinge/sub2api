@@ -1,6 +1,113 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
+      <!-- PostgreSQL 数据库备份/恢复 -->
+      <div class="card p-6">
+        <div class="mb-4">
+          <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+            {{ t('admin.dataManagement.postgres.title') }}
+          </h3>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            {{ t('admin.dataManagement.postgres.description') }}
+          </p>
+        </div>
+
+        <!-- 连接信息 -->
+        <div v-if="pgInfo" class="mb-4 rounded-lg bg-gray-50 p-4 dark:bg-dark-800">
+          <div class="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+            <div>
+              <span class="text-gray-500 dark:text-gray-400">Host:</span>
+              <span class="ml-1 font-mono text-gray-900 dark:text-white">{{ pgInfo.host }}</span>
+            </div>
+            <div>
+              <span class="text-gray-500 dark:text-gray-400">Port:</span>
+              <span class="ml-1 font-mono text-gray-900 dark:text-white">{{ pgInfo.port }}</span>
+            </div>
+            <div>
+              <span class="text-gray-500 dark:text-gray-400">Database:</span>
+              <span class="ml-1 font-mono text-gray-900 dark:text-white">{{ pgInfo.dbname }}</span>
+            </div>
+            <div>
+              <span class="text-gray-500 dark:text-gray-400">SSL:</span>
+              <span class="ml-1 font-mono text-gray-900 dark:text-white">{{ pgInfo.sslmode }}</span>
+            </div>
+          </div>
+          <div v-if="!pgInfo.tools_ok" class="mt-2 text-sm text-red-600 dark:text-red-400">
+            ⚠ {{ pgInfo.tools_error }}
+          </div>
+        </div>
+
+        <!-- 导出 -->
+        <div class="mb-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            :disabled="pgExporting || !pgInfo?.tools_ok"
+            @click="exportPostgres"
+          >
+            {{ pgExporting ? t('common.loading') : t('admin.dataManagement.postgres.export') }}
+          </button>
+          <span class="text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.dataManagement.postgres.exportHint') }}
+          </span>
+        </div>
+
+        <!-- 恢复 -->
+        <div class="rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900/50 dark:bg-red-950/20">
+          <h4 class="mb-2 text-sm font-semibold text-red-700 dark:text-red-400">
+            {{ t('admin.dataManagement.postgres.restore') }}
+          </h4>
+          <p class="mb-3 text-xs text-red-600 dark:text-red-400">
+            {{ t('admin.dataManagement.postgres.restoreWarning') }}
+          </p>
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div class="flex-1">
+              <label class="mb-1 block text-xs text-gray-700 dark:text-gray-300">
+                {{ t('admin.dataManagement.postgres.selectFile') }}
+              </label>
+              <input
+                type="file"
+                accept=".dump"
+                class="input w-full text-sm"
+                @change="onRestoreFileChange"
+              />
+            </div>
+            <div class="flex-1">
+              <label class="mb-1 block text-xs text-gray-700 dark:text-gray-300">
+                {{ t('admin.dataManagement.postgres.confirmLabel', { dbname: pgInfo?.dbname || '...' }) }}
+              </label>
+              <input
+                v-model="pgRestoreConfirm"
+                class="input w-full font-mono text-sm"
+                :placeholder="`RESTORE ${pgInfo?.dbname || '...'}`"
+              />
+            </div>
+            <button
+              type="button"
+              class="btn btn-danger btn-sm whitespace-nowrap"
+              :disabled="pgRestoring || !pgRestoreFile || !pgRestoreConfirmValid || !pgInfo?.tools_ok"
+              @click="restorePostgres"
+            >
+              {{ pgRestoring ? t('common.loading') : t('admin.dataManagement.postgres.restoreBtn') }}
+            </button>
+          </div>
+          <!-- 上传进度 -->
+          <div v-if="pgRestoring" class="mt-3">
+            <div class="mb-1 flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
+              <span>{{ pgRestorePhase === 'uploading' ? t('admin.dataManagement.postgres.uploading', { current: pgRestoreProgress, total: pgRestoreTotal }) : t('admin.dataManagement.postgres.executingRestore') }}</span>
+              <span v-if="pgRestorePhase === 'uploading' && pgRestoreTotal > 0">{{ Math.round(pgRestoreProgress / pgRestoreTotal * 100) }}%</span>
+            </div>
+            <div class="h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700">
+              <div
+                class="h-full rounded-full transition-all duration-300"
+                :class="pgRestorePhase === 'restoring' ? 'animate-pulse bg-yellow-500' : 'bg-blue-500'"
+                :style="{ width: pgRestorePhase === 'uploading' && pgRestoreTotal > 0 ? `${(pgRestoreProgress / pgRestoreTotal) * 100}%` : '100%' }"
+              ></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="card p-6">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -187,15 +294,121 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import type { SoraS3Profile } from '@/api/admin/settings'
 import { adminAPI } from '@/api'
+import { getPostgresInfo, getPostgresExportUrl, initChunkedRestore, uploadRestoreChunk, completeChunkedRestore, abortChunkedRestore } from '@/api/admin/dataManagement'
+import type { PostgresInfo } from '@/api/admin/dataManagement'
 import { useAppStore } from '@/stores'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+
+// PostgreSQL backup/restore state
+const pgInfo = ref<PostgresInfo | null>(null)
+const pgExporting = ref(false)
+const pgRestoring = ref(false)
+const pgRestoreFile = ref<File | null>(null)
+const pgRestoreConfirm = ref('')
+const pgRestoreProgress = ref(0)
+const pgRestoreTotal = ref(0)
+const pgRestorePhase = ref<'idle' | 'uploading' | 'restoring'>('idle')
+
+const pgRestoreConfirmValid = computed(() => {
+  if (!pgInfo.value) return false
+  return pgRestoreConfirm.value === `RESTORE ${pgInfo.value.dbname}`
+})
+
+async function loadPostgresInfo() {
+  try {
+    pgInfo.value = await getPostgresInfo()
+  } catch (error) {
+    console.error('Failed to load postgres info:', error)
+  }
+}
+
+async function exportPostgres() {
+  pgExporting.value = true
+  try {
+    const url = getPostgresExportUrl()
+    const token = localStorage.getItem('token')
+    const resp = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!resp.ok) {
+      const text = await resp.text()
+      throw new Error(text || resp.statusText)
+    }
+    const blob = await resp.blob()
+    const disposition = resp.headers.get('Content-Disposition') || ''
+    const match = disposition.match(/filename="?([^"]+)"?/)
+    const filename = match ? match[1] : `sub2api-postgres-backup.dump`
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(a.href)
+    appStore.showSuccess(t('admin.dataManagement.postgres.exportSuccess'))
+  } catch (error) {
+    appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
+  } finally {
+    pgExporting.value = false
+  }
+}
+
+function onRestoreFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  pgRestoreFile.value = input.files?.[0] || null
+}
+
+async function restorePostgres() {
+  if (!pgRestoreFile.value || !pgRestoreConfirmValid.value) return
+  const file = pgRestoreFile.value
+  const confirm = pgRestoreConfirm.value
+
+  pgRestoring.value = true
+  pgRestorePhase.value = 'uploading'
+  pgRestoreProgress.value = 0
+  pgRestoreTotal.value = 0
+
+  let uploadId = ''
+  try {
+    // 1. Init upload session
+    const init = await initChunkedRestore(file.name, file.size)
+    uploadId = init.upload_id
+    const chunkSize = init.chunk_size
+    const chunkCount = init.chunk_count
+    pgRestoreTotal.value = chunkCount
+
+    // 2. Upload chunks sequentially
+    for (let i = 0; i < chunkCount; i++) {
+      const start = i * chunkSize
+      const end = Math.min(start + chunkSize, file.size)
+      const chunk = file.slice(start, end)
+      await uploadRestoreChunk(uploadId, i, chunk)
+      pgRestoreProgress.value = i + 1
+    }
+
+    // 3. Complete: merge + pg_restore
+    pgRestorePhase.value = 'restoring'
+    const result = await completeChunkedRestore(uploadId, confirm)
+    appStore.showSuccess(result.message || t('admin.dataManagement.postgres.restoreSuccess'))
+    pgRestoreConfirm.value = ''
+    pgRestoreFile.value = null
+  } catch (error) {
+    appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
+    if (uploadId) {
+      try { await abortChunkedRestore(uploadId) } catch { /* ignore */ }
+    }
+  } finally {
+    pgRestoring.value = false
+    pgRestorePhase.value = 'idle'
+    pgRestoreProgress.value = 0
+    pgRestoreTotal.value = 0
+  }
+}
 
 const loadingSoraProfiles = ref(false)
 const savingSoraProfile = ref(false)
@@ -475,7 +688,7 @@ function newDefaultSoraS3ProfileForm(profile?: SoraS3Profile): SoraS3ProfileForm
 }
 
 onMounted(async () => {
-  await loadSoraS3Profiles()
+  await Promise.all([loadPostgresInfo(), loadSoraS3Profiles()])
 })
 </script>
 

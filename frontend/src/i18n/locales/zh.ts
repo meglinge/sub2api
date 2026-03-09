@@ -1145,6 +1145,21 @@ export default {
         jobCreated: '备份任务已创建：{jobID}（{status}）',
         refreshJobs: '刷新任务',
         loadMore: '加载更多'
+      },
+      postgres: {
+        title: 'PostgreSQL 数据库备份/恢复',
+        description: '完整数据库级别的备份与恢复，包含用户、设置、订阅、用量等全库数据。账号/代理迁移请使用现有 JSON 导入导出功能。',
+        export: '导出数据库',
+        exportHint: '使用 pg_dump 导出完整数据库（custom format）',
+        exportSuccess: '数据库导出成功',
+        restore: '恢复数据库',
+        restoreWarning: '⚠ 恢复操作将覆盖当前数据库中的所有数据！请确保在维护窗口执行，并提前做好备份。恢复完成后需要重启服务。',
+        selectFile: '选择备份文件（.dump）',
+        confirmLabel: '输入 RESTORE {dbname} 确认恢复',
+        restoreBtn: '开始恢复',
+        restoreSuccess: '数据库恢复成功，请重启服务',
+        uploading: '正在上传分片 {current}/{total}...',
+        executingRestore: '正在执行数据库恢复，请耐心等待...'
       }
     },
 

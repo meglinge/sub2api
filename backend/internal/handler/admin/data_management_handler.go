@@ -2,6 +2,8 @@ package admin
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -15,10 +17,11 @@ import (
 
 type DataManagementHandler struct {
 	dataManagementService dataManagementService
+	pgBackupService       *service.PostgresBackupService
 }
 
-func NewDataManagementHandler(dataManagementService *service.DataManagementService) *DataManagementHandler {
-	return &DataManagementHandler{dataManagementService: dataManagementService}
+func NewDataManagementHandler(dataManagementService *service.DataManagementService, pgBackupService *service.PostgresBackupService) *DataManagementHandler {
+	return &DataManagementHandler{dataManagementService: dataManagementService, pgBackupService: pgBackupService}
 }
 
 type dataManagementService interface {
@@ -534,6 +537,197 @@ func (h *DataManagementHandler) getAgentHealth(c *gin.Context) service.DataManag
 		}
 	}
 	return h.dataManagementService.GetAgentHealth(c.Request.Context())
+}
+
+func (h *DataManagementHandler) GetPostgresInfo(c *gin.Context) {
+	info := h.pgBackupService.GetInfo()
+	toolsOK := true
+	toolsError := ""
+	if err := h.pgBackupService.CheckTools(); err != nil {
+		toolsOK = false
+		toolsError = err.Error()
+	}
+	response.Success(c, gin.H{
+		"host":        info.Host,
+		"port":        info.Port,
+		"dbname":      info.DBName,
+		"user":        info.User,
+		"sslmode":     info.SSLMode,
+		"tools_ok":    toolsOK,
+		"tools_error": toolsError,
+	})
+}
+
+func (h *DataManagementHandler) ExportPostgres(c *gin.Context) {
+	if err := h.pgBackupService.CheckTools(); err != nil {
+		response.Error(c, http.StatusServiceUnavailable, "pg_dump is not available: "+err.Error())
+		return
+	}
+
+	filename := h.pgBackupService.ExportFilename()
+	c.Header("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	c.Header("Content-Type", "application/octet-stream")
+	c.Status(http.StatusOK)
+
+	if err := h.pgBackupService.Export(c.Request.Context(), c.Writer); err != nil {
+		c.String(http.StatusInternalServerError, "Export failed: "+err.Error())
+		return
+	}
+}
+
+func (h *DataManagementHandler) RestorePostgres(c *gin.Context) {
+	if err := h.pgBackupService.CheckTools(); err != nil {
+		response.Error(c, http.StatusServiceUnavailable, "pg_restore is not available: "+err.Error())
+		return
+	}
+
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		response.BadRequest(c, "Missing file: "+err.Error())
+		return
+	}
+	defer file.Close()
+
+	if !strings.HasSuffix(strings.ToLower(header.Filename), ".dump") {
+		response.BadRequest(c, "Only .dump files (pg_dump custom format) are accepted")
+		return
+	}
+
+	confirm := strings.TrimSpace(c.PostForm("confirm"))
+	dbName := h.pgBackupService.GetInfo().DBName
+	expected := "RESTORE " + dbName
+	if confirm != expected {
+		response.BadRequest(c, "Confirmation text must be exactly: "+expected)
+		return
+	}
+
+	if err := h.pgBackupService.Restore(c.Request.Context(), io.Reader(file)); err != nil {
+		response.InternalError(c, "Restore failed: "+err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{
+		"restored":     true,
+		"need_restart": true,
+		"message":      "Database restored successfully. Please restart the service.",
+	})
+}
+
+func (h *DataManagementHandler) InitRestoreUpload(c *gin.Context) {
+	if err := h.pgBackupService.CheckTools(); err != nil {
+		response.Error(c, http.StatusServiceUnavailable, "pg_restore is not available: "+err.Error())
+		return
+	}
+
+	var req struct {
+		Filename  string `json:"filename" binding:"required"`
+		TotalSize int64  `json:"total_size" binding:"required,gt=0"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if !strings.HasSuffix(strings.ToLower(req.Filename), ".dump") {
+		response.BadRequest(c, "Only .dump files (pg_dump custom format) are accepted")
+		return
+	}
+
+	uploadID, chunkCount, err := h.pgBackupService.InitUpload(req.Filename, req.TotalSize)
+	if err != nil {
+		response.InternalError(c, "Failed to init upload: "+err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{
+		"upload_id":   uploadID,
+		"chunk_size":  service.ChunkSize,
+		"chunk_count": chunkCount,
+	})
+}
+
+func (h *DataManagementHandler) UploadRestoreChunk(c *gin.Context) {
+	uploadID := strings.TrimSpace(c.Param("upload_id"))
+	if uploadID == "" {
+		response.BadRequest(c, "Missing upload_id")
+		return
+	}
+	indexStr := strings.TrimSpace(c.PostForm("index"))
+	if indexStr == "" {
+		indexStr = strings.TrimSpace(c.Query("index"))
+	}
+	index, err := strconv.Atoi(indexStr)
+	if err != nil {
+		response.BadRequest(c, "Invalid chunk index")
+		return
+	}
+
+	file, _, err := c.Request.FormFile("chunk")
+	if err != nil {
+		response.BadRequest(c, "Missing chunk file: "+err.Error())
+		return
+	}
+	defer file.Close()
+
+	allDone, err := h.pgBackupService.SaveChunk(uploadID, index, file)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	received, total, _ := h.pgBackupService.GetUploadProgress(uploadID)
+	response.Success(c, gin.H{
+		"upload_id": uploadID,
+		"index":     index,
+		"received":  received,
+		"total":     total,
+		"complete":  allDone,
+	})
+}
+
+func (h *DataManagementHandler) CompleteRestoreUpload(c *gin.Context) {
+	uploadID := strings.TrimSpace(c.Param("upload_id"))
+	if uploadID == "" {
+		response.BadRequest(c, "Missing upload_id")
+		return
+	}
+
+	var req struct {
+		Confirm string `json:"confirm" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	if err := h.pgBackupService.CompleteUpload(c.Request.Context(), uploadID, req.Confirm); err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "confirmation text") {
+			response.BadRequest(c, errMsg)
+			return
+		}
+		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "incomplete") {
+			response.BadRequest(c, errMsg)
+			return
+		}
+		response.InternalError(c, "Restore failed: "+errMsg)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"restored":     true,
+		"need_restart": true,
+		"message":      "Database restored successfully. Please restart the service.",
+	})
+}
+
+func (h *DataManagementHandler) AbortRestoreUpload(c *gin.Context) {
+	uploadID := strings.TrimSpace(c.Param("upload_id"))
+	if uploadID == "" {
+		response.BadRequest(c, "Missing upload_id")
+		return
+	}
+	h.pgBackupService.AbortUpload(uploadID)
+	response.Success(c, gin.H{"aborted": true})
 }
 
 func normalizeBackupIdempotencyKey(headerValue, bodyValue string) string {

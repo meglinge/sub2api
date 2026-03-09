@@ -309,6 +309,96 @@ export async function getBackupJob(jobID: string): Promise<BackupJob> {
   return data
 }
 
+export interface PostgresInfo {
+  host: string
+  port: number
+  dbname: string
+  user: string
+  sslmode: string
+  tools_ok: boolean
+  tools_error: string
+}
+
+export interface PostgresRestoreResult {
+  restored: boolean
+  need_restart: boolean
+  message: string
+}
+
+export interface ChunkedUploadInitResult {
+  upload_id: string
+  chunk_size: number
+  chunk_count: number
+}
+
+export interface ChunkedUploadChunkResult {
+  upload_id: string
+  index: number
+  received: number
+  total: number
+  complete: boolean
+}
+
+export async function getPostgresInfo(): Promise<PostgresInfo> {
+  const { data } = await apiClient.get<PostgresInfo>('/admin/data-management/postgres/info')
+  return data
+}
+
+export function getPostgresExportUrl(): string {
+  return `${apiClient.defaults.baseURL}/admin/data-management/postgres/export`
+}
+
+export async function restorePostgresDatabase(file: File, confirm: string): Promise<PostgresRestoreResult> {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('confirm', confirm)
+  const { data } = await apiClient.post<PostgresRestoreResult>(
+    '/admin/data-management/postgres/restore',
+    formData,
+    {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 600000,
+    }
+  )
+  return data
+}
+
+export async function initChunkedRestore(filename: string, totalSize: number): Promise<ChunkedUploadInitResult> {
+  const { data } = await apiClient.post<ChunkedUploadInitResult>(
+    '/admin/data-management/postgres/restore/init',
+    { filename, total_size: totalSize }
+  )
+  return data
+}
+
+export async function uploadRestoreChunk(uploadId: string, index: number, chunk: Blob): Promise<ChunkedUploadChunkResult> {
+  const formData = new FormData()
+  formData.append('chunk', chunk)
+  formData.append('index', String(index))
+  const { data } = await apiClient.post<ChunkedUploadChunkResult>(
+    `/admin/data-management/postgres/restore/upload/${uploadId}`,
+    formData,
+    {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    }
+  )
+  return data
+}
+
+export async function completeChunkedRestore(uploadId: string, confirm: string): Promise<PostgresRestoreResult> {
+  const { data } = await apiClient.post<PostgresRestoreResult>(
+    `/admin/data-management/postgres/restore/complete/${uploadId}`,
+    { confirm },
+    { timeout: 600000 }
+  )
+  return data
+}
+
+export async function abortChunkedRestore(uploadId: string): Promise<void> {
+  await apiClient.delete(`/admin/data-management/postgres/restore/upload/${uploadId}`)
+}
+
 export const dataManagementAPI = {
   getAgentHealth,
   getConfig,
@@ -326,7 +416,14 @@ export const dataManagementAPI = {
   setActiveS3Profile,
   createBackupJob,
   listBackupJobs,
-  getBackupJob
+  getBackupJob,
+  getPostgresInfo,
+  getPostgresExportUrl,
+  restorePostgresDatabase,
+  initChunkedRestore,
+  uploadRestoreChunk,
+  completeChunkedRestore,
+  abortChunkedRestore,
 }
 
 export default dataManagementAPI

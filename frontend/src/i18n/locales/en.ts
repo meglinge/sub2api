@@ -1123,6 +1123,21 @@ export default {
         jobCreated: 'Backup job created: {jobID} ({status})',
         refreshJobs: 'Refresh Jobs',
         loadMore: 'Load More'
+      },
+      postgres: {
+        title: 'PostgreSQL Database Backup / Restore',
+        description: 'Full database-level backup and restore, including users, settings, subscriptions, usage logs, and all data. For account/proxy migration, use the existing JSON import/export.',
+        export: 'Export Database',
+        exportHint: 'Export full database using pg_dump (custom format)',
+        exportSuccess: 'Database exported successfully',
+        restore: 'Restore Database',
+        restoreWarning: '⚠ Restoring will overwrite ALL data in the current database! Make sure to perform this during a maintenance window and have a backup ready. Service restart is required after restore.',
+        selectFile: 'Select backup file (.dump)',
+        confirmLabel: 'Type RESTORE {dbname} to confirm',
+        restoreBtn: 'Start Restore',
+        restoreSuccess: 'Database restored successfully. Please restart the service.',
+        uploading: 'Uploading chunk {current}/{total}...',
+        executingRestore: 'Executing database restore, please wait...'
       }
     },
 

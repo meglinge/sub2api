@@ -430,6 +430,15 @@ func registerDataManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		dataManagement.POST("/backups", h.Admin.DataManagement.CreateBackupJob)
 		dataManagement.GET("/backups", h.Admin.DataManagement.ListBackupJobs)
 		dataManagement.GET("/backups/:job_id", h.Admin.DataManagement.GetBackupJob)
+		// PostgreSQL 数据库备份/恢复（内置）
+		dataManagement.GET("/postgres/info", h.Admin.DataManagement.GetPostgresInfo)
+		dataManagement.GET("/postgres/export", h.Admin.DataManagement.ExportPostgres)
+		dataManagement.POST("/postgres/restore", h.Admin.DataManagement.RestorePostgres)
+		// PostgreSQL 分片上传恢复
+		dataManagement.POST("/postgres/restore/init", h.Admin.DataManagement.InitRestoreUpload)
+		dataManagement.POST("/postgres/restore/upload/:upload_id", h.Admin.DataManagement.UploadRestoreChunk)
+		dataManagement.POST("/postgres/restore/complete/:upload_id", h.Admin.DataManagement.CompleteRestoreUpload)
+		dataManagement.DELETE("/postgres/restore/upload/:upload_id", h.Admin.DataManagement.AbortRestoreUpload)
 	}
 }
 
