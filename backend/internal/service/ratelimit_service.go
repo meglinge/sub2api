@@ -130,6 +130,15 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	case 401:
 		// 对所有 OAuth 账号在 401 错误时调用缓存失效并强制下次刷新
 		if account.Type == AccountTypeOAuth {
+			msg := "Authentication failed (401): invalid or expired credentials"
+			if upstreamMsg != "" {
+				msg = "OAuth 401: " + upstreamMsg
+			}
+			if shouldTreatOAuth401AsTerminal(account, upstreamMsg) {
+				s.handleAuthError(ctx, account, msg)
+				shouldDisable = true
+				break
+			}
 			// 1. 失效缓存
 			if s.tokenCacheInvalidator != nil {
 				if err := s.tokenCacheInvalidator.InvalidateToken(ctx, account); err != nil {
@@ -147,10 +156,6 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 				slog.Info("oauth_401_force_refresh_set", "account_id", account.ID, "platform", account.Platform)
 			}
 			// 3. 临时不可调度，替代 SetError（保持 status=active 让刷新服务能拾取）
-			msg := "Authentication failed (401): invalid or expired credentials"
-			if upstreamMsg != "" {
-				msg = "OAuth 401: " + upstreamMsg
-			}
 			cooldownMinutes := s.cfg.RateLimit.OAuth401CooldownMinutes
 			if cooldownMinutes <= 0 {
 				cooldownMinutes = 10
@@ -219,6 +224,39 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	}
 
 	return shouldDisable
+}
+
+func shouldTreatOAuth401AsTerminal(account *Account, upstreamMsg string) bool {
+	msg := strings.ToLower(strings.TrimSpace(upstreamMsg))
+	if msg == "" {
+		return false
+	}
+
+	openAITerminalMarkers := []string{
+		"account has been deactivated",
+		"account was deactivated",
+		"your openai account has been deactivated",
+		"account is deactivated",
+		"account has been disabled",
+		"account is disabled",
+		"account has been suspended",
+		"account is suspended",
+		"contact us through our help center",
+		"help.openai.com",
+	}
+	for _, marker := range openAITerminalMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+
+	if account != nil && account.Platform == PlatformOpenAI {
+		if strings.Contains(msg, "deactivated") || strings.Contains(msg, "suspended") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // PreCheckUsage proactively checks local quota before dispatching a request.

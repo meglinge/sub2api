@@ -119,3 +119,44 @@ func TestRateLimitService_HandleUpstreamError_NonOAuth401(t *testing.T) {
 	require.Equal(t, 1, repo.setErrorCalls)
 	require.Empty(t, invalidator.accounts)
 }
+
+func TestRateLimitService_HandleUpstreamError_OpenAIOAuth401DeactivatedSetsError(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	invalidator := &tokenCacheInvalidatorRecorder{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetTokenCacheInvalidator(invalidator)
+	account := &Account{
+		ID:       103,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+	}
+
+	body := []byte(`{"error":{"message":"Your OpenAI account has been deactivated, please check your email for more information. If you feel this is an error, contact us through our help center at help.openai.com."}}`)
+	shouldDisable := service.HandleUpstreamError(context.Background(), account, 401, http.Header{}, body)
+
+	require.True(t, shouldDisable)
+	require.Equal(t, 1, repo.setErrorCalls)
+	require.Equal(t, 0, repo.tempCalls)
+	require.Empty(t, invalidator.accounts)
+	require.Contains(t, repo.lastErrorMsg, "deactivated")
+}
+
+func TestRateLimitService_HandleUpstreamError_OpenAIOAuth401RecoverableStillTempUnschedulable(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	invalidator := &tokenCacheInvalidatorRecorder{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetTokenCacheInvalidator(invalidator)
+	account := &Account{
+		ID:       104,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+	}
+
+	body := []byte(`{"error":{"message":"Unauthorized"}}`)
+	shouldDisable := service.HandleUpstreamError(context.Background(), account, 401, http.Header{}, body)
+
+	require.True(t, shouldDisable)
+	require.Equal(t, 0, repo.setErrorCalls)
+	require.Equal(t, 1, repo.tempCalls)
+	require.Len(t, invalidator.accounts, 1)
+}
