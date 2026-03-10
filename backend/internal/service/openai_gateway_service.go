@@ -2836,6 +2836,18 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 		return nil, err
 	}
 
+	// 上游返回 200 但 body 中包含 OpenAI 瞬时处理错误时，触发 failover 换号重试。
+	if len(body) > 0 {
+		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
+		if isOpenAITransientProcessingErrorByMessage(upstreamMsg, body) {
+			return nil, &UpstreamFailoverError{
+				StatusCode:      resp.StatusCode,
+				ResponseBody:    body,
+				ResponseHeaders: resp.Header,
+			}
+		}
+	}
+
 	usage := &OpenAIUsage{}
 	usageParsed := false
 	if len(body) > 0 {
@@ -3561,6 +3573,18 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 			})
 		}
 		return nil, err
+	}
+
+	// 上游返回 200 但 body 中包含 OpenAI 瞬时处理错误时，触发 failover 换号重试。
+	if len(body) > 0 {
+		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
+		if isOpenAITransientProcessingErrorByMessage(upstreamMsg, body) {
+			return nil, &UpstreamFailoverError{
+				StatusCode:      resp.StatusCode,
+				ResponseBody:    body,
+				ResponseHeaders: resp.Header,
+			}
+		}
 	}
 
 	if account.Type == AccountTypeOAuth {
