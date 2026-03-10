@@ -435,7 +435,12 @@ export default {
       callbackProcessing: 'Completing login, please wait...',
       callbackHint: 'If you are not redirected automatically, go back to the login page and try again.',
       callbackMissingToken: 'Missing login token, please try again.',
-      backToLogin: 'Back to Login'
+      backToLogin: 'Back to Login',
+      invitationRequired: 'This Linux.do account is not yet registered. The site requires an invitation code — please enter one to complete registration.',
+      invalidPendingToken: 'The registration token has expired. Please sign in with Linux.do again.',
+      completeRegistration: 'Complete Registration',
+      completing: 'Completing registration…',
+      completeRegistrationFailed: 'Registration failed. Please check your invitation code and try again.'
     },
     oauth: {
       code: 'Code',
@@ -1852,7 +1857,12 @@ export default {
         edit: 'Bulk Edit',
         delete: 'Bulk Delete',
         enableScheduling: 'Enable Scheduling',
-        disableScheduling: 'Disable Scheduling'
+        disableScheduling: 'Disable Scheduling',
+        resetStatus: 'Reset Status',
+        refreshToken: 'Refresh Token',
+        resetStatusSuccess: 'Successfully reset {count} account(s) status',
+        refreshTokenSuccess: 'Successfully refreshed {count} account(s) token',
+        partialSuccess: 'Partially completed: {success} succeeded, {failed} failed'
       },
       bulkEdit: {
         title: 'Bulk Edit Accounts',
@@ -4101,6 +4111,23 @@ export default {
         thinkingBudgetHint: 'Automatically set budget to 32000 and retry when upstream returns budget_tokens constraint error (≥1024)',
         saved: 'Rectifier settings saved',
         saveFailed: 'Failed to save rectifier settings'
+      },
+      betaPolicy: {
+        title: 'Beta Policy',
+        description: 'How to handle Beta features when configuring the forwarding of Anthropic API requests. Applicable only to the /v1/messages endpoint.',
+        action: 'Action',
+        actionPass: 'Pass (transparent)',
+        actionFilter: 'Filter (remove)',
+        actionBlock: 'Block (reject)',
+        scope: 'Scope',
+        scopeAll: 'All accounts',
+        scopeOAuth: 'OAuth only',
+        scopeAPIKey: 'API Key only',
+        errorMessage: 'Error message',
+        errorMessagePlaceholder: 'Custom error message when blocked',
+        errorMessageHint: 'Leave empty for default message',
+        saved: 'Beta policy settings saved',
+        saveFailed: 'Failed to save beta policy settings'
       },
       saveSettings: 'Save Settings',
       saving: 'Saving...',

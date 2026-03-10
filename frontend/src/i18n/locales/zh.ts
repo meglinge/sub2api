@@ -434,7 +434,12 @@ export default {
       callbackProcessing: '正在验证登录信息，请稍候...',
       callbackHint: '如果页面未自动跳转，请返回登录页重试。',
       callbackMissingToken: '登录信息缺失，请返回重试。',
-      backToLogin: '返回登录'
+      backToLogin: '返回登录',
+      invitationRequired: '该 Linux.do 账号尚未注册，站点已开启邀请码注册，请输入邀请码以完成注册。',
+      invalidPendingToken: '注册凭证已失效，请重新使用 Linux.do 登录。',
+      completeRegistration: '完成注册',
+      completing: '正在完成注册...',
+      completeRegistrationFailed: '注册失败，请检查邀请码后重试。'
     },
     oauth: {
       code: '授权码',
@@ -1999,7 +2004,12 @@ export default {
         edit: '批量编辑账号',
         delete: '批量删除',
         enableScheduling: '批量启用调度',
-        disableScheduling: '批量停止调度'
+        disableScheduling: '批量停止调度',
+        resetStatus: '批量重置状态',
+        refreshToken: '批量刷新令牌',
+        resetStatusSuccess: '已成功重置 {count} 个账号状态',
+        refreshTokenSuccess: '已成功刷新 {count} 个账号令牌',
+        partialSuccess: '操作部分完成：{success} 成功，{failed} 失败'
       },
       bulkEdit: {
         title: '批量编辑账号',
@@ -4271,6 +4281,23 @@ export default {
         thinkingBudgetHint: '当上游返回 budget_tokens 约束错误（≥1024）时，自动将 budget 设为 32000 并重试',
         saved: '整流器设置保存成功',
         saveFailed: '保存整流器设置失败'
+      },
+      betaPolicy: {
+        title: 'Beta 策略',
+        description: '配置转发 Anthropic API 请求时如何处理 Beta 特性。仅适用于 /v1/messages 接口。',
+        action: '处理方式',
+        actionPass: '透传（不处理）',
+        actionFilter: '过滤（移除）',
+        actionBlock: '拦截（拒绝请求）',
+        scope: '生效范围',
+        scopeAll: '全部账号',
+        scopeOAuth: '仅 OAuth 账号',
+        scopeAPIKey: '仅 API Key 账号',
+        errorMessage: '错误消息',
+        errorMessagePlaceholder: '拦截时返回的自定义错误消息',
+        errorMessageHint: '留空则使用默认错误消息',
+        saved: 'Beta 策略设置保存成功',
+        saveFailed: '保存 Beta 策略设置失败'
       },
       saveSettings: '保存设置',
       saving: '保存中...',
