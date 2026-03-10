@@ -985,7 +985,12 @@ func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string
 	if upstreamStatusCode != http.StatusBadRequest {
 		return false
 	}
+	return isOpenAITransientProcessingErrorByMessage(upstreamMsg, upstreamBody)
+}
 
+// isOpenAITransientProcessingErrorByMessage 不限状态码，仅按消息内容判断是否为 OpenAI 瞬时处理错误。
+// 用于透传模式下 502 等非 400 状态码也能触发 failover 换号。
+func isOpenAITransientProcessingErrorByMessage(upstreamMsg string, upstreamBody []byte) bool {
 	match := func(text string) bool {
 		lower := strings.ToLower(strings.TrimSpace(text))
 		if lower == "" {
@@ -2404,7 +2409,45 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
-		// 透传模式不做 failover（避免改变原始上游语义），按上游原样返回错误响应。
+		// 透传模式下，对 OpenAI 瞬时处理错误（502 + "An error occurred while processing your request"）
+		// 特殊处理：触发 failover 换号重试，而非原样透传。
+		if resp.StatusCode == http.StatusBadGateway {
+			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+			_ = resp.Body.Close()
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+
+			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
+			if isOpenAITransientProcessingErrorByMessage(upstreamMsg, respBody) {
+				upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+				upstreamDetail := ""
+				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+					if maxBytes <= 0 {
+						maxBytes = 2048
+					}
+					upstreamDetail = truncateString(string(respBody), maxBytes)
+				}
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Passthrough:        true,
+					Kind:               "failover",
+					Message:            upstreamMsg,
+					Detail:             upstreamDetail,
+				})
+				// 瞬时处理错误不调用 handleFailoverSideEffects，避免触发账号状态标记（如自定义错误码禁用）。
+				// 仅返回 UpstreamFailoverError 让 handler 层换号重试。
+				return nil, &UpstreamFailoverError{
+					StatusCode:      resp.StatusCode,
+					ResponseBody:    respBody,
+					ResponseHeaders: resp.Header,
+				}
+			}
+		}
+		// 其他错误保持透传模式不做 failover（避免改变原始上游语义），按上游原样返回错误响应。
 		return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body)
 	}
 
