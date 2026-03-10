@@ -1357,19 +1357,9 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 								ReleaseFunc: result.ReleaseFunc,
 							}, nil
 						}
-
-						waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, accountID)
-						if waitingCount < cfg.StickySessionMaxWaiting {
-							return &AccountSelectionResult{
-								Account: account,
-								WaitPlan: &AccountWaitPlan{
-									AccountID:      accountID,
-									MaxConcurrency: account.Concurrency,
-									Timeout:        cfg.StickySessionWaitTimeout,
-									MaxWaiting:     cfg.StickySessionMaxWaiting,
-								},
-							}, nil
-						}
+						// Sticky account is busy/full: fall through to load-aware selection so
+						// concurrent requests can use other idle accounts instead of waiting on
+						// the same sticky account.
 					}
 				}
 			}

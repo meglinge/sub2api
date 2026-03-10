@@ -351,19 +351,9 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		}, nil
 	}
 
-	cfg := s.service.schedulingConfig()
-	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
-	if s.service.concurrencyService != nil {
-		return &AccountSelectionResult{
-			Account: account,
-			WaitPlan: &AccountWaitPlan{
-				AccountID:      accountID,
-				MaxConcurrency: account.Concurrency,
-				Timeout:        cfg.StickySessionWaitTimeout,
-				MaxWaiting:     cfg.StickySessionMaxWaiting,
-			},
-		}, nil
-	}
+	// Sticky session preserves affinity only when the account can serve immediately.
+	// If the sticky account is busy/full, fall back to load balancing so other idle
+	// accounts can absorb concurrent requests instead of queueing on the same one.
 	return nil, nil
 }
 
