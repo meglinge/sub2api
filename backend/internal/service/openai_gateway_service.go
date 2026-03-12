@@ -438,7 +438,7 @@ func (s *OpenAIGatewayService) maybeRefreshOpenAIUsageWindowAsync(account *Accou
 		probeSvc := &AccountUsageService{
 			accountRepo: s.accountRepo,
 		}
-		if _, err := probeSvc.probeOpenAICodexSnapshot(probeCtx, &accountCopy); err != nil {
+		if _, _, err := probeSvc.probeOpenAICodexSnapshot(probeCtx, &accountCopy); err != nil {
 			logger.LegacyPrintf("service.openai_gateway", "openai codex usage probe failed: account=%d err=%v", accountCopy.ID, err)
 		}
 	}()
