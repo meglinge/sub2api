@@ -27,6 +27,7 @@ export async function list(
     status?: 'active' | 'expired' | 'revoked'
     user_id?: number
     group_id?: number
+    platform?: string
     sort_by?: string
     sort_order?: 'asc' | 'desc'
   },
@@ -121,14 +122,14 @@ export async function revoke(id: number): Promise<{ message: string }> {
 }
 
 /**
- * Reset daily and/or weekly usage quota for a subscription
+ * Reset daily, weekly, and/or monthly usage quota for a subscription
  * @param id - Subscription ID
  * @param options - Which windows to reset
  * @returns Updated subscription
  */
 export async function resetQuota(
   id: number,
-  options: { daily: boolean; weekly: boolean }
+  options: { daily: boolean; weekly: boolean; monthly: boolean }
 ): Promise<UserSubscription> {
   const { data } = await apiClient.post<UserSubscription>(
     `/admin/subscriptions/${id}/reset-quota`,

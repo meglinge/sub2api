@@ -164,27 +164,10 @@
               </p>
             </div>
 
-            <!-- Model Checkbox List -->
-            <div class="mb-3 grid grid-cols-2 gap-2">
-              <label
-                v-for="model in filteredModels"
-                :key="model.value"
-                class="flex cursor-pointer items-center rounded-lg border p-3 transition-all hover:bg-gray-50 dark:border-dark-600 dark:hover:bg-dark-700"
-                :class="
-                  allowedModels.includes(model.value)
-                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                    : 'border-gray-200'
-                "
-              >
-                <input
-                  v-model="allowedModels"
-                  type="checkbox"
-                  :value="model.value"
-                  class="mr-2 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                />
-                <span class="text-sm text-gray-700 dark:text-gray-300">{{ model.label }}</span>
-              </label>
-            </div>
+            <ModelWhitelistSelector
+              v-model="allowedModels"
+              :platforms="selectedPlatforms"
+            />
 
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
@@ -832,8 +815,12 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
+import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { buildModelMappingObject as buildModelMappingPayload } from '@/composables/useModelWhitelist'
+import {
+  buildModelMappingObject as buildModelMappingPayload,
+  getPresetMappingsByPlatform
+} from '@/composables/useModelWhitelist'
 
 interface Props {
   show: boolean
@@ -865,26 +852,20 @@ const allAnthropicOAuthOrSetupToken = computed(() => {
   )
 })
 
-const platformModelPrefix: Record<string, string[]> = {
-  anthropic: ['claude-'],
-  antigravity: ['claude-', 'gemini-', 'gpt-oss-', 'tab_'],
-  openai: ['gpt-'],
-  gemini: ['gemini-'],
-  sora: []
-}
-
-const filteredModels = computed(() => {
-  if (props.selectedPlatforms.length === 0) return allModels
-  const prefixes = [...new Set(props.selectedPlatforms.flatMap(p => platformModelPrefix[p] || []))]
-  if (prefixes.length === 0) return allModels
-  return allModels.filter(m => prefixes.some(prefix => m.value.startsWith(prefix)))
-})
-
 const filteredPresets = computed(() => {
-  if (props.selectedPlatforms.length === 0) return presetMappings
-  const prefixes = [...new Set(props.selectedPlatforms.flatMap(p => platformModelPrefix[p] || []))]
-  if (prefixes.length === 0) return presetMappings
-  return presetMappings.filter(m => prefixes.some(prefix => m.from.startsWith(prefix)))
+  if (props.selectedPlatforms.length === 0) return []
+
+  const dedupedPresets = new Map<string, ReturnType<typeof getPresetMappingsByPlatform>[number]>()
+  for (const platform of props.selectedPlatforms) {
+    for (const preset of getPresetMappingsByPlatform(platform)) {
+      const key = `${preset.from}=>${preset.to}`
+      if (!dedupedPresets.has(key)) {
+        dedupedPresets.set(key, preset)
+      }
+    }
+  }
+
+  return Array.from(dedupedPresets.values())
 })
 
 // Model mapping type

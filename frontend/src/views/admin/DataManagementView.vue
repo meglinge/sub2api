@@ -1,5 +1,4 @@
 <template>
-  <AppLayout>
     <div class="space-y-6">
       <!-- PostgreSQL 数据库备份/恢复 -->
       <div class="card p-6">
@@ -290,13 +289,11 @@
         </div>
       </Transition>
     </Teleport>
-  </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AppLayout from '@/components/layout/AppLayout.vue'
 import type { SoraS3Profile } from '@/api/admin/settings'
 import { adminAPI } from '@/api'
 import { getPostgresInfo, getPostgresExportUrl, initChunkedRestore, uploadRestoreChunk, completeChunkedRestore, abortChunkedRestore } from '@/api/admin/dataManagement'

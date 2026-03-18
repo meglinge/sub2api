@@ -76,6 +76,19 @@ const minVersionDBTimeout = 5 * time.Second
 const openAIUsageWindowCacheTTL = 60 * time.Second
 const openAIUsageWindowErrorTTL = 5 * time.Second
 
+// cachedBackendMode Backend Mode cache (in-process, 60s TTL)
+type cachedBackendMode struct {
+	value     bool
+	expiresAt int64 // unix nano
+}
+
+var backendModeCache atomic.Value // *cachedBackendMode
+var backendModeSF singleflight.Group
+
+const backendModeCacheTTL = 60 * time.Second
+const backendModeErrorTTL = 5 * time.Second
+const backendModeDBTimeout = 5 * time.Second
+
 // DefaultSubscriptionGroupReader validates group references used by default subscriptions.
 type DefaultSubscriptionGroupReader interface {
 	GetByID(ctx context.Context, id int64) (*Group, error)
@@ -114,6 +127,15 @@ func (s *SettingService) GetAllSettings(ctx context.Context) (*SystemSettings, e
 	return s.parseSettings(settings), nil
 }
 
+// GetFrontendURL 获取前端基础URL（数据库优先，fallback 到配置文件）
+func (s *SettingService) GetFrontendURL(ctx context.Context) string {
+	val, err := s.settingRepo.GetValue(ctx, SettingKeyFrontendURL)
+	if err == nil && strings.TrimSpace(val) != "" {
+		return strings.TrimSpace(val)
+	}
+	return s.cfg.Server.FrontendURL
+}
+
 // GetPublicSettings 获取公开设置（无需登录）
 func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings, error) {
 	keys := []string{
@@ -139,6 +161,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeySoraClientEnabled,
 		SettingKeyCustomMenuItems,
 		SettingKeyLinuxDoConnectEnabled,
+		SettingKeyBackendModeEnabled,
 	}
 
 	settings, err := s.settingRepo.GetMultiple(ctx, keys)
@@ -183,6 +206,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SoraClientEnabled:                settings[SettingKeySoraClientEnabled] == "true",
 		CustomMenuItems:                  settings[SettingKeyCustomMenuItems],
 		LinuxDoOAuthEnabled:              linuxDoEnabled,
+		BackendModeEnabled:               settings[SettingKeyBackendModeEnabled] == "true",
 	}, nil
 }
 
@@ -234,6 +258,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		SoraClientEnabled                bool            `json:"sora_client_enabled"`
 		CustomMenuItems                  json.RawMessage `json:"custom_menu_items"`
 		LinuxDoOAuthEnabled              bool            `json:"linuxdo_oauth_enabled"`
+		BackendModeEnabled               bool            `json:"backend_mode_enabled"`
 		Version                          string          `json:"version,omitempty"`
 	}{
 		RegistrationEnabled:              settings.RegistrationEnabled,
@@ -258,6 +283,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		SoraClientEnabled:                settings.SoraClientEnabled,
 		CustomMenuItems:                  filterUserVisibleMenuItems(settings.CustomMenuItems),
 		LinuxDoOAuthEnabled:              settings.LinuxDoOAuthEnabled,
+		BackendModeEnabled:               settings.BackendModeEnabled,
 		Version:                          s.version,
 	}, nil
 }
@@ -395,6 +421,7 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 	updates[SettingKeyRegistrationEmailSuffixWhitelist] = string(registrationEmailSuffixWhitelistJSON)
 	updates[SettingKeyPromoCodeEnabled] = strconv.FormatBool(settings.PromoCodeEnabled)
 	updates[SettingKeyPasswordResetEnabled] = strconv.FormatBool(settings.PasswordResetEnabled)
+	updates[SettingKeyFrontendURL] = settings.FrontendURL
 	updates[SettingKeyInvitationCodeEnabled] = strconv.FormatBool(settings.InvitationCodeEnabled)
 	updates[SettingKeyTotpEnabled] = strconv.FormatBool(settings.TotpEnabled)
 
@@ -477,6 +504,9 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 	// 分组隔离
 	updates[SettingKeyAllowUngroupedKeyScheduling] = strconv.FormatBool(settings.AllowUngroupedKeyScheduling)
 
+	// Backend Mode
+	updates[SettingKeyBackendModeEnabled] = strconv.FormatBool(settings.BackendModeEnabled)
+
 	err = s.settingRepo.SetMultiple(ctx, updates)
 	if err == nil {
 		// 先使 inflight singleflight 失效，再刷新缓存，缩小旧值覆盖新值的竞态窗口
@@ -491,6 +521,11 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 			Yellow7dPercent: settings.OpenAIUsageWindowYellow7DPercent,
 			StaleTTL:        time.Duration(settings.OpenAIUsageWindowSnapshotStaleSeconds) * time.Second,
 		}, openAIUsageWindowCacheTTL)
+		backendModeSF.Forget("backend_mode")
+		backendModeCache.Store(&cachedBackendMode{
+			value:     settings.BackendModeEnabled,
+			expiresAt: time.Now().Add(backendModeCacheTTL).UnixNano(),
+		})
 		if s.onUpdate != nil {
 			s.onUpdate() // Invalidate cache after settings update
 		}
@@ -545,6 +580,52 @@ func (s *SettingService) IsRegistrationEnabled(ctx context.Context) bool {
 		return false
 	}
 	return value == "true"
+}
+
+// IsBackendModeEnabled checks if backend mode is enabled
+// Uses in-process atomic.Value cache with 60s TTL, zero-lock hot path
+func (s *SettingService) IsBackendModeEnabled(ctx context.Context) bool {
+	if cached, ok := backendModeCache.Load().(*cachedBackendMode); ok && cached != nil {
+		if time.Now().UnixNano() < cached.expiresAt {
+			return cached.value
+		}
+	}
+	result, _, _ := backendModeSF.Do("backend_mode", func() (any, error) {
+		if cached, ok := backendModeCache.Load().(*cachedBackendMode); ok && cached != nil {
+			if time.Now().UnixNano() < cached.expiresAt {
+				return cached.value, nil
+			}
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), backendModeDBTimeout)
+		defer cancel()
+		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyBackendModeEnabled)
+		if err != nil {
+			if errors.Is(err, ErrSettingNotFound) {
+				// Setting not yet created (fresh install) - default to disabled with full TTL
+				backendModeCache.Store(&cachedBackendMode{
+					value:     false,
+					expiresAt: time.Now().Add(backendModeCacheTTL).UnixNano(),
+				})
+				return false, nil
+			}
+			slog.Warn("failed to get backend_mode_enabled setting", "error", err)
+			backendModeCache.Store(&cachedBackendMode{
+				value:     false,
+				expiresAt: time.Now().Add(backendModeErrorTTL).UnixNano(),
+			})
+			return false, nil
+		}
+		enabled := value == "true"
+		backendModeCache.Store(&cachedBackendMode{
+			value:     enabled,
+			expiresAt: time.Now().Add(backendModeCacheTTL).UnixNano(),
+		})
+		return enabled, nil
+	})
+	if val, ok := result.(bool); ok {
+		return val
+	}
+	return false
 }
 
 // IsEmailVerifyEnabled 检查是否开启邮件验证
@@ -723,6 +804,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		RegistrationEmailSuffixWhitelist: ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist]),
 		PromoCodeEnabled:                 settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
 		PasswordResetEnabled:             emailVerifyEnabled && settings[SettingKeyPasswordResetEnabled] == "true",
+		FrontendURL:                      settings[SettingKeyFrontendURL],
 		InvitationCodeEnabled:            settings[SettingKeyInvitationCodeEnabled] == "true",
 		TotpEnabled:                      settings[SettingKeyTotpEnabled] == "true",
 		SMTPHost:                         settings[SettingKeySMTPHost],
@@ -746,6 +828,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		PurchaseSubscriptionURL:          strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
 		SoraClientEnabled:                settings[SettingKeySoraClientEnabled] == "true",
 		CustomMenuItems:                  settings[SettingKeyCustomMenuItems],
+		BackendModeEnabled:               settings[SettingKeyBackendModeEnabled] == "true",
 	}
 
 	// 解析整数类型
@@ -1212,6 +1295,57 @@ func (s *SettingService) GetLinuxDoConnectOAuthConfig(ctx context.Context) (conf
 	return effective, nil
 }
 
+// GetOverloadCooldownSettings 获取529过载冷却配置
+func (s *SettingService) GetOverloadCooldownSettings(ctx context.Context) (*OverloadCooldownSettings, error) {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOverloadCooldownSettings)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return DefaultOverloadCooldownSettings(), nil
+		}
+		return nil, fmt.Errorf("get overload cooldown settings: %w", err)
+	}
+	if value == "" {
+		return DefaultOverloadCooldownSettings(), nil
+	}
+
+	var settings OverloadCooldownSettings
+	if err := json.Unmarshal([]byte(value), &settings); err != nil {
+		return DefaultOverloadCooldownSettings(), nil
+	}
+
+	// 修正配置值范围
+	if settings.CooldownMinutes < 1 {
+		settings.CooldownMinutes = 1
+	}
+	if settings.CooldownMinutes > 120 {
+		settings.CooldownMinutes = 120
+	}
+
+	return &settings, nil
+}
+
+// SetOverloadCooldownSettings 设置529过载冷却配置
+func (s *SettingService) SetOverloadCooldownSettings(ctx context.Context, settings *OverloadCooldownSettings) error {
+	if settings == nil {
+		return fmt.Errorf("settings cannot be nil")
+	}
+
+	// 禁用时修正为合法值即可，不拒绝请求
+	if settings.CooldownMinutes < 1 || settings.CooldownMinutes > 120 {
+		if settings.Enabled {
+			return fmt.Errorf("cooldown_minutes must be between 1-120")
+		}
+		settings.CooldownMinutes = 10 // 禁用状态下归一化为默认值
+	}
+
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("marshal overload cooldown settings: %w", err)
+	}
+
+	return s.settingRepo.Set(ctx, SettingKeyOverloadCooldownSettings, string(data))
+}
+
 // GetStreamTimeoutSettings 获取流超时处理配置
 func (s *SettingService) GetStreamTimeoutSettings(ctx context.Context) (*StreamTimeoutSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyStreamTimeoutSettings)
@@ -1401,7 +1535,7 @@ func (s *SettingService) SetBetaPolicySettings(ctx context.Context, settings *Be
 		BetaPolicyActionPass: true, BetaPolicyActionFilter: true, BetaPolicyActionBlock: true,
 	}
 	validScopes := map[string]bool{
-		BetaPolicyScopeAll: true, BetaPolicyScopeOAuth: true, BetaPolicyScopeAPIKey: true,
+		BetaPolicyScopeAll: true, BetaPolicyScopeOAuth: true, BetaPolicyScopeAPIKey: true, BetaPolicyScopeBedrock: true,
 	}
 
 	for i, rule := range settings.Rules {

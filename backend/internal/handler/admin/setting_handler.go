@@ -75,59 +75,61 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 	}
 
 	response.Success(c, dto.SystemSettings{
-		RegistrationEnabled:                   settings.RegistrationEnabled,
-		EmailVerifyEnabled:                    settings.EmailVerifyEnabled,
-		RegistrationEmailSuffixWhitelist:      settings.RegistrationEmailSuffixWhitelist,
-		PromoCodeEnabled:                      settings.PromoCodeEnabled,
-		PasswordResetEnabled:                  settings.PasswordResetEnabled,
-		InvitationCodeEnabled:                 settings.InvitationCodeEnabled,
-		TotpEnabled:                           settings.TotpEnabled,
-		TotpEncryptionKeyConfigured:           h.settingService.IsTotpEncryptionKeyConfigured(),
-		SMTPHost:                              settings.SMTPHost,
-		SMTPPort:                              settings.SMTPPort,
-		SMTPUsername:                          settings.SMTPUsername,
-		SMTPPasswordConfigured:                settings.SMTPPasswordConfigured,
-		SMTPFrom:                              settings.SMTPFrom,
-		SMTPFromName:                          settings.SMTPFromName,
-		SMTPUseTLS:                            settings.SMTPUseTLS,
-		TurnstileEnabled:                      settings.TurnstileEnabled,
-		TurnstileSiteKey:                      settings.TurnstileSiteKey,
-		TurnstileSecretKeyConfigured:          settings.TurnstileSecretKeyConfigured,
-		LinuxDoConnectEnabled:                 settings.LinuxDoConnectEnabled,
-		LinuxDoConnectClientID:                settings.LinuxDoConnectClientID,
-		LinuxDoConnectClientSecretConfigured:  settings.LinuxDoConnectClientSecretConfigured,
-		LinuxDoConnectRedirectURL:             settings.LinuxDoConnectRedirectURL,
-		SiteName:                              settings.SiteName,
-		SiteLogo:                              settings.SiteLogo,
-		SiteSubtitle:                          settings.SiteSubtitle,
-		APIBaseURL:                            settings.APIBaseURL,
-		ContactInfo:                           settings.ContactInfo,
-		DocURL:                                settings.DocURL,
-		HomeContent:                           settings.HomeContent,
-		HideCcsImportButton:                   settings.HideCcsImportButton,
-		PurchaseSubscriptionEnabled:           settings.PurchaseSubscriptionEnabled,
-		PurchaseSubscriptionURL:               settings.PurchaseSubscriptionURL,
-		SoraClientEnabled:                     settings.SoraClientEnabled,
-		CustomMenuItems:                       dto.ParseCustomMenuItems(settings.CustomMenuItems),
-		DefaultConcurrency:                    settings.DefaultConcurrency,
-		DefaultBalance:                        settings.DefaultBalance,
-		DefaultSubscriptions:                  defaultSubscriptions,
-		EnableModelFallback:                   settings.EnableModelFallback,
-		FallbackModelAnthropic:                settings.FallbackModelAnthropic,
-		FallbackModelOpenAI:                   settings.FallbackModelOpenAI,
-		FallbackModelGemini:                   settings.FallbackModelGemini,
-		FallbackModelAntigravity:              settings.FallbackModelAntigravity,
-		EnableIdentityPatch:                   settings.EnableIdentityPatch,
-		IdentityPatchPrompt:                   settings.IdentityPatchPrompt,
-		OpsMonitoringEnabled:                  opsEnabled && settings.OpsMonitoringEnabled,
-		OpsRealtimeMonitoringEnabled:          settings.OpsRealtimeMonitoringEnabled,
-		OpsQueryModeDefault:                   settings.OpsQueryModeDefault,
-		OpsMetricsIntervalSeconds:             settings.OpsMetricsIntervalSeconds,
-		MinClaudeCodeVersion:                  settings.MinClaudeCodeVersion,
+		RegistrationEnabled:                  settings.RegistrationEnabled,
+		EmailVerifyEnabled:                   settings.EmailVerifyEnabled,
+		RegistrationEmailSuffixWhitelist:     settings.RegistrationEmailSuffixWhitelist,
+		PromoCodeEnabled:                     settings.PromoCodeEnabled,
+		PasswordResetEnabled:                 settings.PasswordResetEnabled,
+		FrontendURL:                          settings.FrontendURL,
+		InvitationCodeEnabled:                settings.InvitationCodeEnabled,
+		TotpEnabled:                          settings.TotpEnabled,
+		TotpEncryptionKeyConfigured:          h.settingService.IsTotpEncryptionKeyConfigured(),
+		SMTPHost:                             settings.SMTPHost,
+		SMTPPort:                             settings.SMTPPort,
+		SMTPUsername:                         settings.SMTPUsername,
+		SMTPPasswordConfigured:               settings.SMTPPasswordConfigured,
+		SMTPFrom:                             settings.SMTPFrom,
+		SMTPFromName:                         settings.SMTPFromName,
+		SMTPUseTLS:                           settings.SMTPUseTLS,
+		TurnstileEnabled:                     settings.TurnstileEnabled,
+		TurnstileSiteKey:                     settings.TurnstileSiteKey,
+		TurnstileSecretKeyConfigured:         settings.TurnstileSecretKeyConfigured,
+		LinuxDoConnectEnabled:                settings.LinuxDoConnectEnabled,
+		LinuxDoConnectClientID:               settings.LinuxDoConnectClientID,
+		LinuxDoConnectClientSecretConfigured: settings.LinuxDoConnectClientSecretConfigured,
+		LinuxDoConnectRedirectURL:            settings.LinuxDoConnectRedirectURL,
+		SiteName:                             settings.SiteName,
+		SiteLogo:                             settings.SiteLogo,
+		SiteSubtitle:                         settings.SiteSubtitle,
+		APIBaseURL:                           settings.APIBaseURL,
+		ContactInfo:                          settings.ContactInfo,
+		DocURL:                               settings.DocURL,
+		HomeContent:                          settings.HomeContent,
+		HideCcsImportButton:                  settings.HideCcsImportButton,
+		PurchaseSubscriptionEnabled:          settings.PurchaseSubscriptionEnabled,
+		PurchaseSubscriptionURL:              settings.PurchaseSubscriptionURL,
+		SoraClientEnabled:                    settings.SoraClientEnabled,
+		CustomMenuItems:                      dto.ParseCustomMenuItems(settings.CustomMenuItems),
+		DefaultConcurrency:                   settings.DefaultConcurrency,
+		DefaultBalance:                       settings.DefaultBalance,
+		DefaultSubscriptions:                 defaultSubscriptions,
+		EnableModelFallback:                  settings.EnableModelFallback,
+		FallbackModelAnthropic:               settings.FallbackModelAnthropic,
+		FallbackModelOpenAI:                  settings.FallbackModelOpenAI,
+		FallbackModelGemini:                  settings.FallbackModelGemini,
+		FallbackModelAntigravity:             settings.FallbackModelAntigravity,
+		EnableIdentityPatch:                  settings.EnableIdentityPatch,
+		IdentityPatchPrompt:                  settings.IdentityPatchPrompt,
+		OpsMonitoringEnabled:                 opsEnabled && settings.OpsMonitoringEnabled,
+		OpsRealtimeMonitoringEnabled:         settings.OpsRealtimeMonitoringEnabled,
+		OpsQueryModeDefault:                  settings.OpsQueryModeDefault,
+		OpsMetricsIntervalSeconds:            settings.OpsMetricsIntervalSeconds,
+		MinClaudeCodeVersion:                 settings.MinClaudeCodeVersion,
 		OpenAIUsageWindowYellow5HPercent:      settings.OpenAIUsageWindowYellow5HPercent,
 		OpenAIUsageWindowYellow7DPercent:      settings.OpenAIUsageWindowYellow7DPercent,
 		OpenAIUsageWindowSnapshotStaleSeconds: settings.OpenAIUsageWindowSnapshotStaleSeconds,
-		AllowUngroupedKeyScheduling:           settings.AllowUngroupedKeyScheduling,
+		AllowUngroupedKeyScheduling:          settings.AllowUngroupedKeyScheduling,
+		BackendModeEnabled:                   settings.BackendModeEnabled,
 	})
 }
 
@@ -139,6 +141,7 @@ type UpdateSettingsRequest struct {
 	RegistrationEmailSuffixWhitelist []string `json:"registration_email_suffix_whitelist"`
 	PromoCodeEnabled                 bool     `json:"promo_code_enabled"`
 	PasswordResetEnabled             bool     `json:"password_reset_enabled"`
+	FrontendURL                      string   `json:"frontend_url"`
 	InvitationCodeEnabled            bool     `json:"invitation_code_enabled"`
 	TotpEnabled                      bool     `json:"totp_enabled"` // TOTP 双因素认证
 
@@ -206,6 +209,9 @@ type UpdateSettingsRequest struct {
 
 	// 分组隔离
 	AllowUngroupedKeyScheduling bool `json:"allow_ungrouped_key_scheduling"`
+
+	// Backend Mode
+	BackendModeEnabled bool `json:"backend_mode_enabled"`
 }
 
 // UpdateSettings 更新系统设置
@@ -329,6 +335,15 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
+	// Frontend URL 验证
+	req.FrontendURL = strings.TrimSpace(req.FrontendURL)
+	if req.FrontendURL != "" {
+		if err := config.ValidateAbsoluteHTTPURL(req.FrontendURL); err != nil {
+			response.BadRequest(c, "Frontend URL must be an absolute http(s) URL")
+			return
+		}
+	}
+
 	// 自定义菜单项验证
 	const (
 		maxCustomMenuItems    = 20
@@ -447,54 +462,56 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 
 	settings := &service.SystemSettings{
-		RegistrationEnabled:                   req.RegistrationEnabled,
-		EmailVerifyEnabled:                    req.EmailVerifyEnabled,
-		RegistrationEmailSuffixWhitelist:      req.RegistrationEmailSuffixWhitelist,
-		PromoCodeEnabled:                      req.PromoCodeEnabled,
-		PasswordResetEnabled:                  req.PasswordResetEnabled,
-		InvitationCodeEnabled:                 req.InvitationCodeEnabled,
-		TotpEnabled:                           req.TotpEnabled,
-		SMTPHost:                              req.SMTPHost,
-		SMTPPort:                              req.SMTPPort,
-		SMTPUsername:                          req.SMTPUsername,
-		SMTPPassword:                          req.SMTPPassword,
-		SMTPFrom:                              req.SMTPFrom,
-		SMTPFromName:                          req.SMTPFromName,
-		SMTPUseTLS:                            req.SMTPUseTLS,
-		TurnstileEnabled:                      req.TurnstileEnabled,
-		TurnstileSiteKey:                      req.TurnstileSiteKey,
-		TurnstileSecretKey:                    req.TurnstileSecretKey,
-		LinuxDoConnectEnabled:                 req.LinuxDoConnectEnabled,
-		LinuxDoConnectClientID:                req.LinuxDoConnectClientID,
-		LinuxDoConnectClientSecret:            req.LinuxDoConnectClientSecret,
-		LinuxDoConnectRedirectURL:             req.LinuxDoConnectRedirectURL,
-		SiteName:                              req.SiteName,
-		SiteLogo:                              req.SiteLogo,
-		SiteSubtitle:                          req.SiteSubtitle,
-		APIBaseURL:                            req.APIBaseURL,
-		ContactInfo:                           req.ContactInfo,
-		DocURL:                                req.DocURL,
-		HomeContent:                           req.HomeContent,
-		HideCcsImportButton:                   req.HideCcsImportButton,
-		PurchaseSubscriptionEnabled:           purchaseEnabled,
-		PurchaseSubscriptionURL:               purchaseURL,
-		SoraClientEnabled:                     req.SoraClientEnabled,
-		CustomMenuItems:                       customMenuJSON,
-		DefaultConcurrency:                    req.DefaultConcurrency,
-		DefaultBalance:                        req.DefaultBalance,
-		DefaultSubscriptions:                  defaultSubscriptions,
-		EnableModelFallback:                   req.EnableModelFallback,
-		FallbackModelAnthropic:                req.FallbackModelAnthropic,
-		FallbackModelOpenAI:                   req.FallbackModelOpenAI,
-		FallbackModelGemini:                   req.FallbackModelGemini,
-		FallbackModelAntigravity:              req.FallbackModelAntigravity,
-		EnableIdentityPatch:                   req.EnableIdentityPatch,
-		IdentityPatchPrompt:                   req.IdentityPatchPrompt,
-		MinClaudeCodeVersion:                  req.MinClaudeCodeVersion,
+		RegistrationEnabled:              req.RegistrationEnabled,
+		EmailVerifyEnabled:               req.EmailVerifyEnabled,
+		RegistrationEmailSuffixWhitelist: req.RegistrationEmailSuffixWhitelist,
+		PromoCodeEnabled:                 req.PromoCodeEnabled,
+		PasswordResetEnabled:             req.PasswordResetEnabled,
+		FrontendURL:                      req.FrontendURL,
+		InvitationCodeEnabled:            req.InvitationCodeEnabled,
+		TotpEnabled:                      req.TotpEnabled,
+		SMTPHost:                         req.SMTPHost,
+		SMTPPort:                         req.SMTPPort,
+		SMTPUsername:                     req.SMTPUsername,
+		SMTPPassword:                     req.SMTPPassword,
+		SMTPFrom:                         req.SMTPFrom,
+		SMTPFromName:                     req.SMTPFromName,
+		SMTPUseTLS:                       req.SMTPUseTLS,
+		TurnstileEnabled:                 req.TurnstileEnabled,
+		TurnstileSiteKey:                 req.TurnstileSiteKey,
+		TurnstileSecretKey:               req.TurnstileSecretKey,
+		LinuxDoConnectEnabled:            req.LinuxDoConnectEnabled,
+		LinuxDoConnectClientID:           req.LinuxDoConnectClientID,
+		LinuxDoConnectClientSecret:       req.LinuxDoConnectClientSecret,
+		LinuxDoConnectRedirectURL:        req.LinuxDoConnectRedirectURL,
+		SiteName:                         req.SiteName,
+		SiteLogo:                         req.SiteLogo,
+		SiteSubtitle:                     req.SiteSubtitle,
+		APIBaseURL:                       req.APIBaseURL,
+		ContactInfo:                      req.ContactInfo,
+		DocURL:                           req.DocURL,
+		HomeContent:                      req.HomeContent,
+		HideCcsImportButton:              req.HideCcsImportButton,
+		PurchaseSubscriptionEnabled:      purchaseEnabled,
+		PurchaseSubscriptionURL:          purchaseURL,
+		SoraClientEnabled:                req.SoraClientEnabled,
+		CustomMenuItems:                  customMenuJSON,
+		DefaultConcurrency:               req.DefaultConcurrency,
+		DefaultBalance:                   req.DefaultBalance,
+		DefaultSubscriptions:             defaultSubscriptions,
+		EnableModelFallback:              req.EnableModelFallback,
+		FallbackModelAnthropic:           req.FallbackModelAnthropic,
+		FallbackModelOpenAI:              req.FallbackModelOpenAI,
+		FallbackModelGemini:              req.FallbackModelGemini,
+		FallbackModelAntigravity:         req.FallbackModelAntigravity,
+		EnableIdentityPatch:              req.EnableIdentityPatch,
+		IdentityPatchPrompt:              req.IdentityPatchPrompt,
+		MinClaudeCodeVersion:             req.MinClaudeCodeVersion,
 		OpenAIUsageWindowYellow5HPercent:      req.OpenAIUsageWindowYellow5HPercent,
 		OpenAIUsageWindowYellow7DPercent:      req.OpenAIUsageWindowYellow7DPercent,
 		OpenAIUsageWindowSnapshotStaleSeconds: req.OpenAIUsageWindowSnapshotStaleSeconds,
-		AllowUngroupedKeyScheduling:           req.AllowUngroupedKeyScheduling,
+		AllowUngroupedKeyScheduling:      req.AllowUngroupedKeyScheduling,
+		BackendModeEnabled:               req.BackendModeEnabled,
 		OpsMonitoringEnabled: func() bool {
 			if req.OpsMonitoringEnabled != nil {
 				return *req.OpsMonitoringEnabled
@@ -543,59 +560,61 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 
 	response.Success(c, dto.SystemSettings{
-		RegistrationEnabled:                   updatedSettings.RegistrationEnabled,
-		EmailVerifyEnabled:                    updatedSettings.EmailVerifyEnabled,
-		RegistrationEmailSuffixWhitelist:      updatedSettings.RegistrationEmailSuffixWhitelist,
-		PromoCodeEnabled:                      updatedSettings.PromoCodeEnabled,
-		PasswordResetEnabled:                  updatedSettings.PasswordResetEnabled,
-		InvitationCodeEnabled:                 updatedSettings.InvitationCodeEnabled,
-		TotpEnabled:                           updatedSettings.TotpEnabled,
-		TotpEncryptionKeyConfigured:           h.settingService.IsTotpEncryptionKeyConfigured(),
-		SMTPHost:                              updatedSettings.SMTPHost,
-		SMTPPort:                              updatedSettings.SMTPPort,
-		SMTPUsername:                          updatedSettings.SMTPUsername,
-		SMTPPasswordConfigured:                updatedSettings.SMTPPasswordConfigured,
-		SMTPFrom:                              updatedSettings.SMTPFrom,
-		SMTPFromName:                          updatedSettings.SMTPFromName,
-		SMTPUseTLS:                            updatedSettings.SMTPUseTLS,
-		TurnstileEnabled:                      updatedSettings.TurnstileEnabled,
-		TurnstileSiteKey:                      updatedSettings.TurnstileSiteKey,
-		TurnstileSecretKeyConfigured:          updatedSettings.TurnstileSecretKeyConfigured,
-		LinuxDoConnectEnabled:                 updatedSettings.LinuxDoConnectEnabled,
-		LinuxDoConnectClientID:                updatedSettings.LinuxDoConnectClientID,
-		LinuxDoConnectClientSecretConfigured:  updatedSettings.LinuxDoConnectClientSecretConfigured,
-		LinuxDoConnectRedirectURL:             updatedSettings.LinuxDoConnectRedirectURL,
-		SiteName:                              updatedSettings.SiteName,
-		SiteLogo:                              updatedSettings.SiteLogo,
-		SiteSubtitle:                          updatedSettings.SiteSubtitle,
-		APIBaseURL:                            updatedSettings.APIBaseURL,
-		ContactInfo:                           updatedSettings.ContactInfo,
-		DocURL:                                updatedSettings.DocURL,
-		HomeContent:                           updatedSettings.HomeContent,
-		HideCcsImportButton:                   updatedSettings.HideCcsImportButton,
-		PurchaseSubscriptionEnabled:           updatedSettings.PurchaseSubscriptionEnabled,
-		PurchaseSubscriptionURL:               updatedSettings.PurchaseSubscriptionURL,
-		SoraClientEnabled:                     updatedSettings.SoraClientEnabled,
-		CustomMenuItems:                       dto.ParseCustomMenuItems(updatedSettings.CustomMenuItems),
-		DefaultConcurrency:                    updatedSettings.DefaultConcurrency,
-		DefaultBalance:                        updatedSettings.DefaultBalance,
-		DefaultSubscriptions:                  updatedDefaultSubscriptions,
-		EnableModelFallback:                   updatedSettings.EnableModelFallback,
-		FallbackModelAnthropic:                updatedSettings.FallbackModelAnthropic,
-		FallbackModelOpenAI:                   updatedSettings.FallbackModelOpenAI,
-		FallbackModelGemini:                   updatedSettings.FallbackModelGemini,
-		FallbackModelAntigravity:              updatedSettings.FallbackModelAntigravity,
-		EnableIdentityPatch:                   updatedSettings.EnableIdentityPatch,
-		IdentityPatchPrompt:                   updatedSettings.IdentityPatchPrompt,
-		OpsMonitoringEnabled:                  updatedSettings.OpsMonitoringEnabled,
-		OpsRealtimeMonitoringEnabled:          updatedSettings.OpsRealtimeMonitoringEnabled,
-		OpsQueryModeDefault:                   updatedSettings.OpsQueryModeDefault,
-		OpsMetricsIntervalSeconds:             updatedSettings.OpsMetricsIntervalSeconds,
-		MinClaudeCodeVersion:                  updatedSettings.MinClaudeCodeVersion,
+		RegistrationEnabled:                  updatedSettings.RegistrationEnabled,
+		EmailVerifyEnabled:                   updatedSettings.EmailVerifyEnabled,
+		RegistrationEmailSuffixWhitelist:     updatedSettings.RegistrationEmailSuffixWhitelist,
+		PromoCodeEnabled:                     updatedSettings.PromoCodeEnabled,
+		PasswordResetEnabled:                 updatedSettings.PasswordResetEnabled,
+		FrontendURL:                          updatedSettings.FrontendURL,
+		InvitationCodeEnabled:                updatedSettings.InvitationCodeEnabled,
+		TotpEnabled:                          updatedSettings.TotpEnabled,
+		TotpEncryptionKeyConfigured:          h.settingService.IsTotpEncryptionKeyConfigured(),
+		SMTPHost:                             updatedSettings.SMTPHost,
+		SMTPPort:                             updatedSettings.SMTPPort,
+		SMTPUsername:                         updatedSettings.SMTPUsername,
+		SMTPPasswordConfigured:               updatedSettings.SMTPPasswordConfigured,
+		SMTPFrom:                             updatedSettings.SMTPFrom,
+		SMTPFromName:                         updatedSettings.SMTPFromName,
+		SMTPUseTLS:                           updatedSettings.SMTPUseTLS,
+		TurnstileEnabled:                     updatedSettings.TurnstileEnabled,
+		TurnstileSiteKey:                     updatedSettings.TurnstileSiteKey,
+		TurnstileSecretKeyConfigured:         updatedSettings.TurnstileSecretKeyConfigured,
+		LinuxDoConnectEnabled:                updatedSettings.LinuxDoConnectEnabled,
+		LinuxDoConnectClientID:               updatedSettings.LinuxDoConnectClientID,
+		LinuxDoConnectClientSecretConfigured: updatedSettings.LinuxDoConnectClientSecretConfigured,
+		LinuxDoConnectRedirectURL:            updatedSettings.LinuxDoConnectRedirectURL,
+		SiteName:                             updatedSettings.SiteName,
+		SiteLogo:                             updatedSettings.SiteLogo,
+		SiteSubtitle:                         updatedSettings.SiteSubtitle,
+		APIBaseURL:                           updatedSettings.APIBaseURL,
+		ContactInfo:                          updatedSettings.ContactInfo,
+		DocURL:                               updatedSettings.DocURL,
+		HomeContent:                          updatedSettings.HomeContent,
+		HideCcsImportButton:                  updatedSettings.HideCcsImportButton,
+		PurchaseSubscriptionEnabled:          updatedSettings.PurchaseSubscriptionEnabled,
+		PurchaseSubscriptionURL:              updatedSettings.PurchaseSubscriptionURL,
+		SoraClientEnabled:                    updatedSettings.SoraClientEnabled,
+		CustomMenuItems:                      dto.ParseCustomMenuItems(updatedSettings.CustomMenuItems),
+		DefaultConcurrency:                   updatedSettings.DefaultConcurrency,
+		DefaultBalance:                       updatedSettings.DefaultBalance,
+		DefaultSubscriptions:                 updatedDefaultSubscriptions,
+		EnableModelFallback:                  updatedSettings.EnableModelFallback,
+		FallbackModelAnthropic:               updatedSettings.FallbackModelAnthropic,
+		FallbackModelOpenAI:                  updatedSettings.FallbackModelOpenAI,
+		FallbackModelGemini:                  updatedSettings.FallbackModelGemini,
+		FallbackModelAntigravity:             updatedSettings.FallbackModelAntigravity,
+		EnableIdentityPatch:                  updatedSettings.EnableIdentityPatch,
+		IdentityPatchPrompt:                  updatedSettings.IdentityPatchPrompt,
+		OpsMonitoringEnabled:                 updatedSettings.OpsMonitoringEnabled,
+		OpsRealtimeMonitoringEnabled:         updatedSettings.OpsRealtimeMonitoringEnabled,
+		OpsQueryModeDefault:                  updatedSettings.OpsQueryModeDefault,
+		OpsMetricsIntervalSeconds:            updatedSettings.OpsMetricsIntervalSeconds,
+		MinClaudeCodeVersion:                 updatedSettings.MinClaudeCodeVersion,
 		OpenAIUsageWindowYellow5HPercent:      updatedSettings.OpenAIUsageWindowYellow5HPercent,
 		OpenAIUsageWindowYellow7DPercent:      updatedSettings.OpenAIUsageWindowYellow7DPercent,
 		OpenAIUsageWindowSnapshotStaleSeconds: updatedSettings.OpenAIUsageWindowSnapshotStaleSeconds,
-		AllowUngroupedKeyScheduling:           updatedSettings.AllowUngroupedKeyScheduling,
+		AllowUngroupedKeyScheduling:          updatedSettings.AllowUngroupedKeyScheduling,
+		BackendModeEnabled:                   updatedSettings.BackendModeEnabled,
 	})
 }
 
@@ -632,6 +651,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.PasswordResetEnabled != after.PasswordResetEnabled {
 		changed = append(changed, "password_reset_enabled")
+	}
+	if before.FrontendURL != after.FrontendURL {
+		changed = append(changed, "frontend_url")
 	}
 	if before.TotpEnabled != after.TotpEnabled {
 		changed = append(changed, "totp_enabled")
@@ -758,6 +780,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.AllowUngroupedKeyScheduling != after.AllowUngroupedKeyScheduling {
 		changed = append(changed, "allow_ungrouped_key_scheduling")
+	}
+	if before.BackendModeEnabled != after.BackendModeEnabled {
+		changed = append(changed, "backend_mode_enabled")
 	}
 	if before.PurchaseSubscriptionEnabled != after.PurchaseSubscriptionEnabled {
 		changed = append(changed, "purchase_subscription_enabled")
@@ -984,6 +1009,58 @@ func (h *SettingHandler) DeleteAdminAPIKey(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{"message": "Admin API key deleted"})
+}
+
+// GetOverloadCooldownSettings 获取529过载冷却配置
+// GET /api/v1/admin/settings/overload-cooldown
+func (h *SettingHandler) GetOverloadCooldownSettings(c *gin.Context) {
+	settings, err := h.settingService.GetOverloadCooldownSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, dto.OverloadCooldownSettings{
+		Enabled:         settings.Enabled,
+		CooldownMinutes: settings.CooldownMinutes,
+	})
+}
+
+// UpdateOverloadCooldownSettingsRequest 更新529过载冷却配置请求
+type UpdateOverloadCooldownSettingsRequest struct {
+	Enabled         bool `json:"enabled"`
+	CooldownMinutes int  `json:"cooldown_minutes"`
+}
+
+// UpdateOverloadCooldownSettings 更新529过载冷却配置
+// PUT /api/v1/admin/settings/overload-cooldown
+func (h *SettingHandler) UpdateOverloadCooldownSettings(c *gin.Context) {
+	var req UpdateOverloadCooldownSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	settings := &service.OverloadCooldownSettings{
+		Enabled:         req.Enabled,
+		CooldownMinutes: req.CooldownMinutes,
+	}
+
+	if err := h.settingService.SetOverloadCooldownSettings(c.Request.Context(), settings); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	updatedSettings, err := h.settingService.GetOverloadCooldownSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, dto.OverloadCooldownSettings{
+		Enabled:         updatedSettings.Enabled,
+		CooldownMinutes: updatedSettings.CooldownMinutes,
+	})
 }
 
 // GetStreamTimeoutSettings 获取流超时处理配置

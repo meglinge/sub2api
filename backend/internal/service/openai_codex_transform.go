@@ -138,12 +138,52 @@ func applyCodexOAuthTransformByRequestType(reqBody map[string]any, isCodexCLI bo
 		}
 	}
 
+	// 兼容遗留的 functions 和 function_call，转换为 tools 和 tool_choice
+	if functionsRaw, ok := reqBody["functions"]; ok {
+		if functions, k := functionsRaw.([]any); k {
+			tools := make([]any, 0, len(functions))
+			for _, f := range functions {
+				tools = append(tools, map[string]any{
+					"type":     "function",
+					"function": f,
+				})
+			}
+			reqBody["tools"] = tools
+		}
+		delete(reqBody, "functions")
+		result.Modified = true
+	}
+
+	if fcRaw, ok := reqBody["function_call"]; ok {
+		if fcStr, ok := fcRaw.(string); ok {
+			// e.g. "auto", "none"
+			reqBody["tool_choice"] = fcStr
+		} else if fcObj, ok := fcRaw.(map[string]any); ok {
+			// e.g. {"name": "my_func"}
+			if name, ok := fcObj["name"].(string); ok && strings.TrimSpace(name) != "" {
+				reqBody["tool_choice"] = map[string]any{
+					"type": "function",
+					"function": map[string]any{
+						"name": name,
+					},
+				}
+			}
+		}
+		delete(reqBody, "function_call")
+		result.Modified = true
+	}
+
 	if normalizeCodexTools(reqBody) {
 		result.Modified = true
 	}
 
 	if v, ok := reqBody["prompt_cache_key"].(string); ok {
 		result.PromptCacheKey = strings.TrimSpace(v)
+	}
+
+	// 提取 input 中 role:"system" 消息至 instructions（OAuth 上游不支持 system role）。
+	if extractSystemMessagesFromInput(reqBody) {
+		result.Modified = true
 	}
 
 	// instructions 处理逻辑：根据是否是 Codex CLI 分别调用不同方法
@@ -275,6 +315,73 @@ func getNormalizedCodexModel(modelID string) string {
 	return ""
 }
 
+// extractTextFromContent extracts plain text from a content value that is either
+// a Go string or a []any of content-part maps with type:"text".
+func extractTextFromContent(content any) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []any:
+		var parts []string
+		for _, part := range v {
+			m, ok := part.(map[string]any)
+			if !ok {
+				continue
+			}
+			if t, _ := m["type"].(string); t == "text" {
+				if text, ok := m["text"].(string); ok {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, "")
+	default:
+		return ""
+	}
+}
+
+// extractSystemMessagesFromInput scans the input array for items with role=="system",
+// removes them, and merges their content into reqBody["instructions"].
+// If instructions is already non-empty, extracted content is prepended with "\n\n".
+// Returns true if any system messages were extracted.
+func extractSystemMessagesFromInput(reqBody map[string]any) bool {
+	input, ok := reqBody["input"].([]any)
+	if !ok || len(input) == 0 {
+		return false
+	}
+
+	var systemTexts []string
+	remaining := make([]any, 0, len(input))
+
+	for _, item := range input {
+		m, ok := item.(map[string]any)
+		if !ok {
+			remaining = append(remaining, item)
+			continue
+		}
+		if role, _ := m["role"].(string); role != "system" {
+			remaining = append(remaining, item)
+			continue
+		}
+		if text := extractTextFromContent(m["content"]); text != "" {
+			systemTexts = append(systemTexts, text)
+		}
+	}
+
+	if len(systemTexts) == 0 {
+		return false
+	}
+
+	extracted := strings.Join(systemTexts, "\n\n")
+	if existing, ok := reqBody["instructions"].(string); ok && strings.TrimSpace(existing) != "" {
+		reqBody["instructions"] = extracted + "\n\n" + existing
+	} else {
+		reqBody["instructions"] = extracted
+	}
+	reqBody["input"] = remaining
+	return true
+}
+
 // applyInstructions 处理 instructions 字段：仅在 instructions 为空时填充默认值。
 func applyInstructions(reqBody map[string]any, isCodexCLI bool) bool {
 	if !isInstructionsEmpty(reqBody) {
@@ -312,6 +419,19 @@ func filterCodexInput(input []any, preserveReferences bool) []any {
 			continue
 		}
 		typ, _ := m["type"].(string)
+
+		// 仅修正真正的 tool/function call 标识，避免误改普通 message/reasoning id；
+		// 若 item_reference 指向 legacy call_* 标识，则仅修正该引用本身。
+		fixCallIDPrefix := func(id string) string {
+			if id == "" || strings.HasPrefix(id, "fc") {
+				return id
+			}
+			if strings.HasPrefix(id, "call_") {
+				return "fc" + strings.TrimPrefix(id, "call_")
+			}
+			return "fc_" + id
+		}
+
 		if typ == "item_reference" {
 			if !preserveReferences {
 				continue
@@ -319,6 +439,9 @@ func filterCodexInput(input []any, preserveReferences bool) []any {
 			newItem := make(map[string]any, len(m))
 			for key, value := range m {
 				newItem[key] = value
+			}
+			if id, ok := newItem["id"].(string); ok && strings.HasPrefix(id, "call_") {
+				newItem["id"] = fixCallIDPrefix(id)
 			}
 			filtered = append(filtered, newItem)
 			continue
@@ -339,10 +462,20 @@ func filterCodexInput(input []any, preserveReferences bool) []any {
 		}
 
 		if isCodexToolCallItemType(typ) {
-			if callID, ok := m["call_id"].(string); !ok || strings.TrimSpace(callID) == "" {
+			callID, ok := m["call_id"].(string)
+			if !ok || strings.TrimSpace(callID) == "" {
 				if id, ok := m["id"].(string); ok && strings.TrimSpace(id) != "" {
+					callID = id
 					ensureCopy()
-					newItem["call_id"] = id
+					newItem["call_id"] = callID
+				}
+			}
+
+			if callID != "" {
+				fixedCallID := fixCallIDPrefix(callID)
+				if fixedCallID != callID {
+					ensureCopy()
+					newItem["call_id"] = fixedCallID
 				}
 			}
 		}

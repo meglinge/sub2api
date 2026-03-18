@@ -9,7 +9,7 @@
       <!-- Settings Form -->
       <form v-else @submit.prevent="saveSettings" class="space-y-6">
         <!-- Tab Navigation -->
-        <div class="sticky top-0 z-10 overflow-x-auto scrollbar-hide">
+        <div class="sticky top-0 z-10 overflow-x-auto settings-tabs-scroll">
           <nav class="settings-tabs">
             <button
               v-for="tab in settingsTabs"
@@ -168,8 +168,93 @@
         </div>
         </div><!-- /Tab: Security — Admin API Key -->
 
-        <!-- Tab: Gateway — Stream Timeout -->
+        <!-- Tab: Gateway -->
         <div v-show="activeTab === 'gateway'" class="space-y-6">
+
+        <!-- Overload Cooldown (529) Settings -->
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.overloadCooldown.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.overloadCooldown.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div v-if="overloadCooldownLoading" class="flex items-center gap-2 text-gray-500">
+              <div class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600"></div>
+              {{ t('common.loading') }}
+            </div>
+
+            <template v-else>
+              <div class="flex items-center justify-between">
+                <div>
+                  <label class="font-medium text-gray-900 dark:text-white">{{
+                    t('admin.settings.overloadCooldown.enabled')
+                  }}</label>
+                  <p class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ t('admin.settings.overloadCooldown.enabledHint') }}
+                  </p>
+                </div>
+                <Toggle v-model="overloadCooldownForm.enabled" />
+              </div>
+
+              <div
+                v-if="overloadCooldownForm.enabled"
+                class="space-y-4 border-t border-gray-100 pt-4 dark:border-dark-700"
+              >
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t('admin.settings.overloadCooldown.cooldownMinutes') }}
+                  </label>
+                  <input
+                    v-model.number="overloadCooldownForm.cooldown_minutes"
+                    type="number"
+                    min="1"
+                    max="120"
+                    class="input w-32"
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('admin.settings.overloadCooldown.cooldownMinutesHint') }}
+                  </p>
+                </div>
+              </div>
+
+              <div class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700">
+                <button
+                  type="button"
+                  @click="saveOverloadCooldownSettings"
+                  :disabled="overloadCooldownSaving"
+                  class="btn btn-primary btn-sm"
+                >
+                  <svg
+                    v-if="overloadCooldownSaving"
+                    class="mr-1 h-4 w-4 animate-spin"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      class="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      stroke-width="4"
+                    ></circle>
+                    <path
+                      class="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  {{ overloadCooldownSaving ? t('common.saving') : t('common.save') }}
+                </button>
+              </div>
+            </template>
+          </div>
+        </div>
+
         <!-- Stream Timeout Settings -->
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
@@ -653,6 +738,24 @@
               </div>
               <Toggle v-model="form.password_reset_enabled" />
             </div>
+            <!-- Frontend URL - Only show when password reset is enabled -->
+            <div
+              v-if="form.email_verify_enabled && form.password_reset_enabled"
+              class="border-t border-gray-100 pt-4 dark:border-dark-700"
+            >
+              <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                {{ t('admin.settings.registration.frontendUrl') }}
+              </label>
+              <input
+                v-model="form.frontend_url"
+                type="url"
+                class="input"
+                :placeholder="t('admin.settings.registration.frontendUrlPlaceholder')"
+              />
+              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.settings.registration.frontendUrlHint') }}
+              </p>
+            </div>
 
             <!-- TOTP 2FA -->
             <div
@@ -1019,7 +1122,6 @@
                 type="text"
                 class="input max-w-xs font-mono text-sm"
                 :placeholder="t('admin.settings.claudeCode.minVersionPlaceholder')"
-                pattern="\d+\.\d+\.\d+"
               />
               <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.settings.claudeCode.minVersionHint') }}
@@ -1133,6 +1235,21 @@
             </p>
           </div>
           <div class="space-y-6 p-6">
+            <!-- Backend Mode -->
+            <div
+              class="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-900/20"
+            >
+              <div>
+                <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                  {{ t('admin.settings.site.backendMode') }}
+                </h3>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.site.backendModeDescription') }}
+                </p>
+              </div>
+              <Toggle v-model="form.backend_mode_enabled" />
+            </div>
+
             <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
               <div>
                 <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -1634,6 +1751,7 @@
               </div>
               <Toggle v-model="form.smtp_use_tls" />
             </div>
+
           </div>
         </div>
 
@@ -1697,8 +1815,18 @@
         </div>
         </div><!-- /Tab: Email -->
 
+        <!-- Tab: Backup -->
+        <div v-show="activeTab === 'backup'">
+          <BackupSettings />
+        </div>
+
+        <!-- Tab: Data Management -->
+        <div v-show="activeTab === 'data'">
+          <DataManagementSettings />
+        </div>
+
         <!-- Save Button -->
-        <div class="flex justify-end">
+        <div v-show="activeTab !== 'backup' && activeTab !== 'data'" class="flex justify-end">
           <button type="submit" :disabled="saving" class="btn btn-primary">
             <svg v-if="saving" class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
               <circle
@@ -1740,6 +1868,8 @@ import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import ImageUpload from '@/components/common/ImageUpload.vue'
+import BackupSettings from '@/views/admin/BackupView.vue'
+import DataManagementSettings from '@/views/admin/DataManagementView.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import { useAppStore } from '@/stores'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
@@ -1754,7 +1884,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const adminSettingsStore = useAdminSettingsStore()
 
-type SettingsTab = 'general' | 'security' | 'users' | 'gateway' | 'email'
+type SettingsTab = 'general' | 'security' | 'users' | 'gateway' | 'email' | 'backup' | 'data'
 const activeTab = ref<SettingsTab>('general')
 const settingsTabs = [
   { key: 'general'  as SettingsTab, icon: 'home'   as const },
@@ -1762,6 +1892,8 @@ const settingsTabs = [
   { key: 'users'    as SettingsTab, icon: 'user'   as const },
   { key: 'gateway'  as SettingsTab, icon: 'server' as const },
   { key: 'email'    as SettingsTab, icon: 'mail'   as const },
+  { key: 'backup'   as SettingsTab, icon: 'database' as const },
+  { key: 'data'     as SettingsTab, icon: 'cube'     as const },
 ]
 const { copyToClipboard } = useClipboard()
 
@@ -1780,6 +1912,14 @@ const adminApiKeyMasked = ref('')
 const adminApiKeyOperating = ref(false)
 const newAdminApiKey = ref('')
 const subscriptionGroups = ref<AdminGroup[]>([])
+
+// Overload Cooldown (529) 状态
+const overloadCooldownLoading = ref(true)
+const overloadCooldownSaving = ref(false)
+const overloadCooldownForm = reactive({
+  enabled: true,
+  cooldown_minutes: 10
+})
 
 // Stream Timeout 状态
 const streamTimeoutLoading = ref(true)
@@ -1808,7 +1948,7 @@ const betaPolicyForm = reactive({
   rules: [] as Array<{
     beta_token: string
     action: 'pass' | 'filter' | 'block'
-    scope: 'all' | 'oauth' | 'apikey'
+    scope: 'all' | 'oauth' | 'apikey' | 'bedrock'
     error_message?: string
   }>
 })
@@ -1848,11 +1988,13 @@ const form = reactive<SettingsForm>({
   contact_info: '',
   doc_url: '',
   home_content: '',
+  backend_mode_enabled: false,
   hide_ccs_import_button: false,
   purchase_subscription_enabled: false,
   purchase_subscription_url: '',
   sora_client_enabled: false,
   custom_menu_items: [] as Array<{id: string; label: string; icon_svg: string; url: string; visibility: 'user' | 'admin'; sort_order: number}>,
+  frontend_url: '',
   smtp_host: '',
   smtp_port: 587,
   smtp_username: '',
@@ -2028,6 +2170,7 @@ async function loadSettings() {
   try {
     const settings = await adminAPI.settings.getSettings()
     Object.assign(form, settings)
+    form.backend_mode_enabled = settings.backend_mode_enabled
     form.default_subscriptions = Array.isArray(settings.default_subscriptions)
       ? settings.default_subscriptions
           .filter((item) => item.group_id > 0 && item.validity_days > 0)
@@ -2126,11 +2269,13 @@ async function saveSettings() {
       contact_info: form.contact_info,
       doc_url: form.doc_url,
       home_content: form.home_content,
+      backend_mode_enabled: form.backend_mode_enabled,
       hide_ccs_import_button: form.hide_ccs_import_button,
       purchase_subscription_enabled: form.purchase_subscription_enabled,
       purchase_subscription_url: form.purchase_subscription_url,
       sora_client_enabled: form.sora_client_enabled,
       custom_menu_items: form.custom_menu_items,
+      frontend_url: form.frontend_url,
       smtp_host: form.smtp_host,
       smtp_port: form.smtp_port,
       smtp_username: form.smtp_username,
@@ -2291,6 +2436,37 @@ function copyNewKey() {
     })
 }
 
+// Overload Cooldown 方法
+async function loadOverloadCooldownSettings() {
+  overloadCooldownLoading.value = true
+  try {
+    const settings = await adminAPI.settings.getOverloadCooldownSettings()
+    Object.assign(overloadCooldownForm, settings)
+  } catch (error: any) {
+    console.error('Failed to load overload cooldown settings:', error)
+  } finally {
+    overloadCooldownLoading.value = false
+  }
+}
+
+async function saveOverloadCooldownSettings() {
+  overloadCooldownSaving.value = true
+  try {
+    const updated = await adminAPI.settings.updateOverloadCooldownSettings({
+      enabled: overloadCooldownForm.enabled,
+      cooldown_minutes: overloadCooldownForm.cooldown_minutes
+    })
+    Object.assign(overloadCooldownForm, updated)
+    appStore.showSuccess(t('admin.settings.overloadCooldown.saved'))
+  } catch (error: any) {
+    appStore.showError(
+      t('admin.settings.overloadCooldown.saveFailed') + ': ' + (error.message || t('common.unknownError'))
+    )
+  } finally {
+    overloadCooldownSaving.value = false
+  }
+}
+
 // Stream Timeout 方法
 async function loadStreamTimeoutSettings() {
   streamTimeoutLoading.value = true
@@ -2366,7 +2542,8 @@ const betaPolicyActionOptions = computed(() => [
 const betaPolicyScopeOptions = computed(() => [
   { value: 'all', label: t('admin.settings.betaPolicy.scopeAll') },
   { value: 'oauth', label: t('admin.settings.betaPolicy.scopeOAuth') },
-  { value: 'apikey', label: t('admin.settings.betaPolicy.scopeAPIKey') }
+  { value: 'apikey', label: t('admin.settings.betaPolicy.scopeAPIKey') },
+  { value: 'bedrock', label: t('admin.settings.betaPolicy.scopeBedrock') }
 ])
 
 // Beta Policy 方法
@@ -2412,6 +2589,7 @@ onMounted(() => {
   loadSettings()
   loadSubscriptionGroups()
   loadAdminApiKey()
+  loadOverloadCooldownSettings()
   loadStreamTimeoutSettings()
   loadRectifierSettings()
   loadBetaPolicySettings()
@@ -2428,9 +2606,38 @@ onMounted(() => {
 }
 
 /* ============ Settings Tab Navigation ============ */
+
+/* Scroll container: thin scrollbar on PC, auto-hide on mobile */
+.settings-tabs-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.settings-tabs-scroll:hover {
+  scrollbar-color: rgb(0 0 0 / 0.15) transparent;
+}
+:root.dark .settings-tabs-scroll:hover {
+  scrollbar-color: rgb(255 255 255 / 0.2) transparent;
+}
+.settings-tabs-scroll::-webkit-scrollbar {
+  height: 3px;
+}
+.settings-tabs-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.settings-tabs-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+}
+.settings-tabs-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgb(0 0 0 / 0.15);
+}
+:root.dark .settings-tabs-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.2);
+}
+
 .settings-tabs {
-  @apply inline-flex min-w-full gap-1 rounded-2xl
-         border border-gray-100 bg-white/80 p-1.5 backdrop-blur-sm
+  @apply inline-flex min-w-full gap-0.5 rounded-2xl
+         border border-gray-100 bg-white/80 p-1 backdrop-blur-sm
          dark:border-dark-700/50 dark:bg-dark-800/80;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.04), 0 1px 2px rgb(0 0 0 / 0.02);
 }
@@ -2442,8 +2649,8 @@ onMounted(() => {
 }
 
 .settings-tab {
-  @apply relative flex flex-1 items-center justify-center gap-2
-         whitespace-nowrap rounded-xl px-4 py-2.5
+  @apply relative flex flex-1 items-center justify-center gap-1.5
+         whitespace-nowrap rounded-xl px-2.5 py-2
          text-sm font-medium
          text-gray-500 dark:text-dark-400
          transition-all duration-200 ease-out;
@@ -2470,7 +2677,7 @@ onMounted(() => {
 }
 
 .settings-tab-icon {
-  @apply flex h-7 w-7 items-center justify-center rounded-lg
+  @apply flex h-6 w-6 items-center justify-center rounded-lg
          transition-all duration-200;
 }
 

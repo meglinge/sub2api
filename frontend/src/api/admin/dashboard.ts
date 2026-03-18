@@ -11,6 +11,8 @@ import type {
   GroupStat,
   ApiKeyUsageTrendPoint,
   UserUsageTrendPoint,
+  UserSpendingRankingResponse,
+  UserBreakdownItem,
   UsageRequestType
 } from '@/types'
 
@@ -79,6 +81,7 @@ export interface ModelStatsParams {
   user_id?: number
   api_key_id?: number
   model?: string
+  model_source?: 'requested' | 'upstream' | 'mapping'
   account_id?: number
   group_id?: number
   request_type?: UsageRequestType
@@ -155,6 +158,30 @@ export async function getGroupStats(params?: GroupStatsParams): Promise<GroupSta
   return data
 }
 
+export interface UserBreakdownParams {
+  start_date?: string
+  end_date?: string
+  group_id?: number
+  model?: string
+  model_source?: 'requested' | 'upstream' | 'mapping'
+  endpoint?: string
+  endpoint_type?: 'inbound' | 'upstream' | 'path'
+  limit?: number
+}
+
+export interface UserBreakdownResponse {
+  users: UserBreakdownItem[]
+  start_date: string
+  end_date: string
+}
+
+export async function getUserBreakdown(params: UserBreakdownParams): Promise<UserBreakdownResponse> {
+  const { data } = await apiClient.get<UserBreakdownResponse>('/admin/dashboard/user-breakdown', {
+    params
+  })
+  return data
+}
+
 /**
  * Get dashboard snapshot v2 (aggregated response for heavy admin pages).
  */
@@ -201,6 +228,11 @@ export interface UserTrendResponse {
   granularity: string
 }
 
+export interface UserSpendingRankingParams
+  extends Pick<TrendParams, 'start_date' | 'end_date'> {
+  limit?: number
+}
+
 /**
  * Get user usage trend data
  * @param params - Query parameters for filtering
@@ -208,6 +240,20 @@ export interface UserTrendResponse {
  */
 export async function getUserUsageTrend(params?: UserTrendParams): Promise<UserTrendResponse> {
   const { data } = await apiClient.get<UserTrendResponse>('/admin/dashboard/users-trend', {
+    params
+  })
+  return data
+}
+
+/**
+ * Get user spending ranking data
+ * @param params - Query parameters for filtering
+ * @returns User spending ranking data
+ */
+export async function getUserSpendingRanking(
+  params?: UserSpendingRankingParams
+): Promise<UserSpendingRankingResponse> {
+  const { data } = await apiClient.get<UserSpendingRankingResponse>('/admin/dashboard/users-ranking', {
     params
   })
   return data
@@ -271,6 +317,7 @@ export const dashboardAPI = {
   getSnapshotV2,
   getApiKeyUsageTrend,
   getUserUsageTrend,
+  getUserSpendingRanking,
   getBatchUsersUsage,
   getBatchApiKeysUsage
 }
