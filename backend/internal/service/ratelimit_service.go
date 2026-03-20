@@ -22,6 +22,7 @@ type RateLimitService struct {
 	geminiQuotaService    *GeminiQuotaService
 	tempUnschedCache      TempUnschedCache
 	timeoutCounterCache   TimeoutCounterCache
+	openAI403Probe        openAI403ProbeRunner
 	settingService        *SettingService
 	tokenCacheInvalidator TokenCacheInvalidator
 	usageCacheMu          sync.RWMutex
@@ -49,7 +50,13 @@ type geminiUsageTotalsBatchProvider interface {
 	GetGeminiUsageTotalsBatch(ctx context.Context, accountIDs []int64, startTime, endTime time.Time) (map[int64]GeminiUsageTotals, error)
 }
 
-const geminiPrecheckCacheTTL = time.Minute
+const (
+	geminiPrecheckCacheTTL       = time.Minute
+	openAI403ProbeModel          = "gpt-5.4"
+	openAI403GenericErrorMessage = "Access forbidden (403): account may be suspended or lack permissions"
+	openAI403ProbeAttempts       = 2
+	openAI403ProbeAttemptTimeout = 15 * time.Second
+)
 
 // NewRateLimitService 创建RateLimitService实例
 func NewRateLimitService(accountRepo AccountRepository, usageRepo UsageLogRepository, cfg *config.Config, geminiQuotaService *GeminiQuotaService, tempUnschedCache TempUnschedCache) *RateLimitService {
@@ -76,6 +83,11 @@ func (s *RateLimitService) SetSettingService(settingService *SettingService) {
 // SetTokenCacheInvalidator 设置 token 缓存清理器（可选依赖）
 func (s *RateLimitService) SetTokenCacheInvalidator(invalidator TokenCacheInvalidator) {
 	s.tokenCacheInvalidator = invalidator
+}
+
+// SetOpenAI403Probe 设置 OpenAI 403 复测器（可选依赖）。
+func (s *RateLimitService) SetOpenAI403Probe(runner openAI403ProbeRunner) {
+	s.openAI403Probe = runner
 }
 
 // ErrorPolicyResult 表示错误策略检查的结果
@@ -660,13 +672,83 @@ func (s *RateLimitService) handle403(ctx context.Context, account *Account, upst
 	if account.Platform == PlatformAntigravity {
 		return s.handleAntigravity403(ctx, account, upstreamMsg, responseBody)
 	}
-	// 非 Antigravity 平台：保持原有行为
-	msg := "Access forbidden (403): account may be suspended or lack permissions"
+	msg := openAI403GenericErrorMessage
 	if upstreamMsg != "" {
 		msg = "Access forbidden (403): " + upstreamMsg
 	}
+	if s.shouldProbeOpenAI403(account, msg) {
+		return s.handleOpenAI403WithProbe(ctx, account, msg)
+	}
 	s.handleAuthError(ctx, account, msg)
 	return true
+}
+
+func (s *RateLimitService) shouldProbeOpenAI403(account *Account, errorMsg string) bool {
+	return account != nil && account.Platform == PlatformOpenAI && errorMsg == openAI403GenericErrorMessage && s.openAI403Probe != nil
+}
+
+func (s *RateLimitService) handleOpenAI403WithProbe(ctx context.Context, account *Account, errorMsg string) (shouldDisable bool) {
+	probeCtxBase := context.WithoutCancel(ctx)
+	var lastFailure string
+
+	for attempt := 1; attempt <= openAI403ProbeAttempts; attempt++ {
+		probeCtx, cancel := context.WithTimeout(probeCtxBase, openAI403ProbeAttemptTimeout)
+		result, err := s.openAI403Probe.RunTestBackground(probeCtx, account.ID, openAI403ProbeModel)
+		cancel()
+
+		if failure := summarizeOpenAI403ProbeFailure(result, err); failure == "" {
+			slog.Info("openai_403_probe_recovered",
+				"account_id", account.ID,
+				"attempt", attempt,
+				"model", openAI403ProbeModel,
+				"latency_ms", result.LatencyMs,
+			)
+			return false
+		} else {
+			lastFailure = failure
+			slog.Warn("openai_403_probe_failed",
+				"account_id", account.ID,
+				"attempt", attempt,
+				"model", openAI403ProbeModel,
+				"error", truncateForLog([]byte(failure), 256),
+			)
+		}
+	}
+
+	if lastFailure != "" {
+		slog.Warn("openai_403_marking_after_probe_failures",
+			"account_id", account.ID,
+			"attempts", openAI403ProbeAttempts,
+			"model", openAI403ProbeModel,
+			"last_error", truncateForLog([]byte(lastFailure), 256),
+		)
+	}
+
+	s.handleAuthError(ctx, account, errorMsg)
+	return true
+}
+
+func summarizeOpenAI403ProbeFailure(result *ScheduledTestResult, err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	if result == nil {
+		return "probe returned empty result"
+	}
+	if strings.EqualFold(strings.TrimSpace(result.Status), "success") {
+		return ""
+	}
+	if msg := strings.TrimSpace(result.ErrorMessage); msg != "" {
+		return msg
+	}
+	if msg := strings.TrimSpace(result.ResponseText); msg != "" {
+		return msg
+	}
+	status := strings.TrimSpace(result.Status)
+	if status == "" {
+		status = "unknown"
+	}
+	return "probe finished with status " + status
 }
 
 // handleAntigravity403 处理 Antigravity 平台的 403 错误
@@ -700,7 +782,7 @@ func (s *RateLimitService) handleAntigravity403(ctx context.Context, account *Ac
 
 	default:
 		// 通用 403: 保持原有行为
-		msg := "Access forbidden (403): account may be suspended or lack permissions"
+		msg := openAI403GenericErrorMessage
 		if upstreamMsg != "" {
 			msg = "Access forbidden (403): " + upstreamMsg
 		}
