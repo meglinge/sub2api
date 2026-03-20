@@ -467,6 +467,15 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 					entsql.GT(col, entsql.Expr("NOW()")),
 				))
 			}))
+		case "available":
+			now := time.Now()
+			q = q.Where(
+				dbaccount.StatusEQ("active"),
+				dbaccount.Or(
+					dbaccount.RateLimitResetAtIsNil(),
+					dbaccount.RateLimitResetAtLTE(now),
+				),
+			)
 		default:
 			q = q.Where(dbaccount.StatusEQ(status))
 		}

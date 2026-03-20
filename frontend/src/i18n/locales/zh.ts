@@ -2133,6 +2133,7 @@ export default {
         paused: '暂停',
         limited: '限流',
         rateLimited: '限流中',
+        available: '可用',
         overloaded: '过载中',
         tempUnschedulable: '临时不可调度',
         rateLimitedUntil: '限流中，当前不参与调度，预计 {time} 自动恢复',

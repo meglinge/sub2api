@@ -1144,69 +1144,6 @@
           </div>
         </div>
 
-        <!-- OpenAI Usage Window Scheduling -->
-        <div class="card">
-          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-              {{ t('admin.settings.openaiUsageWindow.title') }}
-            </h2>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              {{ t('admin.settings.openaiUsageWindow.description') }}
-            </p>
-          </div>
-          <div class="space-y-6 p-6">
-            <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
-              <div>
-                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ t('admin.settings.openaiUsageWindow.yellow5hPercent') }}
-                </label>
-                <input
-                  v-model.number="form.openai_usage_window_yellow_5h_percent"
-                  type="number"
-                  min="1"
-                  max="100"
-                  step="0.1"
-                  class="input"
-                />
-                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{ t('admin.settings.openaiUsageWindow.yellow5hPercentHint') }}
-                </p>
-              </div>
-              <div>
-                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ t('admin.settings.openaiUsageWindow.yellow7dPercent') }}
-                </label>
-                <input
-                  v-model.number="form.openai_usage_window_yellow_7d_percent"
-                  type="number"
-                  min="1"
-                  max="100"
-                  step="0.1"
-                  class="input"
-                />
-                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{ t('admin.settings.openaiUsageWindow.yellow7dPercentHint') }}
-                </p>
-              </div>
-            </div>
-
-            <div>
-              <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                {{ t('admin.settings.openaiUsageWindow.snapshotStaleSeconds') }}
-              </label>
-              <input
-                v-model.number="form.openai_usage_window_snapshot_stale_seconds"
-                type="number"
-                min="1"
-                class="input max-w-xs"
-              />
-              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.settings.openaiUsageWindow.snapshotStaleSecondsHint') }}
-              </p>
-            </div>
-          </div>
-        </div>
-
         <!-- Gateway Scheduling Settings -->
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
