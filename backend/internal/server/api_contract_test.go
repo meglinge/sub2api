@@ -538,6 +538,9 @@ func TestAPIContracts(t *testing.T) {
 					"purchase_subscription_url": "",
 					"min_claude_code_version": "",
 					"max_claude_code_version": "",
+					"openai_usage_window_yellow_5h_percent": 0,
+					"openai_usage_window_yellow_7d_percent": 0,
+					"openai_usage_window_snapshot_stale_seconds": 0,
 					"allow_ungrouped_key_scheduling": false,
 					"backend_mode_enabled": false,
 					"custom_menu_items": []

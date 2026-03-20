@@ -126,6 +126,9 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		OpsMetricsIntervalSeconds:            settings.OpsMetricsIntervalSeconds,
 		MinClaudeCodeVersion:                 settings.MinClaudeCodeVersion,
 		MaxClaudeCodeVersion:                 settings.MaxClaudeCodeVersion,
+		OpenAIUsageWindowYellow5HPercent:      settings.OpenAIUsageWindowYellow5HPercent,
+		OpenAIUsageWindowYellow7DPercent:      settings.OpenAIUsageWindowYellow7DPercent,
+		OpenAIUsageWindowSnapshotStaleSeconds: settings.OpenAIUsageWindowSnapshotStaleSeconds,
 		AllowUngroupedKeyScheduling:          settings.AllowUngroupedKeyScheduling,
 		BackendModeEnabled:                   settings.BackendModeEnabled,
 	})
@@ -624,6 +627,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpsMetricsIntervalSeconds:            updatedSettings.OpsMetricsIntervalSeconds,
 		MinClaudeCodeVersion:                 updatedSettings.MinClaudeCodeVersion,
 		MaxClaudeCodeVersion:                 updatedSettings.MaxClaudeCodeVersion,
+		OpenAIUsageWindowYellow5HPercent:      updatedSettings.OpenAIUsageWindowYellow5HPercent,
+		OpenAIUsageWindowYellow7DPercent:      updatedSettings.OpenAIUsageWindowYellow7DPercent,
+		OpenAIUsageWindowSnapshotStaleSeconds: updatedSettings.OpenAIUsageWindowSnapshotStaleSeconds,
 		AllowUngroupedKeyScheduling:          updatedSettings.AllowUngroupedKeyScheduling,
 		BackendModeEnabled:                   updatedSettings.BackendModeEnabled,
 	})
@@ -782,6 +788,15 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.MaxClaudeCodeVersion != after.MaxClaudeCodeVersion {
 		changed = append(changed, "max_claude_code_version")
+	}
+	if before.OpenAIUsageWindowYellow5HPercent != after.OpenAIUsageWindowYellow5HPercent {
+		changed = append(changed, "openai_usage_window_yellow_5h_percent")
+	}
+	if before.OpenAIUsageWindowYellow7DPercent != after.OpenAIUsageWindowYellow7DPercent {
+		changed = append(changed, "openai_usage_window_yellow_7d_percent")
+	}
+	if before.OpenAIUsageWindowSnapshotStaleSeconds != after.OpenAIUsageWindowSnapshotStaleSeconds {
+		changed = append(changed, "openai_usage_window_snapshot_stale_seconds")
 	}
 	if before.AllowUngroupedKeyScheduling != after.AllowUngroupedKeyScheduling {
 		changed = append(changed, "allow_ungrouped_key_scheduling")

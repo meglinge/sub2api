@@ -60,6 +60,14 @@ var versionBoundsSF singleflight.Group
 // versionBoundsCacheTTL 缓存有效期
 const versionBoundsCacheTTL = 60 * time.Second
 
+type cachedOpenAIUsageWindow struct {
+	cfg       openAIUsageWindowConfig
+	expiresAt int64
+}
+
+var openAIUsageWindowCache atomic.Value // *cachedOpenAIUsageWindow
+var openAIUsageWindowSF singleflight.Group
+
 // versionBoundsErrorTTL DB 错误时的短缓存，快速重试
 const versionBoundsErrorTTL = 5 * time.Second
 

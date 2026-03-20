@@ -229,6 +229,11 @@ const (
 	// SettingKeyMaxClaudeCodeVersion 最高 Claude Code 版本号限制 (semver, 如 "3.0.0"，空值=不检查)
 	SettingKeyMaxClaudeCodeVersion = "max_claude_code_version"
 
+	// OpenAI usage window scheduling settings
+	SettingKeyOpenAIUsageWindowYellow5HPercent   = "openai_usage_window_yellow_5h_percent"
+	SettingKeyOpenAIUsageWindowYellow7DPercent   = "openai_usage_window_yellow_7d_percent"
+	SettingKeyOpenAIUsageWindowSnapshotStaleSecs = "openai_usage_window_snapshot_stale_seconds"
+
 	// SettingKeyAllowUngroupedKeyScheduling 允许未分组 API Key 调度（默认 false：未分组 Key 返回 403）
 	SettingKeyAllowUngroupedKeyScheduling = "allow_ungrouped_key_scheduling"
 
