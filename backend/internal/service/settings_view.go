@@ -67,6 +67,7 @@ type SystemSettings struct {
 
 	// Claude Code version check
 	MinClaudeCodeVersion string
+	MaxClaudeCodeVersion string
 
 	// OpenAI usage window scheduling
 	OpenAIUsageWindowYellow5HPercent      float64

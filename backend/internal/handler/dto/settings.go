@@ -79,6 +79,7 @@ type SystemSettings struct {
 	OpsMetricsIntervalSeconds    int    `json:"ops_metrics_interval_seconds"`
 
 	MinClaudeCodeVersion string `json:"min_claude_code_version"`
+	MaxClaudeCodeVersion string `json:"max_claude_code_version"`
 
 	OpenAIUsageWindowYellow5HPercent      float64 `json:"openai_usage_window_yellow_5h_percent"`
 	OpenAIUsageWindowYellow7DPercent      float64 `json:"openai_usage_window_yellow_7d_percent"`
