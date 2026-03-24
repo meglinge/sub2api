@@ -658,11 +658,11 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyBusyFallsBackToOtherAccount(
 			2: true,
 		},
 		loadMap: map[int64]*AccountLoadInfo{
-			1: {AccountID: 1, LoadRate: 100, WaitingCount: 2},
+			1: {AccountID: 1, LoadRate: 100, WaitingCount: 5},
 			2: {AccountID: 2, LoadRate: 0, WaitingCount: 0},
 		},
 		waitCounts: map[int64]int{
-			1: 2,
+			1: 5,
 		},
 	}
 
