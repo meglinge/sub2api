@@ -15,9 +15,11 @@ import (
 
 type rateLimitAccountRepoStub struct {
 	mockAccountRepoForGemini
-	setErrorCalls int
-	tempCalls     int
-	lastErrorMsg  string
+	setErrorCalls          int
+	tempCalls              int
+	updateCredentialsCalls int
+	lastCredentials        map[string]any
+	lastErrorMsg           string
 }
 
 func (r *rateLimitAccountRepoStub) SetError(ctx context.Context, id int64, errorMsg string) error {
@@ -28,6 +30,12 @@ func (r *rateLimitAccountRepoStub) SetError(ctx context.Context, id int64, error
 
 func (r *rateLimitAccountRepoStub) SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error {
 	r.tempCalls++
+	return nil
+}
+
+func (r *rateLimitAccountRepoStub) UpdateCredentials(ctx context.Context, id int64, credentials map[string]any) error {
+	r.updateCredentialsCalls++
+	r.lastCredentials = cloneCredentials(credentials)
 	return nil
 }
 
@@ -110,6 +118,7 @@ func TestRateLimitService_HandleUpstreamError_OAuth401InvalidatorError(t *testin
 	require.True(t, shouldDisable)
 	require.Equal(t, 0, repo.setErrorCalls)
 	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, 1, repo.updateCredentialsCalls)
 	require.Len(t, invalidator.accounts, 1)
 }
 
@@ -131,43 +140,21 @@ func TestRateLimitService_HandleUpstreamError_NonOAuth401(t *testing.T) {
 	require.Empty(t, invalidator.accounts)
 }
 
-func TestRateLimitService_HandleUpstreamError_OpenAIOAuth401DeactivatedSetsError(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_OAuth401UsesCredentialsUpdater(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
-	invalidator := &tokenCacheInvalidatorRecorder{}
 	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
-	service.SetTokenCacheInvalidator(invalidator)
 	account := &Account{
 		ID:       103,
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token",
+		},
 	}
 
-	body := []byte(`{"error":{"message":"Your OpenAI account has been deactivated, please check your email for more information. If you feel this is an error, contact us through our help center at help.openai.com."}}`)
-	shouldDisable := service.HandleUpstreamError(context.Background(), account, 401, http.Header{}, body)
+	shouldDisable := service.HandleUpstreamError(context.Background(), account, 401, http.Header{}, []byte("unauthorized"))
 
 	require.True(t, shouldDisable)
-	require.Equal(t, 1, repo.setErrorCalls)
-	require.Equal(t, 0, repo.tempCalls)
-	require.Empty(t, invalidator.accounts)
-	require.Contains(t, repo.lastErrorMsg, "deactivated")
-}
-
-func TestRateLimitService_HandleUpstreamError_OpenAIOAuth401RecoverableStillTempUnschedulable(t *testing.T) {
-	repo := &rateLimitAccountRepoStub{}
-	invalidator := &tokenCacheInvalidatorRecorder{}
-	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
-	service.SetTokenCacheInvalidator(invalidator)
-	account := &Account{
-		ID:       104,
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeOAuth,
-	}
-
-	body := []byte(`{"error":{"message":"Unauthorized"}}`)
-	shouldDisable := service.HandleUpstreamError(context.Background(), account, 401, http.Header{}, body)
-
-	require.True(t, shouldDisable)
-	require.Equal(t, 0, repo.setErrorCalls)
-	require.Equal(t, 1, repo.tempCalls)
-	require.Len(t, invalidator.accounts, 1)
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	require.NotEmpty(t, repo.lastCredentials["expires_at"])
 }

@@ -543,7 +543,8 @@ func TestAPIContracts(t *testing.T) {
 					"openai_usage_window_snapshot_stale_seconds": 0,
 					"allow_ungrouped_key_scheduling": false,
 					"backend_mode_enabled": false,
-					"custom_menu_items": []
+					"custom_menu_items": [],
+					"custom_endpoints": []
 				}
 			}`,
 		},
@@ -992,7 +993,7 @@ func (s *stubAccountRepo) List(ctx context.Context, params pagination.Pagination
 	return nil, nil, errors.New("not implemented")
 }
 
-func (s *stubAccountRepo) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64) ([]service.Account, *pagination.PaginationResult, error) {
+func (s *stubAccountRepo) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
 	return nil, nil, errors.New("not implemented")
 }
 
