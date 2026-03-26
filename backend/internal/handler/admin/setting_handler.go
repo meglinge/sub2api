@@ -132,6 +132,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		OpenAIUsageWindowSnapshotStaleSeconds: settings.OpenAIUsageWindowSnapshotStaleSeconds,
 		AllowUngroupedKeyScheduling:           settings.AllowUngroupedKeyScheduling,
 		BackendModeEnabled:                    settings.BackendModeEnabled,
+		EnableFingerprintUnification:          settings.EnableFingerprintUnification,
+		EnableMetadataPassthrough:             settings.EnableMetadataPassthrough,
 	})
 }
 
@@ -216,6 +218,10 @@ type UpdateSettingsRequest struct {
 
 	// Backend Mode
 	BackendModeEnabled bool `json:"backend_mode_enabled"`
+
+	// Gateway forwarding behavior
+	EnableFingerprintUnification *bool `json:"enable_fingerprint_unification"`
+	EnableMetadataPassthrough    *bool `json:"enable_metadata_passthrough"`
 }
 
 // UpdateSettings 更新系统设置
@@ -620,6 +626,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpsMetricsIntervalSeconds
 		}(),
+		EnableFingerprintUnification: func() bool {
+			if req.EnableFingerprintUnification != nil {
+				return *req.EnableFingerprintUnification
+			}
+			return previousSettings.EnableFingerprintUnification
+		}(),
+		EnableMetadataPassthrough: func() bool {
+			if req.EnableMetadataPassthrough != nil {
+				return *req.EnableMetadataPassthrough
+			}
+			return previousSettings.EnableMetadataPassthrough
+		}(),
 	}
 
 	if err := h.settingService.UpdateSettings(c.Request.Context(), settings); err != nil {
@@ -701,6 +719,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAIUsageWindowSnapshotStaleSeconds: updatedSettings.OpenAIUsageWindowSnapshotStaleSeconds,
 		AllowUngroupedKeyScheduling:           updatedSettings.AllowUngroupedKeyScheduling,
 		BackendModeEnabled:                    updatedSettings.BackendModeEnabled,
+		EnableFingerprintUnification:          updatedSettings.EnableFingerprintUnification,
+		EnableMetadataPassthrough:             updatedSettings.EnableMetadataPassthrough,
 	})
 }
 
@@ -881,6 +901,12 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.CustomMenuItems != after.CustomMenuItems {
 		changed = append(changed, "custom_menu_items")
+	}
+	if before.EnableFingerprintUnification != after.EnableFingerprintUnification {
+		changed = append(changed, "enable_fingerprint_unification")
+	}
+	if before.EnableMetadataPassthrough != after.EnableMetadataPassthrough {
+		changed = append(changed, "enable_metadata_passthrough")
 	}
 	return changed
 }
@@ -1599,18 +1625,26 @@ func (h *SettingHandler) GetRectifierSettings(c *gin.Context) {
 		return
 	}
 
+	patterns := settings.APIKeySignaturePatterns
+	if patterns == nil {
+		patterns = []string{}
+	}
 	response.Success(c, dto.RectifierSettings{
 		Enabled:                  settings.Enabled,
 		ThinkingSignatureEnabled: settings.ThinkingSignatureEnabled,
 		ThinkingBudgetEnabled:    settings.ThinkingBudgetEnabled,
+		APIKeySignatureEnabled:   settings.APIKeySignatureEnabled,
+		APIKeySignaturePatterns:  patterns,
 	})
 }
 
 // UpdateRectifierSettingsRequest 更新整流器配置请求
 type UpdateRectifierSettingsRequest struct {
-	Enabled                  bool `json:"enabled"`
-	ThinkingSignatureEnabled bool `json:"thinking_signature_enabled"`
-	ThinkingBudgetEnabled    bool `json:"thinking_budget_enabled"`
+	Enabled                  bool     `json:"enabled"`
+	ThinkingSignatureEnabled bool     `json:"thinking_signature_enabled"`
+	ThinkingBudgetEnabled    bool     `json:"thinking_budget_enabled"`
+	APIKeySignatureEnabled   bool     `json:"apikey_signature_enabled"`
+	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`
 }
 
 // UpdateRectifierSettings 更新请求整流器配置
@@ -1622,10 +1656,32 @@ func (h *SettingHandler) UpdateRectifierSettings(c *gin.Context) {
 		return
 	}
 
+	// 校验并清理自定义匹配关键词
+	const maxPatterns = 50
+	const maxPatternLen = 500
+	if len(req.APIKeySignaturePatterns) > maxPatterns {
+		response.BadRequest(c, "Too many signature patterns (max 50)")
+		return
+	}
+	var cleanedPatterns []string
+	for _, p := range req.APIKeySignaturePatterns {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if len(p) > maxPatternLen {
+			response.BadRequest(c, "Signature pattern too long (max 500 characters)")
+			return
+		}
+		cleanedPatterns = append(cleanedPatterns, p)
+	}
+
 	settings := &service.RectifierSettings{
 		Enabled:                  req.Enabled,
 		ThinkingSignatureEnabled: req.ThinkingSignatureEnabled,
 		ThinkingBudgetEnabled:    req.ThinkingBudgetEnabled,
+		APIKeySignatureEnabled:   req.APIKeySignatureEnabled,
+		APIKeySignaturePatterns:  cleanedPatterns,
 	}
 
 	if err := h.settingService.SetRectifierSettings(c.Request.Context(), settings); err != nil {
@@ -1640,10 +1696,16 @@ func (h *SettingHandler) UpdateRectifierSettings(c *gin.Context) {
 		return
 	}
 
+	updatedPatterns := updatedSettings.APIKeySignaturePatterns
+	if updatedPatterns == nil {
+		updatedPatterns = []string{}
+	}
 	response.Success(c, dto.RectifierSettings{
 		Enabled:                  updatedSettings.Enabled,
 		ThinkingSignatureEnabled: updatedSettings.ThinkingSignatureEnabled,
 		ThinkingBudgetEnabled:    updatedSettings.ThinkingBudgetEnabled,
+		APIKeySignatureEnabled:   updatedSettings.APIKeySignatureEnabled,
+		APIKeySignaturePatterns:  updatedPatterns,
 	})
 }
 
