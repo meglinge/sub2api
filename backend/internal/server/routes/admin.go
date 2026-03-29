@@ -82,6 +82,9 @@ func RegisterAdminRoutes(
 		// 价格管理
 		registerPricingRoutes(admin, h)
 
+		// TLS 指纹模板管理
+		registerTLSFingerprintProfileRoutes(admin, h)
+
 		// API Key 管理
 		registerAdminAPIKeyRoutes(admin, h)
 
@@ -574,5 +577,16 @@ func registerErrorPassthroughRoutes(admin *gin.RouterGroup, h *handler.Handlers)
 		rules.POST("", h.Admin.ErrorPassthrough.Create)
 		rules.PUT("/:id", h.Admin.ErrorPassthrough.Update)
 		rules.DELETE("/:id", h.Admin.ErrorPassthrough.Delete)
+	}
+}
+
+func registerTLSFingerprintProfileRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	profiles := admin.Group("/tls-fingerprint-profiles")
+	{
+		profiles.GET("", h.Admin.TLSFingerprintProfile.List)
+		profiles.GET("/:id", h.Admin.TLSFingerprintProfile.GetByID)
+		profiles.POST("", h.Admin.TLSFingerprintProfile.Create)
+		profiles.PUT("/:id", h.Admin.TLSFingerprintProfile.Update)
+		profiles.DELETE("/:id", h.Admin.TLSFingerprintProfile.Delete)
 	}
 }

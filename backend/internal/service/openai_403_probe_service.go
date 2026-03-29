@@ -16,12 +16,17 @@ type OpenAI403ProbeService struct {
 	accountTester *AccountTestService
 }
 
-func NewOpenAI403ProbeService(accountRepo AccountRepository, httpUpstream HTTPUpstream, cfg *config.Config) *OpenAI403ProbeService {
+func NewOpenAI403ProbeService(
+	accountRepo AccountRepository,
+	httpUpstream HTTPUpstream,
+	cfg *config.Config,
+	tlsFPProfileService *TLSFingerprintProfileService,
+) *OpenAI403ProbeService {
 	if accountRepo == nil || httpUpstream == nil || cfg == nil {
 		return &OpenAI403ProbeService{}
 	}
 	return &OpenAI403ProbeService{
-		accountTester: NewAccountTestService(accountRepo, nil, nil, httpUpstream, cfg),
+		accountTester: NewAccountTestService(accountRepo, nil, nil, httpUpstream, cfg, tlsFPProfileService),
 	}
 }
 
