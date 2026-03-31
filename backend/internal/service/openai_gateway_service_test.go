@@ -154,7 +154,11 @@ func TestOpenAIGatewayService_GenerateSessionHash_Priority(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
 
-	svc := &OpenAIGatewayService{}
+	svc := &OpenAIGatewayService{cfg: &config.Config{
+		Security: config.SecurityConfig{
+			URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+		},
+	}}
 
 	bodyWithKey := []byte(`{"prompt_cache_key":"ses_aaa"}`)
 
@@ -200,7 +204,11 @@ func TestOpenAIGatewayService_GenerateSessionHash_UsesXXHash64(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
 
 	c.Request.Header.Set("session_id", "sess-fixed-value")
-	svc := &OpenAIGatewayService{}
+	svc := &OpenAIGatewayService{cfg: &config.Config{
+		Security: config.SecurityConfig{
+			URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+		},
+	}}
 
 	got := svc.GenerateSessionHash(c, nil)
 	want := fmt.Sprintf("%016x", xxhash.Sum64String("sess-fixed-value"))
@@ -214,7 +222,11 @@ func TestOpenAIGatewayService_GenerateSessionHash_AttachesLegacyHashToContext(t 
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
 
 	c.Request.Header.Set("session_id", "sess-legacy-check")
-	svc := &OpenAIGatewayService{}
+	svc := &OpenAIGatewayService{cfg: &config.Config{
+		Security: config.SecurityConfig{
+			URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+		},
+	}}
 
 	sessionHash := svc.GenerateSessionHash(c, nil)
 	require.NotEmpty(t, sessionHash)
@@ -1656,6 +1668,46 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 			require.Equal(t, tt.wantOriginator, req.Header.Get("originator"))
 		})
 	}
+}
+
+func TestOpenAIBuildUpstreamRequestForceCodexByGroupOverridesHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
+	c.Request.Header.Set("User-Agent", "curl/8.0")
+	c.Request.Header.Set("originator", "custom-client")
+
+	groupID := int64(91)
+	c.Set("api_key", &APIKey{
+		ID:      7001,
+		GroupID: &groupID,
+		Group: &Group{
+			ID:               groupID,
+			Platform:         PlatformOpenAI,
+			Status:           StatusActive,
+			Hydrated:         true,
+			OpenAIForceCodex: true,
+			RateMultiplier:   1,
+		},
+	})
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{
+		Security: config.SecurityConfig{
+			URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+		},
+	}}
+	account := &Account{
+		Type:        AccountTypeAPIKey,
+		Platform:    PlatformOpenAI,
+		Credentials: map[string]any{"base_url": "https://example.com/v1", "user_agent": "custom-account-agent/9.9"},
+	}
+
+	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", false, "", false)
+	require.NoError(t, err)
+	require.Equal(t, codexCLIUserAgent, req.Header.Get("user-agent"))
+	require.Equal(t, openAICodexOriginator, req.Header.Get("originator"))
 }
 
 // ==================== P1-08 修复：model 替换性能优化测试 ====================

@@ -464,6 +464,10 @@ func init() {
 	group.DefaultDefaultMappedModel = groupDescDefaultMappedModel.Default.(string)
 	// group.DefaultMappedModelValidator is a validator for the "default_mapped_model" field. It is called by the builders before save.
 	group.DefaultMappedModelValidator = groupDescDefaultMappedModel.Validators[0].(func(string) error)
+	// groupDescOpenaiForceCodex is the schema descriptor for openai_force_codex field.
+	groupDescOpenaiForceCodex := groupFields[29].Descriptor()
+	// group.DefaultOpenaiForceCodex holds the default value on creation for the openai_force_codex field.
+	group.DefaultOpenaiForceCodex = groupDescOpenaiForceCodex.Default.(bool)
 	idempotencyrecordMixin := schema.IdempotencyRecord{}.Mixin()
 	idempotencyrecordMixinFields0 := idempotencyrecordMixin[0].Fields()
 	_ = idempotencyrecordMixinFields0

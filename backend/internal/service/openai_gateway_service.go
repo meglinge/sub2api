@@ -38,7 +38,7 @@ const (
 	// OpenAI Platform API for API Key accounts (fallback)
 	openaiPlatformAPIURL   = "https://api.openai.com/v1/responses"
 	openaiStickySessionTTL = time.Hour // 粘性会话TTL
-	codexCLIUserAgent      = "codex_cli_rs/0.104.0"
+	codexCLIUserAgent      = openAICodexOriginator + "/" + openAICodexStableVersion
 	// codex_cli_only 拒绝时单个请求头日志长度上限（字符）
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
@@ -52,7 +52,7 @@ const (
 	openAIWSRetryBackoffMaxDefault     = 2 * time.Second
 	openAIWSRetryJitterRatioDefault    = 0.2
 	openAICompactSessionSeedKey        = "openai_compact_session_seed"
-	codexCLIVersion                    = "0.104.0"
+	codexCLIVersion                    = openAICodexStableVersion
 	// Codex 限额快照仅用于后台展示/诊断，不需要每个成功请求都立即落库。
 	openAICodexSnapshotPersistMinInterval = 30 * time.Second
 )
@@ -1160,7 +1160,10 @@ func (s *OpenAIGatewayService) GenerateSessionHashWithFallback(c *gin.Context, b
 	return currentHash
 }
 
-func resolveOpenAIUpstreamOriginator(c *gin.Context, isOfficialClient bool) string {
+func resolveOpenAIUpstreamOriginator(c *gin.Context, isOfficialClient bool, forceCodexProfile bool) string {
+	if forceCodexProfile {
+		return openAICodexOriginator
+	}
 	if c != nil {
 		if originator := strings.TrimSpace(c.GetHeader("originator")); originator != "" {
 			return originator
@@ -2715,6 +2718,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 ) (*http.Request, error) {
 	requestPath := openAIPassthroughRequestPath(c)
 	isCompactRequest := isOpenAIResponsesCompactPath(requestPath)
+	forceCodexProfile := s.shouldForceOpenAICodexProfile(c)
 	targetURL := buildOpenAIResponsesURLForRequestPath(openaiPlatformAPIURL, requestPath)
 	switch account.Type {
 	case AccountTypeOAuth:
@@ -2797,17 +2801,21 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		}
 	}
 
-	// 透传模式也支持账户自定义 User-Agent 与 ForceCodexCLI 兜底。
-	customUA := account.GetOpenAIUserAgent()
-	if customUA != "" {
-		req.Header.Set("user-agent", customUA)
-	}
-	if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
-		req.Header.Set("user-agent", codexCLIUserAgent)
-	}
-	// OAuth 安全透传：对非 Codex UA 统一兜底，降低被上游风控拦截概率。
-	if account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(req.Header.Get("user-agent")) {
-		req.Header.Set("user-agent", codexCLIUserAgent)
+	if forceCodexProfile {
+		applyForcedOpenAICodexHeaders(req.Header)
+	} else {
+		// 透传模式也支持账户自定义 User-Agent 与 ForceCodexCLI 兜底。
+		customUA := account.GetOpenAIUserAgent()
+		if customUA != "" {
+			req.Header.Set("user-agent", customUA)
+		}
+		if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
+			req.Header.Set("user-agent", codexCLIUserAgent)
+		}
+		// OAuth 安全透传：对非 Codex UA 统一兜底，降低被上游风控拦截概率。
+		if account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(req.Header.Get("user-agent")) {
+			req.Header.Set("user-agent", codexCLIUserAgent)
+		}
 	}
 
 	if req.Header.Get("content-type") == "" {
@@ -3127,6 +3135,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		requestPath = c.Request.URL.Path
 	}
 	isCompactRequest := isOpenAIResponsesCompactPath(requestPath)
+	forceCodexProfile := s.shouldForceOpenAICodexProfile(c)
 
 	// Determine target URL based on account type
 	var targetURL string
@@ -3183,7 +3192,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		req.Header.Del("session_id")
 
 		req.Header.Set("OpenAI-Beta", "responses=experimental")
-		req.Header.Set("originator", resolveOpenAIUpstreamOriginator(c, isCodexCLI))
+		req.Header.Set("originator", resolveOpenAIUpstreamOriginator(c, isCodexCLI, forceCodexProfile))
 		apiKeyID := getAPIKeyIDFromContext(c)
 		if isCompactRequest {
 			req.Header.Set("accept", "application/json")
@@ -3202,16 +3211,20 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		}
 	}
 
-	// Apply custom User-Agent if configured
-	customUA := account.GetOpenAIUserAgent()
-	if customUA != "" {
-		req.Header.Set("user-agent", customUA)
-	}
+	if forceCodexProfile {
+		applyForcedOpenAICodexHeaders(req.Header)
+	} else {
+		// Apply custom User-Agent if configured
+		customUA := account.GetOpenAIUserAgent()
+		if customUA != "" {
+			req.Header.Set("user-agent", customUA)
+		}
 
-	// 若开启 ForceCodexCLI，则强制将上游 User-Agent 伪装为 Codex CLI。
-	// 用于网关未透传/改写 User-Agent 时，仍能命中 Codex 侧识别逻辑。
-	if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
-		req.Header.Set("user-agent", codexCLIUserAgent)
+		// 若开启 ForceCodexCLI，则强制将上游 User-Agent 伪装为 Codex CLI。
+		// 用于网关未透传/改写 User-Agent 时，仍能命中 Codex 侧识别逻辑。
+		if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
+			req.Header.Set("user-agent", codexCLIUserAgent)
+		}
 	}
 
 	// Ensure required headers exist

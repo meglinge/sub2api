@@ -205,6 +205,11 @@ func DefaultMappedModel(v string) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldDefaultMappedModel, v))
 }
 
+// OpenaiForceCodex applies equality check predicate on the "openai_force_codex" field. It's identical to OpenaiForceCodexEQ.
+func OpenaiForceCodex(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenaiForceCodex, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldCreatedAt, v))
@@ -1553,6 +1558,16 @@ func DefaultMappedModelEqualFold(v string) predicate.Group {
 // DefaultMappedModelContainsFold applies the ContainsFold predicate on the "default_mapped_model" field.
 func DefaultMappedModelContainsFold(v string) predicate.Group {
 	return predicate.Group(sql.FieldContainsFold(FieldDefaultMappedModel, v))
+}
+
+// OpenaiForceCodexEQ applies the EQ predicate on the "openai_force_codex" field.
+func OpenaiForceCodexEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenaiForceCodex, v))
+}
+
+// OpenaiForceCodexNEQ applies the NEQ predicate on the "openai_force_codex" field.
+func OpenaiForceCodexNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldOpenaiForceCodex, v))
 }
 
 // HasAPIKeys applies the HasEdge predicate on the "api_keys" edge.

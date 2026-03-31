@@ -452,6 +452,20 @@ func (_c *GroupCreate) SetNillableDefaultMappedModel(v *string) *GroupCreate {
 	return _c
 }
 
+// SetOpenaiForceCodex sets the "openai_force_codex" field.
+func (_c *GroupCreate) SetOpenaiForceCodex(v bool) *GroupCreate {
+	_c.mutation.SetOpenaiForceCodex(v)
+	return _c
+}
+
+// SetNillableOpenaiForceCodex sets the "openai_force_codex" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableOpenaiForceCodex(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetOpenaiForceCodex(*v)
+	}
+	return _c
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_c *GroupCreate) AddAPIKeyIDs(ids ...int64) *GroupCreate {
 	_c.mutation.AddAPIKeyIDs(ids...)
@@ -649,6 +663,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultDefaultMappedModel
 		_c.mutation.SetDefaultMappedModel(v)
 	}
+	if _, ok := _c.mutation.OpenaiForceCodex(); !ok {
+		v := group.DefaultOpenaiForceCodex
+		_c.mutation.SetOpenaiForceCodex(v)
+	}
 	return nil
 }
 
@@ -729,6 +747,9 @@ func (_c *GroupCreate) check() error {
 		if err := group.DefaultMappedModelValidator(v); err != nil {
 			return &ValidationError{Name: "default_mapped_model", err: fmt.Errorf(`ent: validator failed for field "Group.default_mapped_model": %w`, err)}
 		}
+	}
+	if _, ok := _c.mutation.OpenaiForceCodex(); !ok {
+		return &ValidationError{Name: "openai_force_codex", err: errors.New(`ent: missing required field "Group.openai_force_codex"`)}
 	}
 	return nil
 }
@@ -884,6 +905,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.DefaultMappedModel(); ok {
 		_spec.SetField(group.FieldDefaultMappedModel, field.TypeString, value)
 		_node.DefaultMappedModel = value
+	}
+	if value, ok := _c.mutation.OpenaiForceCodex(); ok {
+		_spec.SetField(group.FieldOpenaiForceCodex, field.TypeBool, value)
+		_node.OpenaiForceCodex = value
 	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1599,6 +1624,18 @@ func (u *GroupUpsert) UpdateDefaultMappedModel() *GroupUpsert {
 	return u
 }
 
+// SetOpenaiForceCodex sets the "openai_force_codex" field.
+func (u *GroupUpsert) SetOpenaiForceCodex(v bool) *GroupUpsert {
+	u.Set(group.FieldOpenaiForceCodex, v)
+	return u
+}
+
+// UpdateOpenaiForceCodex sets the "openai_force_codex" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateOpenaiForceCodex() *GroupUpsert {
+	u.SetExcluded(group.FieldOpenaiForceCodex)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -2292,6 +2329,20 @@ func (u *GroupUpsertOne) SetDefaultMappedModel(v string) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateDefaultMappedModel() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateDefaultMappedModel()
+	})
+}
+
+// SetOpenaiForceCodex sets the "openai_force_codex" field.
+func (u *GroupUpsertOne) SetOpenaiForceCodex(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenaiForceCodex(v)
+	})
+}
+
+// UpdateOpenaiForceCodex sets the "openai_force_codex" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateOpenaiForceCodex() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenaiForceCodex()
 	})
 }
 
@@ -3154,6 +3205,20 @@ func (u *GroupUpsertBulk) SetDefaultMappedModel(v string) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateDefaultMappedModel() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateDefaultMappedModel()
+	})
+}
+
+// SetOpenaiForceCodex sets the "openai_force_codex" field.
+func (u *GroupUpsertBulk) SetOpenaiForceCodex(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenaiForceCodex(v)
+	})
+}
+
+// UpdateOpenaiForceCodex sets the "openai_force_codex" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateOpenaiForceCodex() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenaiForceCodex()
 	})
 }
 

@@ -157,6 +157,9 @@ func (Group) Fields() []ent.Field {
 			MaxLen(100).
 			Default("").
 			Comment("默认映射模型 ID，当账号级映射找不到时使用此值"),
+		field.Bool("openai_force_codex").
+			Default(false).
+			Comment("是否对 OpenAI 上游请求强制模拟 Codex 客户端并覆盖请求头"),
 	}
 }
 

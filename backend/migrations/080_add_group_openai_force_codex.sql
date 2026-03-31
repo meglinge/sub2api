@@ -1,0 +1,2 @@
+ALTER TABLE groups
+ADD COLUMN IF NOT EXISTS openai_force_codex BOOLEAN NOT NULL DEFAULT false;

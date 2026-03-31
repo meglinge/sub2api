@@ -1761,6 +1761,9 @@ export default {
         title: 'OpenAI Messages 调度配置',
         allowDispatch: '允许 /v1/messages 调度',
         allowDispatchHint: '启用后，此 OpenAI 分组的 API Key 可以通过 /v1/messages 端点调度请求',
+        forceCodex: '强制模拟 Codex 客户端',
+        forceCodexHint:
+          '启用后，此分组所有发往 OpenAI 上游的请求都会强制覆盖为 Codex profile，忽略下游 User-Agent、originator 与账号自定义 UA。',
         defaultModel: '默认映射模型',
         defaultModelPlaceholder: '例如: gpt-4.1',
         defaultModelHint: '当账号未配置模型映射时，所有请求模型将映射到此模型'

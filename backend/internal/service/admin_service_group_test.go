@@ -785,3 +785,37 @@ func TestAdminService_UpdateGroup_InvalidRequestFallbackAllowsAntigravity(t *tes
 	require.NotNil(t, repo.updated)
 	require.Equal(t, fallbackID, *repo.updated.FallbackGroupIDOnInvalidRequest)
 }
+
+func TestAdminService_CreateGroup_OpenAIForceCodexRejectsNonOpenAIPlatform(t *testing.T) {
+	repo := &groupRepoStubForAdmin{}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	_, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+		Name:             "gemini-group",
+		Platform:         PlatformGemini,
+		OpenAIForceCodex: true,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "openai_force_codex")
+}
+
+func TestAdminService_UpdateGroup_OpenAIForceCodexRejectsNonOpenAIPlatform(t *testing.T) {
+	existing := &Group{
+		ID:               1,
+		Name:             "gemini-group",
+		Platform:         PlatformGemini,
+		Status:           StatusActive,
+		Hydrated:         true,
+		RateMultiplier:   1,
+		SubscriptionType: SubscriptionTypeStandard,
+	}
+	repo := &groupRepoStubForAdmin{getByID: existing}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	enable := true
+	_, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{
+		OpenAIForceCodex: &enable,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "openai_force_codex")
+}
