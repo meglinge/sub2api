@@ -140,6 +140,7 @@ func GroupFromServiceAdmin(g *service.Group) *AdminGroup {
 		ModelRoutingEnabled:     g.ModelRoutingEnabled,
 		MCPXMLInject:            g.MCPXMLInject,
 		DefaultMappedModel:      g.DefaultMappedModel,
+		OpenAIForceCodex:        g.OpenAIForceCodex,
 		SupportedModelScopes:    g.SupportedModelScopes,
 		AccountCount:            g.AccountCount,
 		ActiveAccountCount:      g.ActiveAccountCount,
@@ -181,7 +182,6 @@ func groupFromServiceBase(g *service.Group) Group {
 		FallbackGroupIDOnInvalidRequest: g.FallbackGroupIDOnInvalidRequest,
 		SoraStorageQuotaBytes:           g.SoraStorageQuotaBytes,
 		AllowMessagesDispatch:           g.AllowMessagesDispatch,
-		OpenAIForceCodex:                g.OpenAIForceCodex,
 		CreatedAt:                       g.CreatedAt,
 		UpdatedAt:                       g.UpdatedAt,
 	}
