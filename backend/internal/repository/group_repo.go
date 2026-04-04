@@ -61,6 +61,8 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetSoraStorageQuotaBytes(groupIn.SoraStorageQuotaBytes).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
+		SetRequireOauthOnly(groupIn.RequireOAuthOnly).
+		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
 		SetOpenaiForceCodex(groupIn.OpenAIForceCodex)
 
@@ -131,6 +133,8 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetSoraStorageQuotaBytes(groupIn.SoraStorageQuotaBytes).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
+		SetRequireOauthOnly(groupIn.RequireOAuthOnly).
+		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
 		SetOpenaiForceCodex(groupIn.OpenAIForceCodex)
 
