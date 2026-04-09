@@ -126,7 +126,7 @@ func (s *AccountTestService) fetchSentinelChallenge(ctx context.Context, deviceI
 	if err != nil {
 		return nil, fmt.Errorf("sentinel request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -196,7 +196,7 @@ func (s *AccountTestService) getChatRequirements(ctx context.Context, accessToke
 	if err != nil {
 		return nil, fmt.Errorf("chat-requirements request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -227,15 +227,15 @@ func createChatConversationPayload(model string) map[string]any {
 				"metadata": map[string]any{},
 			},
 		},
-		"parent_message_id":       "client-created-root",
-		"model":                   model,
-		"timezone_offset_min":     -480,
-		"timezone":                "Asia/Shanghai",
-		"conversation_mode":       map[string]string{"kind": "primary_assistant"},
+		"parent_message_id":        "client-created-root",
+		"model":                    model,
+		"timezone_offset_min":      -480,
+		"timezone":                 "Asia/Shanghai",
+		"conversation_mode":        map[string]string{"kind": "primary_assistant"},
 		"enable_message_followups": true,
-		"system_hints":            []string{},
-		"supports_buffering":      true,
-		"supported_encodings":     []string{"v1"},
+		"system_hints":             []string{},
+		"supports_buffering":       true,
+		"supported_encodings":      []string{"v1"},
 	}
 }
 
@@ -355,7 +355,7 @@ func (s *AccountTestService) testOpenAIChatConnection(c *gin.Context, account *A
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Conversation request failed: %s", err.Error()))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -397,7 +397,7 @@ func (s *AccountTestService) processChatConversationStream(c *gin.Context, body 
 		if op, _ := data["o"].(string); op == "append" {
 			if v, _ := data["v"].(string); v != "" {
 				if p, _ := data["p"].(string); strings.Contains(p, "parts") {
-					assembled.WriteString(v)
+					_, _ = assembled.WriteString(v)
 					s.sendEvent(c, TestEvent{Type: "content", Text: v})
 				}
 			}
@@ -431,7 +431,7 @@ func (s *AccountTestService) processChatConversationStream(c *gin.Context, body 
 						s.sendEvent(c, TestEvent{Type: "content", Text: delta})
 					}
 					assembled.Reset()
-					assembled.WriteString(text)
+					_, _ = assembled.WriteString(text)
 				}
 			}
 		}
