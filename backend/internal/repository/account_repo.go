@@ -592,7 +592,7 @@ func (r *accountRepository) ListAllWithFilters(ctx context.Context, platform, ac
 		}))
 	}
 
-	// Select only minimal fields, no pagination limit
+	// No pagination limit, lightweight conversion (skip proxy/group loading)
 	accounts, err := q.
 		Order(dbent.Desc(dbaccount.FieldID)).
 		All(ctx)
@@ -600,9 +600,12 @@ func (r *accountRepository) ListAllWithFilters(ctx context.Context, platform, ac
 		return nil, 0, err
 	}
 
-	outAccounts, err := r.accountsToService(ctx, accounts)
-	if err != nil {
-		return nil, 0, err
+	outAccounts := make([]service.Account, 0, len(accounts))
+	for _, acc := range accounts {
+		out := accountEntityToService(acc)
+		if out != nil {
+			outAccounts = append(outAccounts, *out)
+		}
 	}
 	return outAccounts, int64(len(outAccounts)), nil
 }
