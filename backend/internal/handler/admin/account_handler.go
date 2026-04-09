@@ -212,6 +212,77 @@ func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, ac
 	return item
 }
 
+// AccountIDEntry is a lightweight account summary for batch operations.
+type AccountIDEntry struct {
+	ID                int64      `json:"id"`
+	Name              string     `json:"name"`
+	Platform          string     `json:"platform"`
+	Type              string     `json:"type"`
+	Status            string     `json:"status"`
+	Schedulable       bool       `json:"schedulable"`
+	RateLimitResetAt  *time.Time `json:"rate_limit_reset_at,omitempty"`
+	OverloadUntil     *time.Time `json:"overload_until,omitempty"`
+}
+
+// ListIDs returns all account IDs with minimal fields, supporting filters.
+// No pagination — returns all matching accounts in one response.
+// GET /api/v1/admin/accounts/ids
+func (h *AccountHandler) ListIDs(c *gin.Context) {
+	platform := c.Query("platform")
+	accountType := c.Query("type")
+	status := c.Query("status")
+	search := strings.TrimSpace(c.Query("search"))
+	if len(search) > 100 {
+		search = search[:100]
+	}
+	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
+
+	var groupID int64
+	if groupIDStr := c.Query("group"); groupIDStr != "" {
+		if groupIDStr == accountListGroupUngroupedQueryValue {
+			groupID = service.AccountListGroupUngrouped
+		} else {
+			parsedGroupID, parseErr := strconv.ParseInt(groupIDStr, 10, 64)
+			if parseErr != nil || parsedGroupID < 0 {
+				response.BadRequest(c, "invalid group filter")
+				return
+			}
+			groupID = parsedGroupID
+		}
+	}
+
+	accounts, err := h.adminService.ListAllAccountIDs(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	now := time.Now()
+	entries := make([]AccountIDEntry, 0, len(accounts))
+	for _, a := range accounts {
+		entry := AccountIDEntry{
+			ID:          a.ID,
+			Name:        a.Name,
+			Platform:    a.Platform,
+			Type:        a.Type,
+			Status:      a.Status,
+			Schedulable: a.Schedulable,
+		}
+		if a.RateLimitResetAt != nil && a.RateLimitResetAt.After(now) {
+			entry.RateLimitResetAt = a.RateLimitResetAt
+		}
+		if a.OverloadUntil != nil && a.OverloadUntil.After(now) {
+			entry.OverloadUntil = a.OverloadUntil
+		}
+		entries = append(entries, entry)
+	}
+
+	response.Success(c, gin.H{
+		"items": entries,
+		"total": len(entries),
+	})
+}
+
 // List handles listing all accounts with pagination
 // GET /api/v1/admin/accounts
 func (h *AccountHandler) List(c *gin.Context) {

@@ -56,6 +56,7 @@ type AdminService interface {
 
 	// Account management
 	ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, int64, error)
+	ListAllAccountIDs(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, error)
 	GetAccount(ctx context.Context, id int64) (*Account, error)
 	GetAccountsByIDs(ctx context.Context, ids []int64) ([]*Account, error)
 	CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error)
@@ -1545,6 +1546,18 @@ func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int,
 		syncOpenAICodexRateLimitFromExtra(ctx, s.accountRepo, &accounts[i], now)
 	}
 	return accounts, result.Total, nil
+}
+
+func (s *adminServiceImpl) ListAllAccountIDs(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, error) {
+	accounts, _, err := s.accountRepo.ListAllWithFilters(ctx, platform, accountType, status, search, groupID, privacyMode)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	for i := range accounts {
+		syncOpenAICodexRateLimitFromExtra(ctx, s.accountRepo, &accounts[i], now)
+	}
+	return accounts, nil
 }
 
 func (s *adminServiceImpl) GetAccount(ctx context.Context, id int64) (*Account, error) {
