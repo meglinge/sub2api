@@ -2113,6 +2113,8 @@ export default {
       quotaLimitAmount: 'Total Limit',
       quotaLimitAmountHint: 'Cumulative spending limit. Does not auto-reset.',
       testConnection: 'Test Connection',
+      chatTest: 'Chat Test',
+      chatTestTitle: 'Chat Test (Conversation API)',
       reAuthorize: 'Re-Authorize',
       refreshToken: 'Refresh Token',
       noAccountsYet: 'No accounts yet',

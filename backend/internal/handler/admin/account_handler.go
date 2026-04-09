@@ -692,6 +692,29 @@ func (h *AccountHandler) Test(c *gin.Context) {
 	}
 }
 
+// TestChat handles testing account connectivity via ChatGPT conversation API with SSE streaming
+// POST /api/v1/admin/accounts/:id/test-chat
+func (h *AccountHandler) TestChat(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+
+	var req TestAccountRequest
+	_ = c.ShouldBindJSON(&req)
+
+	if err := h.accountTestService.TestChatAccountConnection(c, accountID, req.ModelID); err != nil {
+		return
+	}
+
+	if h.rateLimitService != nil {
+		if _, err := h.rateLimitService.RecoverAccountAfterSuccessfulTest(c.Request.Context(), accountID); err != nil {
+			_ = c.Error(err)
+		}
+	}
+}
+
 // RecoverState handles unified recovery of recoverable account runtime state.
 // POST /api/v1/admin/accounts/:id/recover-state
 func (h *AccountHandler) RecoverState(c *gin.Context) {

@@ -2107,6 +2107,8 @@ export default {
       quotaLimitAmount: '总限额',
       quotaLimitAmountHint: '累计消费上限，不会自动重置。',
       testConnection: '测试连接',
+      chatTest: 'Chat 测试',
+      chatTestTitle: 'Chat 测试 (Conversation API)',
       reAuthorize: '重新授权',
       refreshToken: '刷新令牌',
       noAccountsYet: '暂无账号',
