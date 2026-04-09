@@ -133,6 +133,9 @@ func (r *stubAccountRepo) List(ctx context.Context, params pagination.Pagination
 func (r *stubAccountRepo) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, *pagination.PaginationResult, error) {
 	return nil, nil, nil
 }
+func (r *stubAccountRepo) ListAllWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, int64, error) {
+	return nil, 0, nil
+}
 func (r *stubAccountRepo) ListByGroup(ctx context.Context, groupID int64) ([]service.Account, error) {
 	return nil, nil
 }

@@ -2075,6 +2075,9 @@ func (r *stubAccountRepoForHandler) List(context.Context, pagination.PaginationP
 func (r *stubAccountRepoForHandler) ListWithFilters(context.Context, pagination.PaginationParams, string, string, string, string, int64, string) ([]service.Account, *pagination.PaginationResult, error) {
 	return nil, nil, nil
 }
+func (r *stubAccountRepoForHandler) ListAllWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]service.Account, int64, error) {
+	return nil, 0, nil
+}
 func (r *stubAccountRepoForHandler) ListByGroup(context.Context, int64) ([]service.Account, error) {
 	return nil, nil
 }
