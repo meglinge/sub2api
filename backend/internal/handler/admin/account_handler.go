@@ -214,14 +214,14 @@ func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, ac
 
 // AccountIDEntry is a lightweight account summary for batch operations.
 type AccountIDEntry struct {
-	ID                int64      `json:"id"`
-	Name              string     `json:"name"`
-	Platform          string     `json:"platform"`
-	Type              string     `json:"type"`
-	Status            string     `json:"status"`
-	Schedulable       bool       `json:"schedulable"`
-	RateLimitResetAt  *time.Time `json:"rate_limit_reset_at,omitempty"`
-	OverloadUntil     *time.Time `json:"overload_until,omitempty"`
+	ID               int64      `json:"id"`
+	Name             string     `json:"name"`
+	Platform         string     `json:"platform"`
+	Type             string     `json:"type"`
+	Status           string     `json:"status"`
+	Schedulable      bool       `json:"schedulable"`
+	RateLimitResetAt *time.Time `json:"rate_limit_reset_at,omitempty"`
+	OverloadUntil    *time.Time `json:"overload_until,omitempty"`
 }
 
 // ListIDs returns all account IDs with minimal fields, supporting filters.
