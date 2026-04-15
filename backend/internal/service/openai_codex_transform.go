@@ -133,6 +133,14 @@ func applyCodexOAuthTransformByRequestType(reqBody map[string]any, isCodexCLI bo
 		"top_p",
 		"frequency_penalty",
 		"presence_penalty",
+		// prompt_cache_retention is a newer Responses API parameter (cache TTL).
+		// The ChatGPT internal Codex endpoint rejects it with
+		// "Unsupported parameter: prompt_cache_retention". Defense-in-depth
+		// for any OAuth path that reaches this transform — the Cursor
+		// Responses-shape short-circuit in ForwardAsChatCompletions strips
+		// it earlier too, but we keep this line so other OAuth callers are
+		// equally protected.
+		"prompt_cache_retention",
 	} {
 		if _, ok := reqBody[key]; ok {
 			delete(reqBody, key)
@@ -282,6 +290,13 @@ func normalizeCodexModel(model string) string {
 	}
 
 	return "gpt-5.1"
+}
+
+func normalizeOpenAIModelForUpstream(account *Account, model string) string {
+	if account == nil || account.Type == AccountTypeOAuth {
+		return normalizeCodexModel(model)
+	}
+	return strings.TrimSpace(model)
 }
 
 func SupportsVerbosity(model string) bool {
