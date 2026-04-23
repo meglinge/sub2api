@@ -955,6 +955,7 @@ func TestAdminService_CreateGroup_OpenAIForceCodexRejectsNonOpenAIPlatform(t *te
 	_, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
 		Name:             "gemini-group",
 		Platform:         PlatformGemini,
+		RateMultiplier:   1,
 		OpenAIForceCodex: true,
 	})
 	require.Error(t, err)
