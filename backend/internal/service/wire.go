@@ -39,6 +39,11 @@ func ProvideEmailQueueService(emailService *EmailService) *EmailQueueService {
 	return NewEmailQueueService(emailService, 3)
 }
 
+// ProvideOAuthRefreshAPI creates OAuthRefreshAPI with the default lock TTL.
+func ProvideOAuthRefreshAPI(accountRepo AccountRepository, tokenCache GeminiTokenCache) *OAuthRefreshAPI {
+	return NewOAuthRefreshAPI(accountRepo, tokenCache)
+}
+
 // ProvideTokenRefreshService creates and starts TokenRefreshService
 func ProvideTokenRefreshService(
 	accountRepo AccountRepository,
@@ -211,12 +216,14 @@ func ProvideRateLimitService(
 	tempUnschedCache TempUnschedCache,
 	timeoutCounterCache TimeoutCounterCache,
 	openAI403Probe *OpenAI403ProbeService,
+	openAI403CounterCache OpenAI403CounterCache,
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	svc.SetTimeoutCounterCache(timeoutCounterCache)
 	svc.SetOpenAI403Probe(openAI403Probe)
+	svc.SetOpenAI403CounterCache(openAI403CounterCache)
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
 	return svc
@@ -422,17 +429,25 @@ func ProvideBackupService(
 	return svc
 }
 
-// ProvideOAuthRefreshAPI wraps NewOAuthRefreshAPI for Wire.
-func ProvideOAuthRefreshAPI(accountRepo AccountRepository, tokenCache GeminiTokenCache) *OAuthRefreshAPI {
-	return NewOAuthRefreshAPI(accountRepo, tokenCache)
-}
-
 // ProvideSettingService wires SettingService with group reader and proxy repo.
 func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, cfg *config.Config) *SettingService {
 	svc := NewSettingService(settingRepo, cfg)
 	svc.SetDefaultSubscriptionGroupReader(groupRepo)
 	svc.SetProxyRepository(proxyRepo)
 	return svc
+}
+
+// ProvideBillingCacheService wires BillingCacheService with its RPM dependencies.
+func ProvideBillingCacheService(
+	cache BillingCache,
+	userRepo UserRepository,
+	subRepo UserSubscriptionRepository,
+	apiKeyRepo APIKeyRepository,
+	rpmCache UserRPMCache,
+	rateRepo UserGroupRateRepository,
+	cfg *config.Config,
+) *BillingCacheService {
+	return NewBillingCacheService(cache, userRepo, subRepo, apiKeyRepo, rpmCache, rateRepo, cfg)
 }
 
 // ProviderSet is the Wire provider set for all services
@@ -451,7 +466,7 @@ var ProviderSet = wire.NewSet(
 	NewDashboardService,
 	ProvidePricingService,
 	NewBillingService,
-	NewBillingCacheService,
+	ProvideBillingCacheService,
 	NewAnnouncementService,
 	NewAdminService,
 	NewGatewayService,

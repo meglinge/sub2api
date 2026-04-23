@@ -42,6 +42,18 @@
           <input v-model.number="form.concurrency" type="number" class="input" />
         </div>
       </div>
+      <div>
+        <label class="input-label">{{ t('admin.users.form.rpmLimit') }}</label>
+        <input
+          v-model.number="form.rpm_limit"
+          type="number"
+          min="0"
+          step="1"
+          class="input"
+          :placeholder="t('admin.users.form.rpmLimitPlaceholder')"
+        />
+        <p class="input-hint">{{ t('admin.users.form.rpmLimitHint') }}</p>
+      </div>
     </form>
     <template #footer>
       <div class="flex justify-end gap-3">
@@ -64,7 +76,7 @@ import Icon from '@/components/icons/Icon.vue'
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits(['close', 'success']); const { t } = useI18n()
 
-const form = reactive({ email: '', password: '', username: '', notes: '', role: 'user', balance: 0, concurrency: 1 })
+const form = reactive({ email: '', password: '', username: '', notes: '', role: 'user', balance: 0, concurrency: 1, rpm_limit: 0 })
 
 const { loading, submit } = useForm({
   form,
@@ -75,7 +87,7 @@ const { loading, submit } = useForm({
   successMsg: t('admin.users.userCreated')
 })
 
-watch(() => props.show, (v) => { if(v) Object.assign(form, { email: '', password: '', username: '', notes: '', role: 'user', balance: 0, concurrency: 1 }) })
+watch(() => props.show, (v) => { if(v) Object.assign(form, { email: '', password: '', username: '', notes: '', role: 'user', balance: 0, concurrency: 1, rpm_limit: 0 }) })
 
 const generateRandomPassword = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%^&*'

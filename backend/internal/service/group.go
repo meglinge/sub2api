@@ -60,6 +60,10 @@ type Group struct {
 	OpenAIForceCodex            bool
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig
 
+	// RPMLimit 分组级每分钟请求数上限（0 = 不限制）。
+	// 一旦设置即接管该分组用户的限流（覆盖用户级 rpm_limit），可被 user-group rpm_override 进一步覆盖。
+	RPMLimit int
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 
@@ -75,10 +79,6 @@ func (g *Group) IsActive() bool {
 
 func (g *Group) IsSubscriptionType() bool {
 	return g.SubscriptionType == SubscriptionTypeSubscription
-}
-
-func (g *Group) IsFreeSubscription() bool {
-	return g.IsSubscriptionType() && g.RateMultiplier == 0
 }
 
 func (g *Group) HasDailyLimit() bool {
