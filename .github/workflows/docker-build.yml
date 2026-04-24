@@ -72,7 +72,7 @@ jobs:
             GOPROXY=https://proxy.golang.org,direct
             GOSUMDB=sum.golang.org
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Image digest
         run: echo "Image pushed with digest ${{ steps.meta.outputs.digest }}"
