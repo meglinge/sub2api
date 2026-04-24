@@ -6,7 +6,10 @@ import (
 )
 
 var codexModelMap = map[string]string{
-	"gpt-5.5":                    "gpt-5.5",
+	// ChatGPT internal Codex endpoints currently reject gpt-5.5 with
+	// "model does not exist or you do not have access"; keep this alias on the
+	// latest known-good Codex-capable upstream model until access is confirmed.
+	"gpt-5.5":                    "gpt-5.4",
 	"gpt-5.4":                    "gpt-5.4",
 	"gpt-5.4-mini":               "gpt-5.4-mini",
 	"gpt-5.4-none":               "gpt-5.4",
@@ -218,7 +221,7 @@ func normalizeCodexModel(model string) string {
 	normalized := strings.ToLower(modelID)
 
 	if strings.Contains(normalized, "gpt-5.5") || strings.Contains(normalized, "gpt 5.5") {
-		return "gpt-5.5"
+		return "gpt-5.4"
 	}
 	if strings.Contains(normalized, "gpt-5.4-mini") || strings.Contains(normalized, "gpt 5.4 mini") {
 		return "gpt-5.4-mini"
