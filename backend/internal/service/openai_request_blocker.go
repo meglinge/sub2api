@@ -40,16 +40,6 @@ var openAIRequestBlockRules = []openAIRequestBlockRule{
 	},
 }
 
-var openAIRequestBlockScanKeys = map[string]bool{
-	"instructions": true,
-	"prompt":       true,
-	"text":         true,
-	"content":      true,
-	"input":        true,
-	"query":        true,
-	"question":     true,
-}
-
 func isOpenAIHardBlockEnabled(account *Account, group *Group) bool {
 	if account != nil && account.IsCodexHardBlockEnabled() {
 		return true
@@ -91,27 +81,102 @@ func buildOpenAIRequestPolicyScanText(body []byte) string {
 		return string(body)
 	}
 	var fragments []string
-	collectOpenAIRequestPolicyScanText(payload, "", &fragments)
+	collectOpenAIRequestPolicyScanText(payload, &fragments)
 	return strings.Join(fragments, "\n")
 }
 
-func collectOpenAIRequestPolicyScanText(node any, key string, out *[]string) {
+func collectOpenAIRequestPolicyScanText(node any, out *[]string) {
 	switch v := node.(type) {
 	case map[string]any:
-		for childKey, child := range v {
-			collectOpenAIRequestPolicyScanText(child, strings.ToLower(strings.TrimSpace(childKey)), out)
+		appendOpenAIRequestPolicyText(out, v["prompt"])
+		appendOpenAIRequestPolicyText(out, v["query"])
+		appendOpenAIRequestPolicyText(out, v["question"])
+		appendOpenAIRequestPolicyText(out, v["text"])
+		if input, ok := v["input"]; ok {
+			collectOpenAIUserRequestInputText(input, out)
+		}
+		if messages, ok := v["messages"]; ok {
+			collectOpenAIUserRequestInputText(messages, out)
 		}
 	case []any:
 		for _, child := range v {
-			collectOpenAIRequestPolicyScanText(child, key, out)
+			collectOpenAIRequestPolicyScanText(child, out)
 		}
 	case string:
-		if !openAIRequestBlockScanKeys[key] {
+		appendOpenAIRequestPolicyText(out, v)
+	}
+}
+
+func collectOpenAIUserRequestInputText(node any, out *[]string) {
+	switch v := node.(type) {
+	case nil:
+		return
+	case string:
+		appendOpenAIRequestPolicyText(out, v)
+	case []any:
+		for _, child := range v {
+			collectOpenAIUserRequestInputText(child, out)
+		}
+	case map[string]any:
+		role := strings.ToLower(strings.TrimSpace(stringValueAny(v["role"])))
+		if role != "" && role != "user" {
 			return
 		}
-		if text := strings.TrimSpace(v); text != "" {
-			*out = append(*out, text)
+		if role == "user" {
+			appendOpenAIRequestPolicyText(out, v["text"])
+			appendOpenAIRequestPolicyText(out, v["prompt"])
+			appendOpenAIRequestPolicyText(out, v["query"])
+			appendOpenAIRequestPolicyText(out, v["question"])
+			collectOpenAIUserRequestInputText(v["content"], out)
+			collectOpenAIUserRequestInputText(v["input"], out)
+			return
 		}
+
+		typ := strings.ToLower(strings.TrimSpace(stringValueAny(v["type"])))
+		switch typ {
+		case "input_text", "output_text", "text":
+			appendOpenAIRequestPolicyText(out, v["text"])
+			collectOpenAIUserRequestInputText(v["content"], out)
+			return
+		case "message", "input_message":
+			collectOpenAIUserRequestInputText(v["content"], out)
+			return
+		case "tool_result":
+			collectOpenAIUserRequestInputText(v["content"], out)
+			return
+		case "tool_use", "function_call", "computer_call":
+			return
+		}
+
+		appendOpenAIRequestPolicyText(out, v["text"])
+		appendOpenAIRequestPolicyText(out, v["prompt"])
+		appendOpenAIRequestPolicyText(out, v["query"])
+		appendOpenAIRequestPolicyText(out, v["question"])
+		collectOpenAIUserRequestInputText(v["content"], out)
+	}
+}
+
+func appendOpenAIRequestPolicyText(out *[]string, value any) {
+	if out == nil {
+		return
+	}
+	text := strings.TrimSpace(stringValueAny(value))
+	if text == "" {
+		return
+	}
+	*out = append(*out, text)
+}
+
+func stringValueAny(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case json.Number:
+		return v.String()
+	case fmt.Stringer:
+		return v.String()
+	default:
+		return ""
 	}
 }
 
