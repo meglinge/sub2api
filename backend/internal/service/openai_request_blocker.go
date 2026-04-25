@@ -50,8 +50,27 @@ var openAIRequestBlockScanKeys = map[string]bool{
 	"question":     true,
 }
 
-func shouldBlockOpenAIRequest(account *Account, body []byte) (bool, string) {
-	if account == nil || !account.IsCodexHardBlockEnabled() || len(body) == 0 {
+func isOpenAIHardBlockEnabled(account *Account, group *Group) bool {
+	if account != nil && account.IsCodexHardBlockEnabled() {
+		return true
+	}
+	return group != nil && group.IsCodexProtectionEnabled()
+}
+
+func resolveOpenAIHardBlockReply(account *Account, group *Group) string {
+	if account != nil {
+		if reply := strings.TrimSpace(account.GetCodexHardBlockReply()); reply != "" {
+			return reply
+		}
+	}
+	if group != nil {
+		return strings.TrimSpace(group.GetCodexHardBlockReply())
+	}
+	return ""
+}
+
+func shouldBlockOpenAIRequest(account *Account, group *Group, body []byte) (bool, string) {
+	if !isOpenAIHardBlockEnabled(account, group) || len(body) == 0 {
 		return false, ""
 	}
 	text := buildOpenAIRequestPolicyScanText(body)
@@ -258,11 +277,12 @@ func maybeHandleOpenAIHardBlockedRequest(
 	s *OpenAIGatewayService,
 	c *gin.Context,
 	account *Account,
+	group *Group,
 	body []byte,
 	requestModel string,
 	stream bool,
 ) (*OpenAIForwardResult, bool, error) {
-	blocked, reason := shouldBlockOpenAIRequest(account, body)
+	blocked, reason := shouldBlockOpenAIRequest(account, group, body)
 	if !blocked {
 		return nil, false, nil
 	}
@@ -270,6 +290,6 @@ func maybeHandleOpenAIHardBlockedRequest(
 		return nil, true, fmt.Errorf("openai hard block triggered without gateway service")
 	}
 	logOpenAIRequestBlocked(ctx, account, requestModel, reason)
-	result := s.writeLocalOpenAIHardBlockResponse(c, requestModel, stream, account.GetCodexHardBlockReply())
+	result := s.writeLocalOpenAIHardBlockResponse(c, requestModel, stream, resolveOpenAIHardBlockReply(account, group))
 	return result, true, nil
 }

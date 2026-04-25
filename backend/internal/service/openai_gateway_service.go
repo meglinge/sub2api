@@ -1950,10 +1950,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	originalModel := reqModel
 	requestPath := openAIPassthroughRequestPath(c)
 	isCompactRequest := isOpenAIResponsesCompactPath(requestPath)
+	group := getOpenAIGroupFromContext(c)
 	if isCompactRequest {
 		reqStream = false
 	}
-	if blockedResult, blocked, blockedErr := maybeHandleOpenAIHardBlockedRequest(ctx, s, c, account, originalBody, reqModel, reqStream); blocked {
+	if blockedResult, blocked, blockedErr := maybeHandleOpenAIHardBlockedRequest(ctx, s, c, account, group, originalBody, reqModel, reqStream); blocked {
 		return blockedResult, blockedErr
 	}
 
@@ -2169,7 +2170,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			promptCacheKey = codexResult.PromptCacheKey
 		}
 	}
-	if guardPrompt := resolveOpenAIInstructionGuardPrompt(account); guardPrompt != "" {
+	if guardPrompt := resolveOpenAIInstructionGuardPrompt(account, group); guardPrompt != "" {
 		if mergeOpenAIInstructionGuard(reqBody, guardPrompt) {
 			bodyModified = true
 			disablePatch()
@@ -2650,7 +2651,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		reqStream = false
 	}
-	if guardPrompt := resolveOpenAIInstructionGuardPrompt(account); guardPrompt != "" {
+	if guardPrompt := resolveOpenAIInstructionGuardPrompt(account, getOpenAIGroupFromContext(c)); guardPrompt != "" {
 		guardedBody, guarded, err := mergeOpenAIInstructionGuardToBody(body, guardPrompt)
 		if err != nil {
 			return nil, err

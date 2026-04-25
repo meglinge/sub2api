@@ -425,6 +425,48 @@ func (_c *GroupCreate) SetNillableOpenaiForceCodex(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetCodexProtectionEnabled sets the "codex_protection_enabled" field.
+func (_c *GroupCreate) SetCodexProtectionEnabled(v bool) *GroupCreate {
+	_c.mutation.SetCodexProtectionEnabled(v)
+	return _c
+}
+
+// SetNillableCodexProtectionEnabled sets the "codex_protection_enabled" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableCodexProtectionEnabled(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetCodexProtectionEnabled(*v)
+	}
+	return _c
+}
+
+// SetCodexInstructionGuardPrompt sets the "codex_instruction_guard_prompt" field.
+func (_c *GroupCreate) SetCodexInstructionGuardPrompt(v string) *GroupCreate {
+	_c.mutation.SetCodexInstructionGuardPrompt(v)
+	return _c
+}
+
+// SetNillableCodexInstructionGuardPrompt sets the "codex_instruction_guard_prompt" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableCodexInstructionGuardPrompt(v *string) *GroupCreate {
+	if v != nil {
+		_c.SetCodexInstructionGuardPrompt(*v)
+	}
+	return _c
+}
+
+// SetCodexHardBlockReply sets the "codex_hard_block_reply" field.
+func (_c *GroupCreate) SetCodexHardBlockReply(v string) *GroupCreate {
+	_c.mutation.SetCodexHardBlockReply(v)
+	return _c
+}
+
+// SetNillableCodexHardBlockReply sets the "codex_hard_block_reply" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableCodexHardBlockReply(v *string) *GroupCreate {
+	if v != nil {
+		_c.SetCodexHardBlockReply(*v)
+	}
+	return _c
+}
+
 // SetMessagesDispatchModelConfig sets the "messages_dispatch_model_config" field.
 func (_c *GroupCreate) SetMessagesDispatchModelConfig(v domain.OpenAIMessagesDispatchModelConfig) *GroupCreate {
 	_c.mutation.SetMessagesDispatchModelConfig(v)
@@ -658,6 +700,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultOpenaiForceCodex
 		_c.mutation.SetOpenaiForceCodex(v)
 	}
+	if _, ok := _c.mutation.CodexProtectionEnabled(); !ok {
+		v := group.DefaultCodexProtectionEnabled
+		_c.mutation.SetCodexProtectionEnabled(v)
+	}
 	if _, ok := _c.mutation.MessagesDispatchModelConfig(); !ok {
 		v := group.DefaultMessagesDispatchModelConfig
 		_c.mutation.SetMessagesDispatchModelConfig(v)
@@ -752,6 +798,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.OpenaiForceCodex(); !ok {
 		return &ValidationError{Name: "openai_force_codex", err: errors.New(`ent: missing required field "Group.openai_force_codex"`)}
+	}
+	if _, ok := _c.mutation.CodexProtectionEnabled(); !ok {
+		return &ValidationError{Name: "codex_protection_enabled", err: errors.New(`ent: missing required field "Group.codex_protection_enabled"`)}
 	}
 	if _, ok := _c.mutation.MessagesDispatchModelConfig(); !ok {
 		return &ValidationError{Name: "messages_dispatch_model_config", err: errors.New(`ent: missing required field "Group.messages_dispatch_model_config"`)}
@@ -905,6 +954,18 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.OpenaiForceCodex(); ok {
 		_spec.SetField(group.FieldOpenaiForceCodex, field.TypeBool, value)
 		_node.OpenaiForceCodex = value
+	}
+	if value, ok := _c.mutation.CodexProtectionEnabled(); ok {
+		_spec.SetField(group.FieldCodexProtectionEnabled, field.TypeBool, value)
+		_node.CodexProtectionEnabled = value
+	}
+	if value, ok := _c.mutation.CodexInstructionGuardPrompt(); ok {
+		_spec.SetField(group.FieldCodexInstructionGuardPrompt, field.TypeString, value)
+		_node.CodexInstructionGuardPrompt = &value
+	}
+	if value, ok := _c.mutation.CodexHardBlockReply(); ok {
+		_spec.SetField(group.FieldCodexHardBlockReply, field.TypeString, value)
+		_node.CodexHardBlockReply = &value
 	}
 	if value, ok := _c.mutation.MessagesDispatchModelConfig(); ok {
 		_spec.SetField(group.FieldMessagesDispatchModelConfig, field.TypeJSON, value)
@@ -1550,6 +1611,54 @@ func (u *GroupUpsert) UpdateOpenaiForceCodex() *GroupUpsert {
 	return u
 }
 
+// SetCodexProtectionEnabled sets the "codex_protection_enabled" field.
+func (u *GroupUpsert) SetCodexProtectionEnabled(v bool) *GroupUpsert {
+	u.Set(group.FieldCodexProtectionEnabled, v)
+	return u
+}
+
+// UpdateCodexProtectionEnabled sets the "codex_protection_enabled" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateCodexProtectionEnabled() *GroupUpsert {
+	u.SetExcluded(group.FieldCodexProtectionEnabled)
+	return u
+}
+
+// SetCodexInstructionGuardPrompt sets the "codex_instruction_guard_prompt" field.
+func (u *GroupUpsert) SetCodexInstructionGuardPrompt(v string) *GroupUpsert {
+	u.Set(group.FieldCodexInstructionGuardPrompt, v)
+	return u
+}
+
+// UpdateCodexInstructionGuardPrompt sets the "codex_instruction_guard_prompt" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateCodexInstructionGuardPrompt() *GroupUpsert {
+	u.SetExcluded(group.FieldCodexInstructionGuardPrompt)
+	return u
+}
+
+// ClearCodexInstructionGuardPrompt clears the value of the "codex_instruction_guard_prompt" field.
+func (u *GroupUpsert) ClearCodexInstructionGuardPrompt() *GroupUpsert {
+	u.SetNull(group.FieldCodexInstructionGuardPrompt)
+	return u
+}
+
+// SetCodexHardBlockReply sets the "codex_hard_block_reply" field.
+func (u *GroupUpsert) SetCodexHardBlockReply(v string) *GroupUpsert {
+	u.Set(group.FieldCodexHardBlockReply, v)
+	return u
+}
+
+// UpdateCodexHardBlockReply sets the "codex_hard_block_reply" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateCodexHardBlockReply() *GroupUpsert {
+	u.SetExcluded(group.FieldCodexHardBlockReply)
+	return u
+}
+
+// ClearCodexHardBlockReply clears the value of the "codex_hard_block_reply" field.
+func (u *GroupUpsert) ClearCodexHardBlockReply() *GroupUpsert {
+	u.SetNull(group.FieldCodexHardBlockReply)
+	return u
+}
+
 // SetMessagesDispatchModelConfig sets the "messages_dispatch_model_config" field.
 func (u *GroupUpsert) SetMessagesDispatchModelConfig(v domain.OpenAIMessagesDispatchModelConfig) *GroupUpsert {
 	u.Set(group.FieldMessagesDispatchModelConfig, v)
@@ -2182,6 +2291,62 @@ func (u *GroupUpsertOne) SetOpenaiForceCodex(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateOpenaiForceCodex() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateOpenaiForceCodex()
+	})
+}
+
+// SetCodexProtectionEnabled sets the "codex_protection_enabled" field.
+func (u *GroupUpsertOne) SetCodexProtectionEnabled(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexProtectionEnabled(v)
+	})
+}
+
+// UpdateCodexProtectionEnabled sets the "codex_protection_enabled" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateCodexProtectionEnabled() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexProtectionEnabled()
+	})
+}
+
+// SetCodexInstructionGuardPrompt sets the "codex_instruction_guard_prompt" field.
+func (u *GroupUpsertOne) SetCodexInstructionGuardPrompt(v string) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexInstructionGuardPrompt(v)
+	})
+}
+
+// UpdateCodexInstructionGuardPrompt sets the "codex_instruction_guard_prompt" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateCodexInstructionGuardPrompt() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexInstructionGuardPrompt()
+	})
+}
+
+// ClearCodexInstructionGuardPrompt clears the value of the "codex_instruction_guard_prompt" field.
+func (u *GroupUpsertOne) ClearCodexInstructionGuardPrompt() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearCodexInstructionGuardPrompt()
+	})
+}
+
+// SetCodexHardBlockReply sets the "codex_hard_block_reply" field.
+func (u *GroupUpsertOne) SetCodexHardBlockReply(v string) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexHardBlockReply(v)
+	})
+}
+
+// UpdateCodexHardBlockReply sets the "codex_hard_block_reply" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateCodexHardBlockReply() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexHardBlockReply()
+	})
+}
+
+// ClearCodexHardBlockReply clears the value of the "codex_hard_block_reply" field.
+func (u *GroupUpsertOne) ClearCodexHardBlockReply() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearCodexHardBlockReply()
 	})
 }
 
@@ -2988,6 +3153,62 @@ func (u *GroupUpsertBulk) SetOpenaiForceCodex(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateOpenaiForceCodex() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateOpenaiForceCodex()
+	})
+}
+
+// SetCodexProtectionEnabled sets the "codex_protection_enabled" field.
+func (u *GroupUpsertBulk) SetCodexProtectionEnabled(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexProtectionEnabled(v)
+	})
+}
+
+// UpdateCodexProtectionEnabled sets the "codex_protection_enabled" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateCodexProtectionEnabled() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexProtectionEnabled()
+	})
+}
+
+// SetCodexInstructionGuardPrompt sets the "codex_instruction_guard_prompt" field.
+func (u *GroupUpsertBulk) SetCodexInstructionGuardPrompt(v string) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexInstructionGuardPrompt(v)
+	})
+}
+
+// UpdateCodexInstructionGuardPrompt sets the "codex_instruction_guard_prompt" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateCodexInstructionGuardPrompt() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexInstructionGuardPrompt()
+	})
+}
+
+// ClearCodexInstructionGuardPrompt clears the value of the "codex_instruction_guard_prompt" field.
+func (u *GroupUpsertBulk) ClearCodexInstructionGuardPrompt() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearCodexInstructionGuardPrompt()
+	})
+}
+
+// SetCodexHardBlockReply sets the "codex_hard_block_reply" field.
+func (u *GroupUpsertBulk) SetCodexHardBlockReply(v string) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexHardBlockReply(v)
+	})
+}
+
+// UpdateCodexHardBlockReply sets the "codex_hard_block_reply" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateCodexHardBlockReply() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexHardBlockReply()
+	})
+}
+
+// ClearCodexHardBlockReply clears the value of the "codex_hard_block_reply" field.
+func (u *GroupUpsertBulk) ClearCodexHardBlockReply() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearCodexHardBlockReply()
 	})
 }
 

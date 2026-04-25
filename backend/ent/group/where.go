@@ -195,6 +195,21 @@ func OpenaiForceCodex(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldOpenaiForceCodex, v))
 }
 
+// CodexProtectionEnabled applies equality check predicate on the "codex_protection_enabled" field. It's identical to CodexProtectionEnabledEQ.
+func CodexProtectionEnabled(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCodexProtectionEnabled, v))
+}
+
+// CodexInstructionGuardPrompt applies equality check predicate on the "codex_instruction_guard_prompt" field. It's identical to CodexInstructionGuardPromptEQ.
+func CodexInstructionGuardPrompt(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCodexInstructionGuardPrompt, v))
+}
+
+// CodexHardBlockReply applies equality check predicate on the "codex_hard_block_reply" field. It's identical to CodexHardBlockReplyEQ.
+func CodexHardBlockReply(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCodexHardBlockReply, v))
+}
+
 // RpmLimit applies equality check predicate on the "rpm_limit" field. It's identical to RpmLimitEQ.
 func RpmLimit(v int) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldRpmLimit, v))
@@ -1338,6 +1353,166 @@ func OpenaiForceCodexEQ(v bool) predicate.Group {
 // OpenaiForceCodexNEQ applies the NEQ predicate on the "openai_force_codex" field.
 func OpenaiForceCodexNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldOpenaiForceCodex, v))
+}
+
+// CodexProtectionEnabledEQ applies the EQ predicate on the "codex_protection_enabled" field.
+func CodexProtectionEnabledEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCodexProtectionEnabled, v))
+}
+
+// CodexProtectionEnabledNEQ applies the NEQ predicate on the "codex_protection_enabled" field.
+func CodexProtectionEnabledNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldCodexProtectionEnabled, v))
+}
+
+// CodexInstructionGuardPromptEQ applies the EQ predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCodexInstructionGuardPrompt, v))
+}
+
+// CodexInstructionGuardPromptNEQ applies the NEQ predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptNEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldCodexInstructionGuardPrompt, v))
+}
+
+// CodexInstructionGuardPromptIn applies the In predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldCodexInstructionGuardPrompt, vs...))
+}
+
+// CodexInstructionGuardPromptNotIn applies the NotIn predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptNotIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldCodexInstructionGuardPrompt, vs...))
+}
+
+// CodexInstructionGuardPromptGT applies the GT predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptGT(v string) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldCodexInstructionGuardPrompt, v))
+}
+
+// CodexInstructionGuardPromptGTE applies the GTE predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptGTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldCodexInstructionGuardPrompt, v))
+}
+
+// CodexInstructionGuardPromptLT applies the LT predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptLT(v string) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldCodexInstructionGuardPrompt, v))
+}
+
+// CodexInstructionGuardPromptLTE applies the LTE predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptLTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldCodexInstructionGuardPrompt, v))
+}
+
+// CodexInstructionGuardPromptContains applies the Contains predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptContains(v string) predicate.Group {
+	return predicate.Group(sql.FieldContains(FieldCodexInstructionGuardPrompt, v))
+}
+
+// CodexInstructionGuardPromptHasPrefix applies the HasPrefix predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptHasPrefix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasPrefix(FieldCodexInstructionGuardPrompt, v))
+}
+
+// CodexInstructionGuardPromptHasSuffix applies the HasSuffix predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptHasSuffix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasSuffix(FieldCodexInstructionGuardPrompt, v))
+}
+
+// CodexInstructionGuardPromptIsNil applies the IsNil predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldCodexInstructionGuardPrompt))
+}
+
+// CodexInstructionGuardPromptNotNil applies the NotNil predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldCodexInstructionGuardPrompt))
+}
+
+// CodexInstructionGuardPromptEqualFold applies the EqualFold predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptEqualFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldEqualFold(FieldCodexInstructionGuardPrompt, v))
+}
+
+// CodexInstructionGuardPromptContainsFold applies the ContainsFold predicate on the "codex_instruction_guard_prompt" field.
+func CodexInstructionGuardPromptContainsFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldContainsFold(FieldCodexInstructionGuardPrompt, v))
+}
+
+// CodexHardBlockReplyEQ applies the EQ predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCodexHardBlockReply, v))
+}
+
+// CodexHardBlockReplyNEQ applies the NEQ predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyNEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldCodexHardBlockReply, v))
+}
+
+// CodexHardBlockReplyIn applies the In predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldCodexHardBlockReply, vs...))
+}
+
+// CodexHardBlockReplyNotIn applies the NotIn predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyNotIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldCodexHardBlockReply, vs...))
+}
+
+// CodexHardBlockReplyGT applies the GT predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyGT(v string) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldCodexHardBlockReply, v))
+}
+
+// CodexHardBlockReplyGTE applies the GTE predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyGTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldCodexHardBlockReply, v))
+}
+
+// CodexHardBlockReplyLT applies the LT predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyLT(v string) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldCodexHardBlockReply, v))
+}
+
+// CodexHardBlockReplyLTE applies the LTE predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyLTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldCodexHardBlockReply, v))
+}
+
+// CodexHardBlockReplyContains applies the Contains predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyContains(v string) predicate.Group {
+	return predicate.Group(sql.FieldContains(FieldCodexHardBlockReply, v))
+}
+
+// CodexHardBlockReplyHasPrefix applies the HasPrefix predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyHasPrefix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasPrefix(FieldCodexHardBlockReply, v))
+}
+
+// CodexHardBlockReplyHasSuffix applies the HasSuffix predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyHasSuffix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasSuffix(FieldCodexHardBlockReply, v))
+}
+
+// CodexHardBlockReplyIsNil applies the IsNil predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldCodexHardBlockReply))
+}
+
+// CodexHardBlockReplyNotNil applies the NotNil predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldCodexHardBlockReply))
+}
+
+// CodexHardBlockReplyEqualFold applies the EqualFold predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyEqualFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldEqualFold(FieldCodexHardBlockReply, v))
+}
+
+// CodexHardBlockReplyContainsFold applies the ContainsFold predicate on the "codex_hard_block_reply" field.
+func CodexHardBlockReplyContainsFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldContainsFold(FieldCodexHardBlockReply, v))
 }
 
 // RpmLimitEQ applies the EQ predicate on the "rpm_limit" field.

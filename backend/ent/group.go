@@ -79,6 +79,12 @@ type Group struct {
 	DefaultMappedModel string `json:"default_mapped_model,omitempty"`
 	// 是否对 OpenAI 上游请求强制模拟 Codex 客户端并覆盖请求头
 	OpenaiForceCodex bool `json:"openai_force_codex,omitempty"`
+	// 是否对本分组所有 OpenAI OAuth 账号启用 Codex 防破限保护
+	CodexProtectionEnabled bool `json:"codex_protection_enabled,omitempty"`
+	// 分组级 Codex 防破限指令；留空时使用默认提示词
+	CodexInstructionGuardPrompt *string `json:"codex_instruction_guard_prompt,omitempty"`
+	// 命中分组级 Codex 硬拦截时的固定回复；留空时使用默认回复
+	CodexHardBlockReply *string `json:"codex_hard_block_reply,omitempty"`
 	// OpenAI Messages 调度模型配置：按 Claude 系列/精确模型映射到目标 GPT 模型
 	MessagesDispatchModelConfig domain.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config,omitempty"`
 	// 分组 RPM 上限，0 表示不限制；设置后接管该分组用户的限流
@@ -191,13 +197,13 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig:
 			values[i] = new([]byte)
-		case group.FieldIsExclusive, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldOpenaiForceCodex:
+		case group.FieldIsExclusive, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldOpenaiForceCodex, group.FieldCodexProtectionEnabled:
 			values[i] = new(sql.NullBool)
 		case group.FieldRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k:
 			values[i] = new(sql.NullFloat64)
 		case group.FieldID, group.FieldDefaultValidityDays, group.FieldFallbackGroupID, group.FieldFallbackGroupIDOnInvalidRequest, group.FieldSortOrder, group.FieldRpmLimit:
 			values[i] = new(sql.NullInt64)
-		case group.FieldName, group.FieldDescription, group.FieldStatus, group.FieldPlatform, group.FieldSubscriptionType, group.FieldDefaultMappedModel:
+		case group.FieldName, group.FieldDescription, group.FieldStatus, group.FieldPlatform, group.FieldSubscriptionType, group.FieldDefaultMappedModel, group.FieldCodexInstructionGuardPrompt, group.FieldCodexHardBlockReply:
 			values[i] = new(sql.NullString)
 		case group.FieldCreatedAt, group.FieldUpdatedAt, group.FieldDeletedAt:
 			values[i] = new(sql.NullTime)
@@ -416,6 +422,26 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.OpenaiForceCodex = value.Bool
 			}
+		case group.FieldCodexProtectionEnabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field codex_protection_enabled", values[i])
+			} else if value.Valid {
+				_m.CodexProtectionEnabled = value.Bool
+			}
+		case group.FieldCodexInstructionGuardPrompt:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field codex_instruction_guard_prompt", values[i])
+			} else if value.Valid {
+				_m.CodexInstructionGuardPrompt = new(string)
+				*_m.CodexInstructionGuardPrompt = value.String
+			}
+		case group.FieldCodexHardBlockReply:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field codex_hard_block_reply", values[i])
+			} else if value.Valid {
+				_m.CodexHardBlockReply = new(string)
+				*_m.CodexHardBlockReply = value.String
+			}
 		case group.FieldMessagesDispatchModelConfig:
 			if value, ok := values[i].(*[]byte); !ok {
 				return fmt.Errorf("unexpected type %T for field messages_dispatch_model_config", values[i])
@@ -615,6 +641,19 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("openai_force_codex=")
 	builder.WriteString(fmt.Sprintf("%v", _m.OpenaiForceCodex))
+	builder.WriteString(", ")
+	builder.WriteString("codex_protection_enabled=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CodexProtectionEnabled))
+	builder.WriteString(", ")
+	if v := _m.CodexInstructionGuardPrompt; v != nil {
+		builder.WriteString("codex_instruction_guard_prompt=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.CodexHardBlockReply; v != nil {
+		builder.WriteString("codex_hard_block_reply=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	builder.WriteString("messages_dispatch_model_config=")
 	builder.WriteString(fmt.Sprintf("%v", _m.MessagesDispatchModelConfig))

@@ -64,6 +64,7 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
 		SetOpenaiForceCodex(groupIn.OpenAIForceCodex).
+		SetCodexProtectionEnabled(groupIn.CodexProtectionEnabled).
 		SetMessagesDispatchModelConfig(groupIn.MessagesDispatchModelConfig).
 		SetRpmLimit(groupIn.RPMLimit)
 
@@ -74,6 +75,12 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 
 	// 设置支持的模型系列（始终设置，空数组表示不限制）
 	builder = builder.SetSupportedModelScopes(groupIn.SupportedModelScopes)
+	if strings.TrimSpace(groupIn.CodexInstructionGuardPrompt) != "" {
+		builder = builder.SetCodexInstructionGuardPrompt(groupIn.CodexInstructionGuardPrompt)
+	}
+	if strings.TrimSpace(groupIn.CodexHardBlockReply) != "" {
+		builder = builder.SetCodexHardBlockReply(groupIn.CodexHardBlockReply)
+	}
 
 	created, err := builder.Save(ctx)
 	if err == nil {
@@ -133,6 +140,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
 		SetOpenaiForceCodex(groupIn.OpenAIForceCodex).
+		SetCodexProtectionEnabled(groupIn.CodexProtectionEnabled).
 		SetMessagesDispatchModelConfig(groupIn.MessagesDispatchModelConfig).
 		SetRpmLimit(groupIn.RPMLimit)
 
@@ -190,6 +198,16 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 
 	// 处理 SupportedModelScopes（始终设置，空数组表示不限制）
 	builder = builder.SetSupportedModelScopes(groupIn.SupportedModelScopes)
+	if strings.TrimSpace(groupIn.CodexInstructionGuardPrompt) != "" {
+		builder = builder.SetCodexInstructionGuardPrompt(groupIn.CodexInstructionGuardPrompt)
+	} else {
+		builder = builder.ClearCodexInstructionGuardPrompt()
+	}
+	if strings.TrimSpace(groupIn.CodexHardBlockReply) != "" {
+		builder = builder.SetCodexHardBlockReply(groupIn.CodexHardBlockReply)
+	} else {
+		builder = builder.ClearCodexHardBlockReply()
+	}
 
 	updated, err := builder.Save(ctx)
 	if err != nil {

@@ -1945,6 +1945,9 @@ export default {
         forceCodex: '强制模拟 Codex 客户端',
         forceCodexHint:
           '启用后，此分组所有发往 OpenAI 上游的请求都会强制覆盖为 Codex profile，忽略下游 User-Agent、originator 与账号自定义 UA。',
+        codexProtection: '一键开启 Codex 防破限保护',
+        codexProtectionHint:
+          '启用后，此分组中的所有 OpenAI OAuth 账号都会自动注入防破限 instructions，并在命中 jailbreak、system prompt 提取、绕过限制等请求时由网关本地拒绝，不再发往上游。',
         defaultModel: '默认映射模型',
         defaultModelPlaceholder: '例如: gpt-4.1',
         defaultModelHint: '当账号未配置模型映射时，所有请求模型将映射到此模型',

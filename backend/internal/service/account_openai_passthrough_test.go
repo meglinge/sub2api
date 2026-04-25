@@ -223,6 +223,39 @@ func TestAccount_CodexHardBlock(t *testing.T) {
 	})
 }
 
+func TestGroup_CodexProtection(t *testing.T) {
+	t.Run("OpenAI group enabled uses default prompt and reply", func(t *testing.T) {
+		group := &Group{
+			Platform:               PlatformOpenAI,
+			CodexProtectionEnabled: true,
+		}
+		require.True(t, group.IsCodexProtectionEnabled())
+		require.Contains(t, group.GetCodexInstructionGuardPrompt(), "抱歉，该请求涉及绕过限制或违规用途，无法协助。")
+		require.Equal(t, defaultCodexHardBlockReply, group.GetCodexHardBlockReply())
+	})
+
+	t.Run("custom prompt and reply override defaults", func(t *testing.T) {
+		group := &Group{
+			Platform:                    PlatformOpenAI,
+			CodexProtectionEnabled:      true,
+			CodexInstructionGuardPrompt: "group-guard",
+			CodexHardBlockReply:         "group-reply",
+		}
+		require.Equal(t, "group-guard", group.GetCodexInstructionGuardPrompt())
+		require.Equal(t, "group-reply", group.GetCodexHardBlockReply())
+	})
+
+	t.Run("non-openai group cannot enable codex protection", func(t *testing.T) {
+		group := &Group{
+			Platform:               PlatformAnthropic,
+			CodexProtectionEnabled: true,
+		}
+		require.False(t, group.IsCodexProtectionEnabled())
+		require.Empty(t, group.GetCodexInstructionGuardPrompt())
+		require.Empty(t, group.GetCodexHardBlockReply())
+	})
+}
+
 func TestAccount_IsOpenAIResponsesWebSocketV2Enabled(t *testing.T) {
 	t.Run("OAuth使用OAuth专用开关", func(t *testing.T) {
 		account := &Account{

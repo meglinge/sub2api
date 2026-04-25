@@ -595,12 +595,16 @@ func init() {
 	groupDescOpenaiForceCodex := groupFields[26].Descriptor()
 	// group.DefaultOpenaiForceCodex holds the default value on creation for the openai_force_codex field.
 	group.DefaultOpenaiForceCodex = groupDescOpenaiForceCodex.Default.(bool)
+	// groupDescCodexProtectionEnabled is the schema descriptor for codex_protection_enabled field.
+	groupDescCodexProtectionEnabled := groupFields[27].Descriptor()
+	// group.DefaultCodexProtectionEnabled holds the default value on creation for the codex_protection_enabled field.
+	group.DefaultCodexProtectionEnabled = groupDescCodexProtectionEnabled.Default.(bool)
 	// groupDescMessagesDispatchModelConfig is the schema descriptor for messages_dispatch_model_config field.
-	groupDescMessagesDispatchModelConfig := groupFields[27].Descriptor()
+	groupDescMessagesDispatchModelConfig := groupFields[30].Descriptor()
 	// group.DefaultMessagesDispatchModelConfig holds the default value on creation for the messages_dispatch_model_config field.
 	group.DefaultMessagesDispatchModelConfig = groupDescMessagesDispatchModelConfig.Default.(domain.OpenAIMessagesDispatchModelConfig)
 	// groupDescRpmLimit is the schema descriptor for rpm_limit field.
-	groupDescRpmLimit := groupFields[28].Descriptor()
+	groupDescRpmLimit := groupFields[31].Descriptor()
 	// group.DefaultRpmLimit holds the default value on creation for the rpm_limit field.
 	group.DefaultRpmLimit = groupDescRpmLimit.Default.(int)
 	idempotencyrecordMixin := schema.IdempotencyRecord{}.Mixin()

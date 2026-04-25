@@ -58,6 +58,9 @@ type Group struct {
 	RequirePrivacySet           bool // 调度时仅允许 privacy 已成功设置的账号（OpenAI/Antigravity/Anthropic/Gemini）
 	DefaultMappedModel          string
 	OpenAIForceCodex            bool
+	CodexProtectionEnabled      bool
+	CodexInstructionGuardPrompt string
+	CodexHardBlockReply         string
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig
 
 	// RPMLimit 分组级每分钟请求数上限（0 = 不限制）。

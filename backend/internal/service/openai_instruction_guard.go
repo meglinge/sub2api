@@ -6,11 +6,16 @@ import (
 	"strings"
 )
 
-func resolveOpenAIInstructionGuardPrompt(account *Account) string {
-	if account == nil {
-		return ""
+func resolveOpenAIInstructionGuardPrompt(account *Account, group *Group) string {
+	if account != nil {
+		if prompt := strings.TrimSpace(account.GetCodexInstructionGuardPrompt()); prompt != "" {
+			return prompt
+		}
 	}
-	return strings.TrimSpace(account.GetCodexInstructionGuardPrompt())
+	if group != nil {
+		return strings.TrimSpace(group.GetCodexInstructionGuardPrompt())
+	}
+	return ""
 }
 
 func mergeOpenAIInstructionGuard(reqBody map[string]any, guardPrompt string) bool {
