@@ -206,9 +206,6 @@ type CreateGroupInput struct {
 	AllowMessagesDispatch       bool
 	DefaultMappedModel          string
 	OpenAIForceCodex            bool
-	CodexProtectionEnabled      bool
-	CodexInstructionGuardPrompt string
-	CodexHardBlockReply         string
 	RequireOAuthOnly            bool
 	RequirePrivacySet           bool
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig
@@ -247,9 +244,6 @@ type UpdateGroupInput struct {
 	AllowMessagesDispatch       *bool
 	DefaultMappedModel          *string
 	OpenAIForceCodex            *bool
-	CodexProtectionEnabled      *bool
-	CodexInstructionGuardPrompt *string
-	CodexHardBlockReply         *string
 	RequireOAuthOnly            *bool
 	RequirePrivacySet           *bool
 	MessagesDispatchModelConfig *OpenAIMessagesDispatchModelConfig
@@ -1392,9 +1386,6 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	if input.OpenAIForceCodex && platform != PlatformOpenAI {
 		return nil, fmt.Errorf("openai_force_codex only supports openai groups")
 	}
-	if input.CodexProtectionEnabled && platform != PlatformOpenAI {
-		return nil, fmt.Errorf("codex_protection_enabled only supports openai groups")
-	}
 
 	// 如果指定了复制账号的源分组，先获取账号 ID 列表
 	var accountIDsToCopy []int64
@@ -1453,14 +1444,10 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		RequirePrivacySet:               input.RequirePrivacySet,
 		DefaultMappedModel:              input.DefaultMappedModel,
 		OpenAIForceCodex:                input.OpenAIForceCodex,
-		CodexProtectionEnabled:          input.CodexProtectionEnabled,
-		CodexInstructionGuardPrompt:     input.CodexInstructionGuardPrompt,
-		CodexHardBlockReply:             input.CodexHardBlockReply,
 		MessagesDispatchModelConfig:     normalizeOpenAIMessagesDispatchModelConfig(input.MessagesDispatchModelConfig),
 		RPMLimit:                        input.RPMLimit,
 	}
 	sanitizeGroupMessagesDispatchFields(group)
-	sanitizeGroupCodexProtectionFields(group)
 	if err := s.groupRepo.Create(ctx, group); err != nil {
 		return nil, err
 	}
@@ -1696,18 +1683,6 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if group.OpenAIForceCodex && group.Platform != PlatformOpenAI {
 		return nil, fmt.Errorf("openai_force_codex only supports openai groups")
 	}
-	if input.CodexProtectionEnabled != nil {
-		group.CodexProtectionEnabled = *input.CodexProtectionEnabled
-	}
-	if group.CodexProtectionEnabled && group.Platform != PlatformOpenAI {
-		return nil, fmt.Errorf("codex_protection_enabled only supports openai groups")
-	}
-	if input.CodexInstructionGuardPrompt != nil {
-		group.CodexInstructionGuardPrompt = *input.CodexInstructionGuardPrompt
-	}
-	if input.CodexHardBlockReply != nil {
-		group.CodexHardBlockReply = *input.CodexHardBlockReply
-	}
 	if input.MessagesDispatchModelConfig != nil {
 		group.MessagesDispatchModelConfig = normalizeOpenAIMessagesDispatchModelConfig(*input.MessagesDispatchModelConfig)
 	}
@@ -1715,7 +1690,6 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		group.RPMLimit = *input.RPMLimit
 	}
 	sanitizeGroupMessagesDispatchFields(group)
-	sanitizeGroupCodexProtectionFields(group)
 
 	if err := s.groupRepo.Update(ctx, group); err != nil {
 		return nil, err

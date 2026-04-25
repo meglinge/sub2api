@@ -83,9 +83,6 @@ type APIKeyAuthGroupSnapshot struct {
 	AllowMessagesDispatch       bool                              `json:"allow_messages_dispatch"`
 	DefaultMappedModel          string                            `json:"default_mapped_model,omitempty"`
 	OpenAIForceCodex            bool                              `json:"openai_force_codex"`
-	CodexProtectionEnabled      bool                              `json:"codex_protection_enabled"`
-	CodexInstructionGuardPrompt string                            `json:"codex_instruction_guard_prompt,omitempty"`
-	CodexHardBlockReply         string                            `json:"codex_hard_block_reply,omitempty"`
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config,omitempty"`
 
 	// RPMLimit 分组级每分钟请求数上限（0 = 不限制）；用于 billing_cache_service.checkRPM 级联判断。

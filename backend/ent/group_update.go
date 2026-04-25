@@ -567,60 +567,6 @@ func (_u *GroupUpdate) SetNillableOpenaiForceCodex(v *bool) *GroupUpdate {
 	return _u
 }
 
-// SetCodexProtectionEnabled sets the "codex_protection_enabled" field.
-func (_u *GroupUpdate) SetCodexProtectionEnabled(v bool) *GroupUpdate {
-	_u.mutation.SetCodexProtectionEnabled(v)
-	return _u
-}
-
-// SetNillableCodexProtectionEnabled sets the "codex_protection_enabled" field if the given value is not nil.
-func (_u *GroupUpdate) SetNillableCodexProtectionEnabled(v *bool) *GroupUpdate {
-	if v != nil {
-		_u.SetCodexProtectionEnabled(*v)
-	}
-	return _u
-}
-
-// SetCodexInstructionGuardPrompt sets the "codex_instruction_guard_prompt" field.
-func (_u *GroupUpdate) SetCodexInstructionGuardPrompt(v string) *GroupUpdate {
-	_u.mutation.SetCodexInstructionGuardPrompt(v)
-	return _u
-}
-
-// SetNillableCodexInstructionGuardPrompt sets the "codex_instruction_guard_prompt" field if the given value is not nil.
-func (_u *GroupUpdate) SetNillableCodexInstructionGuardPrompt(v *string) *GroupUpdate {
-	if v != nil {
-		_u.SetCodexInstructionGuardPrompt(*v)
-	}
-	return _u
-}
-
-// ClearCodexInstructionGuardPrompt clears the value of the "codex_instruction_guard_prompt" field.
-func (_u *GroupUpdate) ClearCodexInstructionGuardPrompt() *GroupUpdate {
-	_u.mutation.ClearCodexInstructionGuardPrompt()
-	return _u
-}
-
-// SetCodexHardBlockReply sets the "codex_hard_block_reply" field.
-func (_u *GroupUpdate) SetCodexHardBlockReply(v string) *GroupUpdate {
-	_u.mutation.SetCodexHardBlockReply(v)
-	return _u
-}
-
-// SetNillableCodexHardBlockReply sets the "codex_hard_block_reply" field if the given value is not nil.
-func (_u *GroupUpdate) SetNillableCodexHardBlockReply(v *string) *GroupUpdate {
-	if v != nil {
-		_u.SetCodexHardBlockReply(*v)
-	}
-	return _u
-}
-
-// ClearCodexHardBlockReply clears the value of the "codex_hard_block_reply" field.
-func (_u *GroupUpdate) ClearCodexHardBlockReply() *GroupUpdate {
-	_u.mutation.ClearCodexHardBlockReply()
-	return _u
-}
-
 // SetMessagesDispatchModelConfig sets the "messages_dispatch_model_config" field.
 func (_u *GroupUpdate) SetMessagesDispatchModelConfig(v domain.OpenAIMessagesDispatchModelConfig) *GroupUpdate {
 	_u.mutation.SetMessagesDispatchModelConfig(v)
@@ -1118,21 +1064,6 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.OpenaiForceCodex(); ok {
 		_spec.SetField(group.FieldOpenaiForceCodex, field.TypeBool, value)
-	}
-	if value, ok := _u.mutation.CodexProtectionEnabled(); ok {
-		_spec.SetField(group.FieldCodexProtectionEnabled, field.TypeBool, value)
-	}
-	if value, ok := _u.mutation.CodexInstructionGuardPrompt(); ok {
-		_spec.SetField(group.FieldCodexInstructionGuardPrompt, field.TypeString, value)
-	}
-	if _u.mutation.CodexInstructionGuardPromptCleared() {
-		_spec.ClearField(group.FieldCodexInstructionGuardPrompt, field.TypeString)
-	}
-	if value, ok := _u.mutation.CodexHardBlockReply(); ok {
-		_spec.SetField(group.FieldCodexHardBlockReply, field.TypeString, value)
-	}
-	if _u.mutation.CodexHardBlockReplyCleared() {
-		_spec.ClearField(group.FieldCodexHardBlockReply, field.TypeString)
 	}
 	if value, ok := _u.mutation.MessagesDispatchModelConfig(); ok {
 		_spec.SetField(group.FieldMessagesDispatchModelConfig, field.TypeJSON, value)
@@ -1988,60 +1919,6 @@ func (_u *GroupUpdateOne) SetNillableOpenaiForceCodex(v *bool) *GroupUpdateOne {
 	return _u
 }
 
-// SetCodexProtectionEnabled sets the "codex_protection_enabled" field.
-func (_u *GroupUpdateOne) SetCodexProtectionEnabled(v bool) *GroupUpdateOne {
-	_u.mutation.SetCodexProtectionEnabled(v)
-	return _u
-}
-
-// SetNillableCodexProtectionEnabled sets the "codex_protection_enabled" field if the given value is not nil.
-func (_u *GroupUpdateOne) SetNillableCodexProtectionEnabled(v *bool) *GroupUpdateOne {
-	if v != nil {
-		_u.SetCodexProtectionEnabled(*v)
-	}
-	return _u
-}
-
-// SetCodexInstructionGuardPrompt sets the "codex_instruction_guard_prompt" field.
-func (_u *GroupUpdateOne) SetCodexInstructionGuardPrompt(v string) *GroupUpdateOne {
-	_u.mutation.SetCodexInstructionGuardPrompt(v)
-	return _u
-}
-
-// SetNillableCodexInstructionGuardPrompt sets the "codex_instruction_guard_prompt" field if the given value is not nil.
-func (_u *GroupUpdateOne) SetNillableCodexInstructionGuardPrompt(v *string) *GroupUpdateOne {
-	if v != nil {
-		_u.SetCodexInstructionGuardPrompt(*v)
-	}
-	return _u
-}
-
-// ClearCodexInstructionGuardPrompt clears the value of the "codex_instruction_guard_prompt" field.
-func (_u *GroupUpdateOne) ClearCodexInstructionGuardPrompt() *GroupUpdateOne {
-	_u.mutation.ClearCodexInstructionGuardPrompt()
-	return _u
-}
-
-// SetCodexHardBlockReply sets the "codex_hard_block_reply" field.
-func (_u *GroupUpdateOne) SetCodexHardBlockReply(v string) *GroupUpdateOne {
-	_u.mutation.SetCodexHardBlockReply(v)
-	return _u
-}
-
-// SetNillableCodexHardBlockReply sets the "codex_hard_block_reply" field if the given value is not nil.
-func (_u *GroupUpdateOne) SetNillableCodexHardBlockReply(v *string) *GroupUpdateOne {
-	if v != nil {
-		_u.SetCodexHardBlockReply(*v)
-	}
-	return _u
-}
-
-// ClearCodexHardBlockReply clears the value of the "codex_hard_block_reply" field.
-func (_u *GroupUpdateOne) ClearCodexHardBlockReply() *GroupUpdateOne {
-	_u.mutation.ClearCodexHardBlockReply()
-	return _u
-}
-
 // SetMessagesDispatchModelConfig sets the "messages_dispatch_model_config" field.
 func (_u *GroupUpdateOne) SetMessagesDispatchModelConfig(v domain.OpenAIMessagesDispatchModelConfig) *GroupUpdateOne {
 	_u.mutation.SetMessagesDispatchModelConfig(v)
@@ -2569,21 +2446,6 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.OpenaiForceCodex(); ok {
 		_spec.SetField(group.FieldOpenaiForceCodex, field.TypeBool, value)
-	}
-	if value, ok := _u.mutation.CodexProtectionEnabled(); ok {
-		_spec.SetField(group.FieldCodexProtectionEnabled, field.TypeBool, value)
-	}
-	if value, ok := _u.mutation.CodexInstructionGuardPrompt(); ok {
-		_spec.SetField(group.FieldCodexInstructionGuardPrompt, field.TypeString, value)
-	}
-	if _u.mutation.CodexInstructionGuardPromptCleared() {
-		_spec.ClearField(group.FieldCodexInstructionGuardPrompt, field.TypeString)
-	}
-	if value, ok := _u.mutation.CodexHardBlockReply(); ok {
-		_spec.SetField(group.FieldCodexHardBlockReply, field.TypeString, value)
-	}
-	if _u.mutation.CodexHardBlockReplyCleared() {
-		_spec.ClearField(group.FieldCodexHardBlockReply, field.TypeString)
 	}
 	if value, ok := _u.mutation.MessagesDispatchModelConfig(); ok {
 		_spec.SetField(group.FieldMessagesDispatchModelConfig, field.TypeJSON, value)

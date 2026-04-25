@@ -144,19 +144,6 @@ func (Group) Fields() []ent.Field {
 		field.Bool("openai_force_codex").
 			Default(false).
 			Comment("是否对 OpenAI 上游请求强制模拟 Codex 客户端并覆盖请求头"),
-		field.Bool("codex_protection_enabled").
-			Default(false).
-			Comment("是否对本分组所有 OpenAI OAuth 账号启用 Codex 防破限保护"),
-		field.String("codex_instruction_guard_prompt").
-			Optional().
-			Nillable().
-			SchemaType(map[string]string{dialect.Postgres: "text"}).
-			Comment("分组级 Codex 防破限指令；留空时使用默认提示词"),
-		field.String("codex_hard_block_reply").
-			Optional().
-			Nillable().
-			SchemaType(map[string]string{dialect.Postgres: "text"}).
-			Comment("命中分组级 Codex 硬拦截时的固定回复；留空时使用默认回复"),
 		field.JSON("messages_dispatch_model_config", domain.OpenAIMessagesDispatchModelConfig{}).
 			Default(domain.OpenAIMessagesDispatchModelConfig{}).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).

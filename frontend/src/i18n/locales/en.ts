@@ -1861,9 +1861,6 @@ export default {
         forceCodex: 'Force Codex profile',
         forceCodexHint:
           'When enabled, all requests from this group to OpenAI upstream will be overwritten with the Codex profile, ignoring downstream User-Agent, originator, and account-level custom UA.',
-        codexProtection: 'Enable Codex protection',
-        codexProtectionHint:
-          'When enabled, all OpenAI OAuth accounts in this group automatically receive guard instructions, and jailbreak / system prompt exfiltration / restriction-bypass style requests are locally rejected by the gateway instead of being sent upstream.',
         defaultModel: 'Default mapped model',
         defaultModelPlaceholder: 'e.g., gpt-4.1',
         defaultModelHint: 'When account has no model mapping configured, all request models will be mapped to this model',

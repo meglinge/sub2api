@@ -498,9 +498,6 @@ export interface AdminGroup extends Group {
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   default_mapped_model?: string
   openai_force_codex?: boolean
-  codex_protection_enabled?: boolean
-  codex_instruction_guard_prompt?: string
-  codex_hard_block_reply?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
 
   // 分组排序
@@ -586,9 +583,6 @@ export interface CreateGroupRequest {
   require_oauth_only?: boolean
   require_privacy_set?: boolean
   openai_force_codex?: boolean
-  codex_protection_enabled?: boolean
-  codex_instruction_guard_prompt?: string
-  codex_hard_block_reply?: string
   // 从指定分组复制账号
   copy_accounts_from_group_ids?: number[]
 }
@@ -615,9 +609,6 @@ export interface UpdateGroupRequest {
   require_oauth_only?: boolean
   require_privacy_set?: boolean
   openai_force_codex?: boolean
-  codex_protection_enabled?: boolean
-  codex_instruction_guard_prompt?: string
-  codex_hard_block_reply?: string
   copy_accounts_from_group_ids?: number[]
 }
 

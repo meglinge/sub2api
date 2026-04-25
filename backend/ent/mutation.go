@@ -10102,9 +10102,6 @@ type GroupMutation struct {
 	require_privacy_set                     *bool
 	default_mapped_model                    *string
 	openai_force_codex                      *bool
-	codex_protection_enabled                *bool
-	codex_instruction_guard_prompt          *string
-	codex_hard_block_reply                  *string
 	messages_dispatch_model_config          *domain.OpenAIMessagesDispatchModelConfig
 	rpm_limit                               *int
 	addrpm_limit                            *int
@@ -11696,140 +11693,6 @@ func (m *GroupMutation) ResetOpenaiForceCodex() {
 	m.openai_force_codex = nil
 }
 
-// SetCodexProtectionEnabled sets the "codex_protection_enabled" field.
-func (m *GroupMutation) SetCodexProtectionEnabled(b bool) {
-	m.codex_protection_enabled = &b
-}
-
-// CodexProtectionEnabled returns the value of the "codex_protection_enabled" field in the mutation.
-func (m *GroupMutation) CodexProtectionEnabled() (r bool, exists bool) {
-	v := m.codex_protection_enabled
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCodexProtectionEnabled returns the old "codex_protection_enabled" field's value of the Group entity.
-// If the Group object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *GroupMutation) OldCodexProtectionEnabled(ctx context.Context) (v bool, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCodexProtectionEnabled is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCodexProtectionEnabled requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCodexProtectionEnabled: %w", err)
-	}
-	return oldValue.CodexProtectionEnabled, nil
-}
-
-// ResetCodexProtectionEnabled resets all changes to the "codex_protection_enabled" field.
-func (m *GroupMutation) ResetCodexProtectionEnabled() {
-	m.codex_protection_enabled = nil
-}
-
-// SetCodexInstructionGuardPrompt sets the "codex_instruction_guard_prompt" field.
-func (m *GroupMutation) SetCodexInstructionGuardPrompt(s string) {
-	m.codex_instruction_guard_prompt = &s
-}
-
-// CodexInstructionGuardPrompt returns the value of the "codex_instruction_guard_prompt" field in the mutation.
-func (m *GroupMutation) CodexInstructionGuardPrompt() (r string, exists bool) {
-	v := m.codex_instruction_guard_prompt
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCodexInstructionGuardPrompt returns the old "codex_instruction_guard_prompt" field's value of the Group entity.
-// If the Group object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *GroupMutation) OldCodexInstructionGuardPrompt(ctx context.Context) (v *string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCodexInstructionGuardPrompt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCodexInstructionGuardPrompt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCodexInstructionGuardPrompt: %w", err)
-	}
-	return oldValue.CodexInstructionGuardPrompt, nil
-}
-
-// ClearCodexInstructionGuardPrompt clears the value of the "codex_instruction_guard_prompt" field.
-func (m *GroupMutation) ClearCodexInstructionGuardPrompt() {
-	m.codex_instruction_guard_prompt = nil
-	m.clearedFields[group.FieldCodexInstructionGuardPrompt] = struct{}{}
-}
-
-// CodexInstructionGuardPromptCleared returns if the "codex_instruction_guard_prompt" field was cleared in this mutation.
-func (m *GroupMutation) CodexInstructionGuardPromptCleared() bool {
-	_, ok := m.clearedFields[group.FieldCodexInstructionGuardPrompt]
-	return ok
-}
-
-// ResetCodexInstructionGuardPrompt resets all changes to the "codex_instruction_guard_prompt" field.
-func (m *GroupMutation) ResetCodexInstructionGuardPrompt() {
-	m.codex_instruction_guard_prompt = nil
-	delete(m.clearedFields, group.FieldCodexInstructionGuardPrompt)
-}
-
-// SetCodexHardBlockReply sets the "codex_hard_block_reply" field.
-func (m *GroupMutation) SetCodexHardBlockReply(s string) {
-	m.codex_hard_block_reply = &s
-}
-
-// CodexHardBlockReply returns the value of the "codex_hard_block_reply" field in the mutation.
-func (m *GroupMutation) CodexHardBlockReply() (r string, exists bool) {
-	v := m.codex_hard_block_reply
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCodexHardBlockReply returns the old "codex_hard_block_reply" field's value of the Group entity.
-// If the Group object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *GroupMutation) OldCodexHardBlockReply(ctx context.Context) (v *string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCodexHardBlockReply is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCodexHardBlockReply requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCodexHardBlockReply: %w", err)
-	}
-	return oldValue.CodexHardBlockReply, nil
-}
-
-// ClearCodexHardBlockReply clears the value of the "codex_hard_block_reply" field.
-func (m *GroupMutation) ClearCodexHardBlockReply() {
-	m.codex_hard_block_reply = nil
-	m.clearedFields[group.FieldCodexHardBlockReply] = struct{}{}
-}
-
-// CodexHardBlockReplyCleared returns if the "codex_hard_block_reply" field was cleared in this mutation.
-func (m *GroupMutation) CodexHardBlockReplyCleared() bool {
-	_, ok := m.clearedFields[group.FieldCodexHardBlockReply]
-	return ok
-}
-
-// ResetCodexHardBlockReply resets all changes to the "codex_hard_block_reply" field.
-func (m *GroupMutation) ResetCodexHardBlockReply() {
-	m.codex_hard_block_reply = nil
-	delete(m.clearedFields, group.FieldCodexHardBlockReply)
-}
-
 // SetMessagesDispatchModelConfig sets the "messages_dispatch_model_config" field.
 func (m *GroupMutation) SetMessagesDispatchModelConfig(damdmc domain.OpenAIMessagesDispatchModelConfig) {
 	m.messages_dispatch_model_config = &damdmc
@@ -12280,7 +12143,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 35)
+	fields := make([]string, 0, 32)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -12371,15 +12234,6 @@ func (m *GroupMutation) Fields() []string {
 	if m.openai_force_codex != nil {
 		fields = append(fields, group.FieldOpenaiForceCodex)
 	}
-	if m.codex_protection_enabled != nil {
-		fields = append(fields, group.FieldCodexProtectionEnabled)
-	}
-	if m.codex_instruction_guard_prompt != nil {
-		fields = append(fields, group.FieldCodexInstructionGuardPrompt)
-	}
-	if m.codex_hard_block_reply != nil {
-		fields = append(fields, group.FieldCodexHardBlockReply)
-	}
 	if m.messages_dispatch_model_config != nil {
 		fields = append(fields, group.FieldMessagesDispatchModelConfig)
 	}
@@ -12454,12 +12308,6 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.DefaultMappedModel()
 	case group.FieldOpenaiForceCodex:
 		return m.OpenaiForceCodex()
-	case group.FieldCodexProtectionEnabled:
-		return m.CodexProtectionEnabled()
-	case group.FieldCodexInstructionGuardPrompt:
-		return m.CodexInstructionGuardPrompt()
-	case group.FieldCodexHardBlockReply:
-		return m.CodexHardBlockReply()
 	case group.FieldMessagesDispatchModelConfig:
 		return m.MessagesDispatchModelConfig()
 	case group.FieldRpmLimit:
@@ -12533,12 +12381,6 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldDefaultMappedModel(ctx)
 	case group.FieldOpenaiForceCodex:
 		return m.OldOpenaiForceCodex(ctx)
-	case group.FieldCodexProtectionEnabled:
-		return m.OldCodexProtectionEnabled(ctx)
-	case group.FieldCodexInstructionGuardPrompt:
-		return m.OldCodexInstructionGuardPrompt(ctx)
-	case group.FieldCodexHardBlockReply:
-		return m.OldCodexHardBlockReply(ctx)
 	case group.FieldMessagesDispatchModelConfig:
 		return m.OldMessagesDispatchModelConfig(ctx)
 	case group.FieldRpmLimit:
@@ -12761,27 +12603,6 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetOpenaiForceCodex(v)
-		return nil
-	case group.FieldCodexProtectionEnabled:
-		v, ok := value.(bool)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCodexProtectionEnabled(v)
-		return nil
-	case group.FieldCodexInstructionGuardPrompt:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCodexInstructionGuardPrompt(v)
-		return nil
-	case group.FieldCodexHardBlockReply:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCodexHardBlockReply(v)
 		return nil
 	case group.FieldMessagesDispatchModelConfig:
 		v, ok := value.(domain.OpenAIMessagesDispatchModelConfig)
@@ -13007,12 +12828,6 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldModelRouting) {
 		fields = append(fields, group.FieldModelRouting)
 	}
-	if m.FieldCleared(group.FieldCodexInstructionGuardPrompt) {
-		fields = append(fields, group.FieldCodexInstructionGuardPrompt)
-	}
-	if m.FieldCleared(group.FieldCodexHardBlockReply) {
-		fields = append(fields, group.FieldCodexHardBlockReply)
-	}
 	return fields
 }
 
@@ -13059,12 +12874,6 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldModelRouting:
 		m.ClearModelRouting()
-		return nil
-	case group.FieldCodexInstructionGuardPrompt:
-		m.ClearCodexInstructionGuardPrompt()
-		return nil
-	case group.FieldCodexHardBlockReply:
-		m.ClearCodexHardBlockReply()
 		return nil
 	}
 	return fmt.Errorf("unknown Group nullable field %s", name)
@@ -13163,15 +12972,6 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldOpenaiForceCodex:
 		m.ResetOpenaiForceCodex()
-		return nil
-	case group.FieldCodexProtectionEnabled:
-		m.ResetCodexProtectionEnabled()
-		return nil
-	case group.FieldCodexInstructionGuardPrompt:
-		m.ResetCodexInstructionGuardPrompt()
-		return nil
-	case group.FieldCodexHardBlockReply:
-		m.ResetCodexHardBlockReply()
 		return nil
 	case group.FieldMessagesDispatchModelConfig:
 		m.ResetMessagesDispatchModelConfig()

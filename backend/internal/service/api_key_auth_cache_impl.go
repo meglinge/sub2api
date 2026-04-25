@@ -268,9 +268,6 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			AllowMessagesDispatch:           apiKey.Group.AllowMessagesDispatch,
 			DefaultMappedModel:              apiKey.Group.DefaultMappedModel,
 			OpenAIForceCodex:                apiKey.Group.OpenAIForceCodex,
-			CodexProtectionEnabled:          apiKey.Group.CodexProtectionEnabled,
-			CodexInstructionGuardPrompt:     apiKey.Group.CodexInstructionGuardPrompt,
-			CodexHardBlockReply:             apiKey.Group.CodexHardBlockReply,
 			MessagesDispatchModelConfig:     apiKey.Group.MessagesDispatchModelConfig,
 			RPMLimit:                        apiKey.Group.RPMLimit,
 		}
@@ -338,9 +335,6 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			AllowMessagesDispatch:           snapshot.Group.AllowMessagesDispatch,
 			DefaultMappedModel:              snapshot.Group.DefaultMappedModel,
 			OpenAIForceCodex:                snapshot.Group.OpenAIForceCodex,
-			CodexProtectionEnabled:          snapshot.Group.CodexProtectionEnabled,
-			CodexInstructionGuardPrompt:     snapshot.Group.CodexInstructionGuardPrompt,
-			CodexHardBlockReply:             snapshot.Group.CodexHardBlockReply,
 			MessagesDispatchModelConfig:     snapshot.Group.MessagesDispatchModelConfig,
 			RPMLimit:                        snapshot.Group.RPMLimit,
 		}

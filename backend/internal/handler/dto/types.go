@@ -133,9 +133,6 @@ type AdminGroup struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	DefaultMappedModel          string                                   `json:"default_mapped_model"`
 	OpenAIForceCodex            bool                                     `json:"openai_force_codex"`
-	CodexProtectionEnabled      bool                                     `json:"codex_protection_enabled"`
-	CodexInstructionGuardPrompt string                                   `json:"codex_instruction_guard_prompt"`
-	CodexHardBlockReply         string                                   `json:"codex_hard_block_reply"`
 	MessagesDispatchModelConfig domain.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config"`
 
 	// 支持的模型系列（仅 antigravity 平台使用）

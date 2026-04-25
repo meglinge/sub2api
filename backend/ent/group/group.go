@@ -76,12 +76,6 @@ const (
 	FieldDefaultMappedModel = "default_mapped_model"
 	// FieldOpenaiForceCodex holds the string denoting the openai_force_codex field in the database.
 	FieldOpenaiForceCodex = "openai_force_codex"
-	// FieldCodexProtectionEnabled holds the string denoting the codex_protection_enabled field in the database.
-	FieldCodexProtectionEnabled = "codex_protection_enabled"
-	// FieldCodexInstructionGuardPrompt holds the string denoting the codex_instruction_guard_prompt field in the database.
-	FieldCodexInstructionGuardPrompt = "codex_instruction_guard_prompt"
-	// FieldCodexHardBlockReply holds the string denoting the codex_hard_block_reply field in the database.
-	FieldCodexHardBlockReply = "codex_hard_block_reply"
 	// FieldMessagesDispatchModelConfig holds the string denoting the messages_dispatch_model_config field in the database.
 	FieldMessagesDispatchModelConfig = "messages_dispatch_model_config"
 	// FieldRpmLimit holds the string denoting the rpm_limit field in the database.
@@ -191,9 +185,6 @@ var Columns = []string{
 	FieldRequirePrivacySet,
 	FieldDefaultMappedModel,
 	FieldOpenaiForceCodex,
-	FieldCodexProtectionEnabled,
-	FieldCodexInstructionGuardPrompt,
-	FieldCodexHardBlockReply,
 	FieldMessagesDispatchModelConfig,
 	FieldRpmLimit,
 }
@@ -273,8 +264,6 @@ var (
 	DefaultMappedModelValidator func(string) error
 	// DefaultOpenaiForceCodex holds the default value on creation for the "openai_force_codex" field.
 	DefaultOpenaiForceCodex bool
-	// DefaultCodexProtectionEnabled holds the default value on creation for the "codex_protection_enabled" field.
-	DefaultCodexProtectionEnabled bool
 	// DefaultMessagesDispatchModelConfig holds the default value on creation for the "messages_dispatch_model_config" field.
 	DefaultMessagesDispatchModelConfig domain.OpenAIMessagesDispatchModelConfig
 	// DefaultRpmLimit holds the default value on creation for the "rpm_limit" field.
@@ -427,21 +416,6 @@ func ByDefaultMappedModel(opts ...sql.OrderTermOption) OrderOption {
 // ByOpenaiForceCodex orders the results by the openai_force_codex field.
 func ByOpenaiForceCodex(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldOpenaiForceCodex, opts...).ToFunc()
-}
-
-// ByCodexProtectionEnabled orders the results by the codex_protection_enabled field.
-func ByCodexProtectionEnabled(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldCodexProtectionEnabled, opts...).ToFunc()
-}
-
-// ByCodexInstructionGuardPrompt orders the results by the codex_instruction_guard_prompt field.
-func ByCodexInstructionGuardPrompt(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldCodexInstructionGuardPrompt, opts...).ToFunc()
-}
-
-// ByCodexHardBlockReply orders the results by the codex_hard_block_reply field.
-func ByCodexHardBlockReply(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldCodexHardBlockReply, opts...).ToFunc()
 }
 
 // ByRpmLimit orders the results by the rpm_limit field.

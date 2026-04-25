@@ -939,37 +939,6 @@
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t("admin.groups.openaiMessages.forceCodexHint") }}</p>
 
-          <div class="mt-4 flex items-center justify-between">
-            <label class="text-sm text-gray-600 dark:text-gray-400">{{
-              t("admin.groups.openaiMessages.codexProtection")
-            }}</label>
-            <button
-              type="button"
-              @click="
-                createForm.codex_protection_enabled =
-                  !createForm.codex_protection_enabled
-              "
-              class="relative inline-flex h-6 w-12 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
-              :class="
-                createForm.codex_protection_enabled
-                  ? 'bg-primary-500'
-                  : 'bg-gray-300 dark:bg-dark-600'
-              "
-            >
-              <span
-                class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
-                :class="
-                  createForm.codex_protection_enabled
-                    ? 'translate-x-6'
-                    : 'translate-x-1'
-                "
-              />
-            </button>
-          </div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            {{ t("admin.groups.openaiMessages.codexProtectionHint") }}
-          </p>
-
           <!-- 允许 Messages 调度开关 -->
           <div class="mt-4 flex items-center justify-between">
             <label class="text-sm text-gray-600 dark:text-gray-400">{{ t("admin.groups.openaiMessages.allowDispatch") }}</label>
@@ -2127,37 +2096,6 @@
             {{ t("admin.groups.openaiMessages.forceCodexHint") }}
           </p>
 
-          <div class="mt-4 flex items-center justify-between">
-            <label class="text-sm text-gray-600 dark:text-gray-400">{{
-              t("admin.groups.openaiMessages.codexProtection")
-            }}</label>
-            <button
-              type="button"
-              @click="
-                editForm.codex_protection_enabled =
-                  !editForm.codex_protection_enabled
-              "
-              class="relative inline-flex h-6 w-12 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
-              :class="
-                editForm.codex_protection_enabled
-                  ? 'bg-primary-500'
-                  : 'bg-gray-300 dark:bg-dark-600'
-              "
-            >
-              <span
-                class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
-                :class="
-                  editForm.codex_protection_enabled
-                    ? 'translate-x-6'
-                    : 'translate-x-1'
-                "
-              />
-            </button>
-          </div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            {{ t("admin.groups.openaiMessages.codexProtectionHint") }}
-          </p>
-
           <!-- 允许 Messages 调度开关 -->
           <div class="mt-4 flex items-center justify-between">
             <label class="text-sm text-gray-600 dark:text-gray-400">{{
@@ -3127,7 +3065,6 @@ const createForm = reactive({
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   openai_force_codex: false,
-  codex_protection_enabled: false,
   allow_messages_dispatch: false,
   default_mapped_model: "",
   opus_mapped_model: createMessagesDispatchDefaults.opus_mapped_model,
@@ -3412,7 +3349,6 @@ const editForm = reactive({
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   openai_force_codex: false,
-  codex_protection_enabled: false,
   allow_messages_dispatch: false,
   default_mapped_model: '',
   opus_mapped_model: editMessagesDispatchDefaults.opus_mapped_model,
@@ -3600,7 +3536,6 @@ const closeCreateModal = () => {
   createForm.fallback_group_id_on_invalid_request = null;
   resetMessagesDispatchFormState(createForm);
   createForm.openai_force_codex = false;
-  createForm.codex_protection_enabled = false;
   createForm.default_mapped_model = "gpt-5.4";
   createForm.require_oauth_only = false;
   createForm.require_privacy_set = false;
@@ -3709,7 +3644,6 @@ const handleEdit = async (group: AdminGroup) => {
     group.messages_dispatch_model_config,
   );
   editForm.openai_force_codex = group.openai_force_codex || false;
-  editForm.codex_protection_enabled = group.codex_protection_enabled || false;
   editForm.allow_messages_dispatch =
     group.allow_messages_dispatch ||
     messagesDispatchFormState.allow_messages_dispatch;
@@ -3882,9 +3816,8 @@ watch(
     if (!["anthropic", "antigravity"].includes(newVal)) {
       createForm.fallback_group_id_on_invalid_request = null;
     }
-  if (newVal !== "openai") {
+    if (newVal !== "openai") {
       createForm.openai_force_codex = false;
-      createForm.codex_protection_enabled = false;
       resetMessagesDispatchFormState(createForm);
       createForm.default_mapped_model = "";
     }
@@ -3901,9 +3834,8 @@ watch(
     if (!["anthropic", "antigravity"].includes(newVal)) {
       editForm.fallback_group_id_on_invalid_request = null;
     }
-  if (newVal !== "openai") {
+    if (newVal !== "openai") {
       editForm.openai_force_codex = false;
-      editForm.codex_protection_enabled = false;
       resetMessagesDispatchFormState(editForm);
       editForm.default_mapped_model = "";
     }

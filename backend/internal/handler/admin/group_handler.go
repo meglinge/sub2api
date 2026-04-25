@@ -110,9 +110,6 @@ type CreateGroupRequest struct {
 	RequirePrivacySet           bool                                      `json:"require_privacy_set"`
 	DefaultMappedModel          string                                    `json:"default_mapped_model"`
 	OpenAIForceCodex            bool                                      `json:"openai_force_codex"`
-	CodexProtectionEnabled      bool                                      `json:"codex_protection_enabled"`
-	CodexInstructionGuardPrompt string                                    `json:"codex_instruction_guard_prompt"`
-	CodexHardBlockReply         string                                    `json:"codex_hard_block_reply"`
 	MessagesDispatchModelConfig service.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config"`
 	// 分组 RPM 上限（0 = 不限制）
 	RPMLimit int `json:"rpm_limit"`
@@ -151,9 +148,6 @@ type UpdateGroupRequest struct {
 	RequirePrivacySet           *bool                                      `json:"require_privacy_set"`
 	DefaultMappedModel          *string                                    `json:"default_mapped_model"`
 	OpenAIForceCodex            *bool                                      `json:"openai_force_codex"`
-	CodexProtectionEnabled      *bool                                      `json:"codex_protection_enabled"`
-	CodexInstructionGuardPrompt *string                                    `json:"codex_instruction_guard_prompt"`
-	CodexHardBlockReply         *string                                    `json:"codex_hard_block_reply"`
 	MessagesDispatchModelConfig *service.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config"`
 	// 分组 RPM 上限（0 = 不限制）；nil 表示未提供不改动
 	RPMLimit *int `json:"rpm_limit"`
@@ -274,9 +268,6 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		RequirePrivacySet:               req.RequirePrivacySet,
 		DefaultMappedModel:              req.DefaultMappedModel,
 		OpenAIForceCodex:                req.OpenAIForceCodex,
-		CodexProtectionEnabled:          req.CodexProtectionEnabled,
-		CodexInstructionGuardPrompt:     req.CodexInstructionGuardPrompt,
-		CodexHardBlockReply:             req.CodexHardBlockReply,
 		MessagesDispatchModelConfig:     req.MessagesDispatchModelConfig,
 		RPMLimit:                        req.RPMLimit,
 		CopyAccountsFromGroupIDs:        req.CopyAccountsFromGroupIDs,
@@ -330,9 +321,6 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		RequirePrivacySet:               req.RequirePrivacySet,
 		DefaultMappedModel:              req.DefaultMappedModel,
 		OpenAIForceCodex:                req.OpenAIForceCodex,
-		CodexProtectionEnabled:          req.CodexProtectionEnabled,
-		CodexInstructionGuardPrompt:     req.CodexInstructionGuardPrompt,
-		CodexHardBlockReply:             req.CodexHardBlockReply,
 		MessagesDispatchModelConfig:     req.MessagesDispatchModelConfig,
 		RPMLimit:                        req.RPMLimit,
 		CopyAccountsFromGroupIDs:        req.CopyAccountsFromGroupIDs,
