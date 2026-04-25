@@ -1954,7 +1954,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if isCompactRequest {
 		reqStream = false
 	}
-	if blockedResult, blocked, blockedErr := maybeHandleOpenAIHardBlockedRequest(ctx, s, c, account, group, originalBody, reqModel, reqStream); blocked {
+	if blockedResult, blocked, blockedErr := maybeHandleOpenAIHardBlockedRequest(ctx, c, account, group, originalBody, reqModel); blocked {
 		return blockedResult, blockedErr
 	}
 

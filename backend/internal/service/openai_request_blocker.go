@@ -3,16 +3,14 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -39,6 +37,8 @@ var openAIRequestBlockRules = []openAIRequestBlockRule{
 		re:   regexp.MustCompile(`(?is)(ctf|sandbox|role\s*play|just\s+testing|just\s+for\s+research|for\s+research\s+only|只做测试|只做研究|角色扮演).{0,100}(ignore|bypass|jailbreak|绕过|规避|system\s*prompt|developer\s*prompt|隐藏规则|内部策略|系统提示词|开发者提示词)`),
 	},
 }
+
+var ErrOpenAIHardBlocked = errors.New("openai request blocked by policy")
 
 func isOpenAIHardBlockEnabled(account *Account, group *Group) bool {
 	if account != nil && account.IsCodexHardBlockEnabled() {
@@ -180,145 +180,22 @@ func stringValueAny(value any) string {
 	}
 }
 
-func (s *OpenAIGatewayService) writeLocalOpenAIHardBlockResponse(
-	c *gin.Context,
-	requestModel string,
-	stream bool,
-	reply string,
-) *OpenAIForwardResult {
+func writeLocalOpenAIHardBlockError(c *gin.Context, reply string) {
 	reply = strings.TrimSpace(reply)
 	if reply == "" {
 		reply = defaultCodexHardBlockReply
 	}
-	model := strings.TrimSpace(requestModel)
-	if model == "" {
-		model = openai.DefaultTestModel
-	}
-	if stream {
-		writeLocalOpenAIHardBlockSSE(c, model, reply)
-	} else {
-		writeLocalOpenAIHardBlockJSON(c, model, reply)
-	}
-	return &OpenAIForwardResult{
-		RequestID:     "",
-		Usage:         OpenAIUsage{},
-		Model:         model,
-		UpstreamModel: model,
-		Stream:        stream,
-		OpenAIWSMode:  false,
-		Duration:      0,
-	}
-}
-
-func writeLocalOpenAIHardBlockJSON(c *gin.Context, model, reply string) {
-	response := buildLocalOpenAIHardBlockResponse(model, reply)
-	c.Header("Content-Type", "application/json; charset=utf-8")
-	c.JSON(http.StatusOK, response)
-}
-
-func writeLocalOpenAIHardBlockSSE(c *gin.Context, model, reply string) {
 	if c == nil {
 		return
 	}
-	flusher, _ := c.Writer.(http.Flusher)
-	finalResponse := buildLocalOpenAIHardBlockResponse(model, reply)
-	responseID, _ := finalResponse["id"].(string)
-	createdAt, _ := finalResponse["created_at"].(int64)
-	if createdAt == 0 {
-		if v, ok := finalResponse["created_at"].(float64); ok {
-			createdAt = int64(v)
-		}
-	}
-	createdEvent := map[string]any{
-		"type": "response.created",
-		"response": map[string]any{
-			"id":         responseID,
-			"object":     "response",
-			"created_at": createdAt,
-			"status":     "in_progress",
-			"model":      model,
-			"output":     []any{},
-			"usage": map[string]any{
-				"input_tokens":  0,
-				"output_tokens": 0,
-				"total_tokens":  0,
-			},
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.JSON(http.StatusForbidden, gin.H{
+		"error": gin.H{
+			"type":    "forbidden_error",
+			"code":    "policy_violation",
+			"message": reply,
 		},
-	}
-	events := []any{
-		createdEvent,
-		map[string]any{
-			"type":          "response.output_text.delta",
-			"response_id":   responseID,
-			"output_index":  0,
-			"content_index": 0,
-			"delta":         reply,
-		},
-		map[string]any{
-			"type":          "response.output_text.done",
-			"response_id":   responseID,
-			"output_index":  0,
-			"content_index": 0,
-			"text":          reply,
-		},
-		map[string]any{
-			"type":     "response.completed",
-			"response": finalResponse,
-		},
-	}
-
-	c.Header("Content-Type", "text/event-stream; charset=utf-8")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-	c.Status(http.StatusOK)
-
-	for _, event := range events {
-		payload, err := json.Marshal(event)
-		if err != nil {
-			continue
-		}
-		_, _ = c.Writer.WriteString("data: " + string(payload) + "\n\n")
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
-	_, _ = c.Writer.WriteString("data: [DONE]\n\n")
-	if flusher != nil {
-		flusher.Flush()
-	}
-}
-
-func buildLocalOpenAIHardBlockResponse(model, reply string) map[string]any {
-	respID := "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	msgID := "msg_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	return map[string]any{
-		"id":         respID,
-		"object":     "response",
-		"created_at": time.Now().Unix(),
-		"status":     "completed",
-		"model":      model,
-		"output": []any{
-			map[string]any{
-				"id":     msgID,
-				"type":   "message",
-				"status": "completed",
-				"role":   "assistant",
-				"content": []any{
-					map[string]any{
-						"type":        "output_text",
-						"text":        reply,
-						"annotations": []any{},
-					},
-				},
-			},
-		},
-		"usage": map[string]any{
-			"input_tokens":  0,
-			"output_tokens": 0,
-			"total_tokens":  0,
-		},
-	}
+	})
 }
 
 func logOpenAIRequestBlocked(ctx context.Context, account *Account, requestModel, reason string) {
@@ -339,22 +216,37 @@ func logOpenAIRequestBlocked(ctx context.Context, account *Account, requestModel
 
 func maybeHandleOpenAIHardBlockedRequest(
 	ctx context.Context,
-	s *OpenAIGatewayService,
 	c *gin.Context,
 	account *Account,
 	group *Group,
 	body []byte,
 	requestModel string,
-	stream bool,
 ) (*OpenAIForwardResult, bool, error) {
 	blocked, reason := shouldBlockOpenAIRequest(account, group, body)
 	if !blocked {
 		return nil, false, nil
 	}
-	if s == nil {
-		return nil, true, fmt.Errorf("openai hard block triggered without gateway service")
+	reply := resolveOpenAIHardBlockReply(account, group)
+	if reply == "" {
+		reply = defaultCodexHardBlockReply
+	}
+	accountID := int64(0)
+	accountName := ""
+	if account != nil {
+		accountID = account.ID
+		accountName = account.Name
 	}
 	logOpenAIRequestBlocked(ctx, account, requestModel, reason)
-	result := s.writeLocalOpenAIHardBlockResponse(c, requestModel, stream, resolveOpenAIHardBlockReply(account, group))
-	return result, true, nil
+	setOpsUpstreamError(c, http.StatusForbidden, reply, "")
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		Platform:           PlatformOpenAI,
+		AccountID:          accountID,
+		AccountName:        accountName,
+		UpstreamStatusCode: http.StatusForbidden,
+		Kind:               "request_error",
+		Message:            reply,
+		Detail:             reason,
+	})
+	writeLocalOpenAIHardBlockError(c, reply)
+	return nil, true, fmt.Errorf("%w: %s", ErrOpenAIHardBlocked, reason)
 }

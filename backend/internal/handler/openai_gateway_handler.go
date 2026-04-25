@@ -360,6 +360,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				)
 				continue
 			}
+			if errors.Is(err, service.ErrOpenAIHardBlocked) {
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil)
+				reqLog.Info("openai.request_blocked",
+					zap.Int64("account_id", account.ID),
+					zap.String("account_name", account.Name),
+				)
+				return
+			}
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
 			wroteFallback := h.ensureForwardErrorResponse(c, streamStarted)
 			fields := []zap.Field{
