@@ -1953,6 +1953,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if isCompactRequest {
 		reqStream = false
 	}
+	if blockedResult, blocked, blockedErr := maybeHandleOpenAIHardBlockedRequest(ctx, s, c, account, originalBody, reqModel, reqStream); blocked {
+		return blockedResult, blockedErr
+	}
 
 	isCodexCLI := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) || (s.cfg != nil && s.cfg.Gateway.ForceCodexCLI)
 	wsDecision := s.getOpenAIWSProtocolResolver().Resolve(account)
@@ -2164,6 +2167,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
+		}
+	}
+	if guardPrompt := resolveOpenAIInstructionGuardPrompt(account); guardPrompt != "" {
+		if mergeOpenAIInstructionGuard(reqBody, guardPrompt) {
+			bodyModified = true
+			disablePatch()
 		}
 	}
 
@@ -2640,6 +2649,15 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			body = normalizedBody
 		}
 		reqStream = false
+	}
+	if guardPrompt := resolveOpenAIInstructionGuardPrompt(account); guardPrompt != "" {
+		guardedBody, guarded, err := mergeOpenAIInstructionGuardToBody(body, guardPrompt)
+		if err != nil {
+			return nil, err
+		}
+		if guarded {
+			body = guardedBody
+		}
 	}
 
 	if account != nil && account.Type == AccountTypeOAuth {

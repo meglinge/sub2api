@@ -135,6 +135,94 @@ func TestAccount_IsCodexCLIOnlyEnabled(t *testing.T) {
 	})
 }
 
+func TestAccount_CodexInstructionGuard(t *testing.T) {
+	t.Run("OpenAI OAuth 开启后返回默认 guard prompt", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Extra: map[string]any{
+				"codex_instruction_guard_enabled": true,
+			},
+		}
+		require.True(t, account.IsCodexInstructionGuardEnabled())
+		require.Contains(t, account.GetCodexInstructionGuardPrompt(), "抱歉，该请求涉及绕过限制或违规用途，无法协助。")
+	})
+
+	t.Run("支持自定义 guard prompt", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Extra: map[string]any{
+				"codex_instruction_guard_enabled": true,
+				"codex_instruction_guard_prompt":  "custom-guard",
+			},
+		}
+		require.True(t, account.IsCodexInstructionGuardEnabled())
+		require.Equal(t, "custom-guard", account.GetCodexInstructionGuardPrompt())
+	})
+
+	t.Run("非 OAuth 或字段缺失时关闭", func(t *testing.T) {
+		apiKeyAccount := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Extra: map[string]any{
+				"codex_instruction_guard_enabled": true,
+			},
+		}
+		require.False(t, apiKeyAccount.IsCodexInstructionGuardEnabled())
+		require.Empty(t, apiKeyAccount.GetCodexInstructionGuardPrompt())
+
+		missing := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Extra:    map[string]any{},
+		}
+		require.False(t, missing.IsCodexInstructionGuardEnabled())
+		require.Empty(t, missing.GetCodexInstructionGuardPrompt())
+	})
+}
+
+func TestAccount_CodexHardBlock(t *testing.T) {
+	t.Run("未显式配置时复用 instruction guard 开关", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Extra: map[string]any{
+				"codex_instruction_guard_enabled": true,
+			},
+		}
+		require.True(t, account.IsCodexHardBlockEnabled())
+		require.Equal(t, defaultCodexHardBlockReply, account.GetCodexHardBlockReply())
+	})
+
+	t.Run("支持显式 hard block 开关和自定义回复", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Extra: map[string]any{
+				"codex_instruction_guard_enabled": false,
+				"codex_hard_block_enabled":        true,
+				"codex_hard_block_reply":          "blocked-by-server",
+			},
+		}
+		require.True(t, account.IsCodexHardBlockEnabled())
+		require.Equal(t, "blocked-by-server", account.GetCodexHardBlockReply())
+	})
+
+	t.Run("显式 false 优先于 instruction guard fallback", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+			Extra: map[string]any{
+				"codex_instruction_guard_enabled": true,
+				"codex_hard_block_enabled":        false,
+			},
+		}
+		require.False(t, account.IsCodexHardBlockEnabled())
+		require.Empty(t, account.GetCodexHardBlockReply())
+	})
+}
+
 func TestAccount_IsOpenAIResponsesWebSocketV2Enabled(t *testing.T) {
 	t.Run("OAuth使用OAuth专用开关", func(t *testing.T) {
 		account := &Account{
