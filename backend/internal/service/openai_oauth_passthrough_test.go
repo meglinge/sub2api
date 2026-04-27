@@ -734,7 +734,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_NonCodexUAFallbackToCodexUA(t *te
 	require.NoError(t, err)
 	require.Equal(t, false, gjson.GetBytes(upstream.lastBody, "store").Bool())
 	require.Equal(t, true, gjson.GetBytes(upstream.lastBody, "stream").Bool())
-	require.Equal(t, codexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "codex_cli_rs/0.125.0", upstream.lastReq.Header.Get("User-Agent"))
 }
 
 func TestOpenAIGatewayService_CodexCLIOnly_RejectsNonCodexClient(t *testing.T) {
@@ -1185,7 +1185,9 @@ func TestOpenAIGatewayService_OAuthCompact_NonPassthroughSanitizesStoreAndStream
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Accept"))
 	require.False(t, gjson.GetBytes(upstream.lastBody, "store").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "stream").Exists())
-	require.Equal(t, "compact-it", strings.TrimSpace(gjson.GetBytes(upstream.lastBody, "instructions").String()))
+	instructions := strings.TrimSpace(gjson.GetBytes(upstream.lastBody, "instructions").String())
+	require.Contains(t, instructions, "compact-it")
+	require.Contains(t, instructions, codexImageGenerationBridgeMarker)
 	require.Equal(t, "hi", gjson.GetBytes(upstream.lastBody, "input.0.text").String())
 }
 
