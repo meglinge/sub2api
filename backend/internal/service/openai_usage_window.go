@@ -36,19 +36,6 @@ type openAIWindowAccountCandidate struct {
 	window  openAIUsageWindowEvaluation
 }
 
-func (e openAIUsageWindowEvaluation) windowFactor() float64 {
-	switch e.State {
-	case openAIUsageWindowStateGreen:
-		return 1.0
-	case openAIUsageWindowStateUnknown:
-		return 0.82
-	case openAIUsageWindowStateYellow:
-		return 0.18
-	default:
-		return 0.0
-	}
-}
-
 func evaluateOpenAIUsageWindow(account *Account, now time.Time) openAIUsageWindowEvaluation {
 	return evaluateOpenAIUsageWindowWithConfig(account, now, defaultOpenAIUsageWindowConfig())
 }
