@@ -229,53 +229,6 @@ func ProvideRateLimitService(
 	return svc
 }
 
-func ProvideOpenAIGatewayService(
-	accountRepo AccountRepository,
-	usageLogRepo UsageLogRepository,
-	usageBillingRepo UsageBillingRepository,
-	userRepo UserRepository,
-	userSubRepo UserSubscriptionRepository,
-	userGroupRateRepo UserGroupRateRepository,
-	cache GatewayCache,
-	cfg *config.Config,
-	schedulerSnapshot *SchedulerSnapshotService,
-	concurrencyService *ConcurrencyService,
-	billingService *BillingService,
-	rateLimitService *RateLimitService,
-	billingCacheService *BillingCacheService,
-	httpUpstream HTTPUpstream,
-	deferredService *DeferredService,
-	openAITokenProvider *OpenAITokenProvider,
-	resolver *ModelPricingResolver,
-	channelService *ChannelService,
-	balanceNotifyService *BalanceNotifyService,
-	settingService *SettingService,
-) *OpenAIGatewayService {
-	svc := NewOpenAIGatewayService(
-		accountRepo,
-		usageLogRepo,
-		usageBillingRepo,
-		userRepo,
-		userSubRepo,
-		userGroupRateRepo,
-		cache,
-		cfg,
-		schedulerSnapshot,
-		concurrencyService,
-		billingService,
-		rateLimitService,
-		billingCacheService,
-		httpUpstream,
-		deferredService,
-		openAITokenProvider,
-		resolver,
-		channelService,
-		balanceNotifyService,
-	)
-	svc.SetSettingService(settingService)
-	return svc
-}
-
 // ProvideOpsMetricsCollector creates and starts OpsMetricsCollector.
 func ProvideOpsMetricsCollector(
 	opsRepo OpsRepository,
@@ -473,7 +426,7 @@ var ProviderSet = wire.NewSet(
 	NewAnnouncementService,
 	NewAdminService,
 	NewGatewayService,
-	ProvideOpenAIGatewayService,
+	NewOpenAIGatewayService,
 	NewOAuthService,
 	NewOpenAIOAuthService,
 	NewGeminiOAuthService,
