@@ -26,7 +26,7 @@ func NewOpenAI403ProbeService(
 		return &OpenAI403ProbeService{}
 	}
 	return &OpenAI403ProbeService{
-		accountTester: NewAccountTestService(accountRepo, nil, nil, httpUpstream, cfg, tlsFPProfileService),
+		accountTester: NewAccountTestService(accountRepo, nil, nil, nil, httpUpstream, cfg, tlsFPProfileService),
 	}
 }
 
