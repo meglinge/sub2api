@@ -2443,6 +2443,8 @@ export default {
       modeOffDesc: '不执行内容审计，也不会写入审核记录。',
       baseUrl: 'OpenAI Base URL',
       model: '模型名',
+      proxy: '请求代理',
+      proxyHint: '用于请求 OpenAI Moderations API。选择后会复用 IP 管理里的代理，不会直连。',
       apiKey: 'OpenAI API Key',
       apiKeys: 'OpenAI API Keys',
       apiKeyCount: '{count} 个 Key',

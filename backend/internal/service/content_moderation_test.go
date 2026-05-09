@@ -3,8 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +96,65 @@ func (r *contentModerationTestRepo) CountFlaggedByUserSince(ctx context.Context,
 
 func (r *contentModerationTestRepo) CleanupExpiredLogs(ctx context.Context, hitBefore time.Time, nonHitBefore time.Time) (*ContentModerationCleanupResult, error) {
 	return &ContentModerationCleanupResult{}, nil
+}
+
+type contentModerationProxyRepoStub struct {
+	proxy *Proxy
+}
+
+func (r *contentModerationProxyRepoStub) Create(ctx context.Context, proxy *Proxy) error {
+	panic("unexpected Create call")
+}
+
+func (r *contentModerationProxyRepoStub) GetByID(ctx context.Context, id int64) (*Proxy, error) {
+	if r.proxy == nil || r.proxy.ID != id {
+		return nil, ErrProxyNotFound
+	}
+	return r.proxy, nil
+}
+
+func (r *contentModerationProxyRepoStub) ListByIDs(ctx context.Context, ids []int64) ([]Proxy, error) {
+	panic("unexpected ListByIDs call")
+}
+
+func (r *contentModerationProxyRepoStub) Update(ctx context.Context, proxy *Proxy) error {
+	panic("unexpected Update call")
+}
+
+func (r *contentModerationProxyRepoStub) Delete(ctx context.Context, id int64) error {
+	panic("unexpected Delete call")
+}
+
+func (r *contentModerationProxyRepoStub) List(ctx context.Context, params pagination.PaginationParams) ([]Proxy, *pagination.PaginationResult, error) {
+	panic("unexpected List call")
+}
+
+func (r *contentModerationProxyRepoStub) ListWithFilters(ctx context.Context, params pagination.PaginationParams, protocol, status, search string) ([]Proxy, *pagination.PaginationResult, error) {
+	panic("unexpected ListWithFilters call")
+}
+
+func (r *contentModerationProxyRepoStub) ListWithFiltersAndAccountCount(ctx context.Context, params pagination.PaginationParams, protocol, status, search string) ([]ProxyWithAccountCount, *pagination.PaginationResult, error) {
+	panic("unexpected ListWithFiltersAndAccountCount call")
+}
+
+func (r *contentModerationProxyRepoStub) ListActive(ctx context.Context) ([]Proxy, error) {
+	panic("unexpected ListActive call")
+}
+
+func (r *contentModerationProxyRepoStub) ListActiveWithAccountCount(ctx context.Context) ([]ProxyWithAccountCount, error) {
+	panic("unexpected ListActiveWithAccountCount call")
+}
+
+func (r *contentModerationProxyRepoStub) ExistsByHostPortAuth(ctx context.Context, host string, port int, username, password string) (bool, error) {
+	panic("unexpected ExistsByHostPortAuth call")
+}
+
+func (r *contentModerationProxyRepoStub) CountAccountsByProxyID(ctx context.Context, proxyID int64) (int64, error) {
+	panic("unexpected CountAccountsByProxyID call")
+}
+
+func (r *contentModerationProxyRepoStub) ListAccountSummariesByProxyID(ctx context.Context, proxyID int64) ([]ProxyAccountSummary, error) {
+	panic("unexpected ListAccountSummariesByProxyID call")
 }
 
 type contentModerationTestHashCache struct {
@@ -747,6 +809,54 @@ func TestContentModerationTestAPIKeys_400DoesNotFreezeAPIKey(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, result.Items[0].LastHTTPStatus)
 	require.Zero(t, result.Items[0].FailureCount)
 	require.Nil(t, result.Items[0].FrozenUntil)
+}
+
+func TestContentModerationCallModerationUsesConfiguredProxy(t *testing.T) {
+	proxyHit := false
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHit = true
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "moderation.example", r.URL.Host)
+		require.Equal(t, "/v1/moderations", r.URL.Path)
+		require.Equal(t, "Bearer sk-test", r.Header.Get("Authorization"))
+		_ = json.NewEncoder(w).Encode(moderationAPIResponse{
+			Results: []moderationAPIResult{{
+				CategoryScores: map[string]float64{"sexual": 0.1},
+			}},
+		})
+	}))
+	defer proxyServer.Close()
+
+	proxyURL, err := url.Parse(proxyServer.URL)
+	require.NoError(t, err)
+	host, portText, err := net.SplitHostPort(proxyURL.Host)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	proxyID := int64(1001)
+
+	cfg := defaultContentModerationConfig()
+	cfg.BaseURL = "http://moderation.example"
+	cfg.APIKeys = []string{"sk-test"}
+	cfg.ProxyID = &proxyID
+	cfg.RetryCount = 0
+
+	svc := NewContentModerationService(nil, nil, nil, nil, nil, nil, nil)
+	svc.SetProxyRepository(&contentModerationProxyRepoStub{
+		proxy: &Proxy{
+			ID:       proxyID,
+			Protocol: proxyURL.Scheme,
+			Host:     host,
+			Port:     port,
+			Status:   StatusActive,
+		},
+	})
+
+	result, err := svc.callModeration(context.Background(), cfg, "hello")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, proxyHit)
 }
 
 func TestContentModerationCheck_PreHashUsesRedisHashCache(t *testing.T) {

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -19,42 +20,64 @@ func NewContentModerationHandler(svc *service.ContentModerationService) *Content
 	return &ContentModerationHandler{service: svc}
 }
 
+type nullableInt64Field struct {
+	Set   bool
+	Value *int64
+}
+
+func (f *nullableInt64Field) UnmarshalJSON(data []byte) error {
+	f.Set = true
+	raw := strings.TrimSpace(string(data))
+	if raw == "" || raw == "null" {
+		f.Value = nil
+		return nil
+	}
+	var value int64
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	f.Value = &value
+	return nil
+}
+
 type contentModerationConfigRequest struct {
-	Enabled              *bool     `json:"enabled"`
-	Mode                 *string   `json:"mode"`
-	BaseURL              *string   `json:"base_url"`
-	Model                *string   `json:"model"`
-	APIKey               *string   `json:"api_key"`
-	APIKeys              *[]string `json:"api_keys"`
-	APIKeysMode          string    `json:"api_keys_mode"`
-	DeleteAPIKeyHashes   *[]string `json:"delete_api_key_hashes"`
-	ClearAPIKey          bool      `json:"clear_api_key"`
-	TimeoutMS            *int      `json:"timeout_ms"`
-	SampleRate           *int      `json:"sample_rate"`
-	AllGroups            *bool     `json:"all_groups"`
-	GroupIDs             *[]int64  `json:"group_ids"`
-	RecordNonHits        *bool     `json:"record_non_hits"`
-	WorkerCount          *int      `json:"worker_count"`
-	QueueSize            *int      `json:"queue_size"`
-	BlockStatus          *int      `json:"block_status"`
-	BlockMessage         *string   `json:"block_message"`
-	EmailOnHit           *bool     `json:"email_on_hit"`
-	AutoBanEnabled       *bool     `json:"auto_ban_enabled"`
-	BanThreshold         *int      `json:"ban_threshold"`
-	ViolationWindowHours *int      `json:"violation_window_hours"`
-	RetryCount           *int      `json:"retry_count"`
-	HitRetentionDays     *int      `json:"hit_retention_days"`
-	NonHitRetentionDays  *int      `json:"non_hit_retention_days"`
-	PreHashCheckEnabled  *bool     `json:"pre_hash_check_enabled"`
+	Enabled              *bool              `json:"enabled"`
+	Mode                 *string            `json:"mode"`
+	BaseURL              *string            `json:"base_url"`
+	Model                *string            `json:"model"`
+	ProxyID              nullableInt64Field `json:"proxy_id"`
+	APIKey               *string            `json:"api_key"`
+	APIKeys              *[]string          `json:"api_keys"`
+	APIKeysMode          string             `json:"api_keys_mode"`
+	DeleteAPIKeyHashes   *[]string          `json:"delete_api_key_hashes"`
+	ClearAPIKey          bool               `json:"clear_api_key"`
+	TimeoutMS            *int               `json:"timeout_ms"`
+	SampleRate           *int               `json:"sample_rate"`
+	AllGroups            *bool              `json:"all_groups"`
+	GroupIDs             *[]int64           `json:"group_ids"`
+	RecordNonHits        *bool              `json:"record_non_hits"`
+	WorkerCount          *int               `json:"worker_count"`
+	QueueSize            *int               `json:"queue_size"`
+	BlockStatus          *int               `json:"block_status"`
+	BlockMessage         *string            `json:"block_message"`
+	EmailOnHit           *bool              `json:"email_on_hit"`
+	AutoBanEnabled       *bool              `json:"auto_ban_enabled"`
+	BanThreshold         *int               `json:"ban_threshold"`
+	ViolationWindowHours *int               `json:"violation_window_hours"`
+	RetryCount           *int               `json:"retry_count"`
+	HitRetentionDays     *int               `json:"hit_retention_days"`
+	NonHitRetentionDays  *int               `json:"non_hit_retention_days"`
+	PreHashCheckEnabled  *bool              `json:"pre_hash_check_enabled"`
 }
 
 type contentModerationAPIKeyTestRequest struct {
-	APIKeys   []string `json:"api_keys"`
-	BaseURL   string   `json:"base_url"`
-	Model     string   `json:"model"`
-	TimeoutMS int      `json:"timeout_ms"`
-	Prompt    string   `json:"prompt"`
-	Images    []string `json:"images"`
+	APIKeys   []string           `json:"api_keys"`
+	BaseURL   string             `json:"base_url"`
+	Model     string             `json:"model"`
+	ProxyID   nullableInt64Field `json:"proxy_id"`
+	TimeoutMS int                `json:"timeout_ms"`
+	Prompt    string             `json:"prompt"`
+	Images    []string           `json:"images"`
 }
 
 type contentModerationHashRequest struct {
@@ -81,6 +104,8 @@ func (h *ContentModerationHandler) UpdateConfig(c *gin.Context) {
 		Mode:                 req.Mode,
 		BaseURL:              req.BaseURL,
 		Model:                req.Model,
+		ProxyID:              req.ProxyID.Value,
+		ProxyIDSet:           req.ProxyID.Set,
 		APIKey:               req.APIKey,
 		APIKeys:              req.APIKeys,
 		APIKeysMode:          req.APIKeysMode,
@@ -118,12 +143,14 @@ func (h *ContentModerationHandler) TestAPIKeys(c *gin.Context) {
 		return
 	}
 	result, err := h.service.TestAPIKeys(c.Request.Context(), service.TestContentModerationAPIKeysInput{
-		APIKeys:   req.APIKeys,
-		BaseURL:   req.BaseURL,
-		Model:     req.Model,
-		TimeoutMS: req.TimeoutMS,
-		Prompt:    req.Prompt,
-		Images:    req.Images,
+		APIKeys:    req.APIKeys,
+		BaseURL:    req.BaseURL,
+		Model:      req.Model,
+		ProxyID:    req.ProxyID.Value,
+		ProxyIDSet: req.ProxyID.Set,
+		TimeoutMS:  req.TimeoutMS,
+		Prompt:     req.Prompt,
+		Images:     req.Images,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
