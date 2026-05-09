@@ -1853,7 +1853,7 @@ func (cfg *ContentModerationConfig) lowRiskCacheHash(inputHash string) string {
 		_, _ = h.Write([]byte("\nmodel:"))
 		_, _ = h.Write([]byte(cfg.Model))
 		_, _ = h.Write([]byte("\nmax_score:"))
-		_, _ = h.Write([]byte(fmt.Sprintf("%.6f", cfg.LowRiskCacheMaxScore)))
+		_, _ = fmt.Fprintf(h, "%.6f", cfg.LowRiskCacheMaxScore)
 		keys := make([]string, 0, len(cfg.Thresholds))
 		for key := range cfg.Thresholds {
 			keys = append(keys, key)
@@ -1863,7 +1863,7 @@ func (cfg *ContentModerationConfig) lowRiskCacheHash(inputHash string) string {
 			_, _ = h.Write([]byte("\nthreshold:"))
 			_, _ = h.Write([]byte(key))
 			_, _ = h.Write([]byte("="))
-			_, _ = h.Write([]byte(fmt.Sprintf("%.6f", cfg.Thresholds[key])))
+			_, _ = fmt.Fprintf(h, "%.6f", cfg.Thresholds[key])
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil))
