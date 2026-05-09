@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
@@ -33,10 +34,12 @@ const (
 	contentModerationAPIKeysModeAppend  = "append"
 	contentModerationAPIKeysModeReplace = "replace"
 
-	ContentModerationActionAllow     = "allow"
-	ContentModerationActionBlock     = "block"
-	ContentModerationActionHashBlock = "hash_block"
-	ContentModerationActionError     = "error"
+	ContentModerationActionAllow      = "allow"
+	ContentModerationActionBlock      = "block"
+	ContentModerationActionHashBlock  = "hash_block"
+	ContentModerationActionError      = "error"
+	ContentModerationActionShortSkip  = "short_text_skip"
+	ContentModerationActionCacheAllow = "low_risk_cache"
 
 	ContentModerationProtocolAnthropicMessages = "anthropic_messages"
 	ContentModerationProtocolOpenAIResponses   = "openai_responses"
@@ -61,6 +64,11 @@ const (
 	defaultContentModerationBlockMessage         = "内容审计命中风险规则，请调整输入后重试"
 	defaultContentModerationRetryCount           = 2
 	maxContentModerationRetryCount               = 5
+	defaultContentModerationShortTextSkipRunes   = 16
+	maxContentModerationShortTextSkipRunes       = 64
+	defaultContentModerationLowRiskCacheTTL      = 6 * time.Hour
+	maxContentModerationLowRiskCacheTTL          = 7 * 24 * time.Hour
+	defaultContentModerationLowRiskCacheMaxScore = 0.05
 	defaultContentModerationHitRetentionDays     = 180
 	defaultContentModerationNonHitRetentionDays  = 3
 	maxContentModerationRetentionDays            = 3650
@@ -94,6 +102,65 @@ var contentModerationCategoryOrder = []string{
 	"violence/graphic",
 }
 
+var contentModerationShortSafePhrases = map[string]struct{}{
+	"ok":        {},
+	"okay":      {},
+	"yes":       {},
+	"y":         {},
+	"no":        {},
+	"n":         {},
+	"thanks":    {},
+	"thank you": {},
+	"thx":       {},
+	"continue":  {},
+	"go on":     {},
+	"next":      {},
+	"start":     {},
+	"retry":     {},
+	"cancel":    {},
+	"confirm":   {},
+	"done":      {},
+	"hello":     {},
+	"hi":        {},
+	"hey":       {},
+	"fine":      {},
+	"sure":      {},
+	"好":         {},
+	"好的":        {},
+	"可以":        {},
+	"可以了":       {},
+	"行":         {},
+	"嗯":         {},
+	"嗯嗯":        {},
+	"是":         {},
+	"不是":        {},
+	"否":         {},
+	"不用":        {},
+	"不要":        {},
+	"谢谢":        {},
+	"谢了":        {},
+	"收到":        {},
+	"明白":        {},
+	"了解":        {},
+	"确认":        {},
+	"取消":        {},
+	"继续":        {},
+	"继续吧":       {},
+	"请继续":       {},
+	"继续生成":      {},
+	"下一步":       {},
+	"下一个":       {},
+	"开始":        {},
+	"重试":        {},
+	"再来":        {},
+	"再试一次":      {},
+	"重新生成":      {},
+	"没事":        {},
+	"好了":        {},
+	"对":         {},
+	"不对":        {},
+}
+
 func ContentModerationDefaultThresholds() map[string]float64 {
 	return map[string]float64{
 		"harassment":             0.98,
@@ -119,61 +186,71 @@ func ContentModerationCategories() []string {
 }
 
 type ContentModerationConfig struct {
-	Enabled              bool               `json:"enabled"`
-	Mode                 string             `json:"mode"`
-	BaseURL              string             `json:"base_url"`
-	Model                string             `json:"model"`
-	ProxyID              *int64             `json:"proxy_id"`
-	APIKey               string             `json:"api_key,omitempty"`
-	APIKeys              []string           `json:"api_keys,omitempty"`
-	TimeoutMS            int                `json:"timeout_ms"`
-	SampleRate           int                `json:"sample_rate"`
-	AllGroups            bool               `json:"all_groups"`
-	GroupIDs             []int64            `json:"group_ids"`
-	RecordNonHits        bool               `json:"record_non_hits"`
-	Thresholds           map[string]float64 `json:"thresholds"`
-	WorkerCount          int                `json:"worker_count"`
-	QueueSize            int                `json:"queue_size"`
-	BlockStatus          int                `json:"block_status"`
-	BlockMessage         string             `json:"block_message"`
-	EmailOnHit           bool               `json:"email_on_hit"`
-	AutoBanEnabled       bool               `json:"auto_ban_enabled"`
-	BanThreshold         int                `json:"ban_threshold"`
-	ViolationWindowHours int                `json:"violation_window_hours"`
-	RetryCount           int                `json:"retry_count"`
-	HitRetentionDays     int                `json:"hit_retention_days"`
-	NonHitRetentionDays  int                `json:"non_hit_retention_days"`
-	PreHashCheckEnabled  bool               `json:"pre_hash_check_enabled"`
+	Enabled                bool               `json:"enabled"`
+	Mode                   string             `json:"mode"`
+	BaseURL                string             `json:"base_url"`
+	Model                  string             `json:"model"`
+	ProxyID                *int64             `json:"proxy_id"`
+	APIKey                 string             `json:"api_key,omitempty"`
+	APIKeys                []string           `json:"api_keys,omitempty"`
+	TimeoutMS              int                `json:"timeout_ms"`
+	SampleRate             int                `json:"sample_rate"`
+	AllGroups              bool               `json:"all_groups"`
+	GroupIDs               []int64            `json:"group_ids"`
+	RecordNonHits          bool               `json:"record_non_hits"`
+	Thresholds             map[string]float64 `json:"thresholds"`
+	WorkerCount            int                `json:"worker_count"`
+	QueueSize              int                `json:"queue_size"`
+	BlockStatus            int                `json:"block_status"`
+	BlockMessage           string             `json:"block_message"`
+	EmailOnHit             bool               `json:"email_on_hit"`
+	AutoBanEnabled         bool               `json:"auto_ban_enabled"`
+	BanThreshold           int                `json:"ban_threshold"`
+	ViolationWindowHours   int                `json:"violation_window_hours"`
+	RetryCount             int                `json:"retry_count"`
+	HitRetentionDays       int                `json:"hit_retention_days"`
+	NonHitRetentionDays    int                `json:"non_hit_retention_days"`
+	PreHashCheckEnabled    bool               `json:"pre_hash_check_enabled"`
+	ShortTextSkipEnabled   bool               `json:"short_text_skip_enabled"`
+	ShortTextSkipRunes     int                `json:"short_text_skip_runes"`
+	LowRiskCacheEnabled    bool               `json:"low_risk_cache_enabled"`
+	LowRiskCacheTTLSeconds int                `json:"low_risk_cache_ttl_seconds"`
+	LowRiskCacheMaxScore   float64            `json:"low_risk_cache_max_score"`
 }
 
 type ContentModerationConfigView struct {
-	Enabled              bool                            `json:"enabled"`
-	Mode                 string                          `json:"mode"`
-	BaseURL              string                          `json:"base_url"`
-	Model                string                          `json:"model"`
-	ProxyID              *int64                          `json:"proxy_id"`
-	APIKeyConfigured     bool                            `json:"api_key_configured"`
-	APIKeyMasked         string                          `json:"api_key_masked"`
-	APIKeyCount          int                             `json:"api_key_count"`
-	APIKeyMasks          []string                        `json:"api_key_masks"`
-	APIKeyStatuses       []ContentModerationAPIKeyStatus `json:"api_key_statuses"`
-	TimeoutMS            int                             `json:"timeout_ms"`
-	SampleRate           int                             `json:"sample_rate"`
-	AllGroups            bool                            `json:"all_groups"`
-	GroupIDs             []int64                         `json:"group_ids"`
-	RecordNonHits        bool                            `json:"record_non_hits"`
-	WorkerCount          int                             `json:"worker_count"`
-	QueueSize            int                             `json:"queue_size"`
-	BlockStatus          int                             `json:"block_status"`
-	BlockMessage         string                          `json:"block_message"`
-	EmailOnHit           bool                            `json:"email_on_hit"`
-	AutoBanEnabled       bool                            `json:"auto_ban_enabled"`
-	BanThreshold         int                             `json:"ban_threshold"`
-	ViolationWindowHours int                             `json:"violation_window_hours"`
-	RetryCount           int                             `json:"retry_count"`
-	HitRetentionDays     int                             `json:"hit_retention_days"`
-	NonHitRetentionDays  int                             `json:"non_hit_retention_days"`
-	PreHashCheckEnabled  bool                            `json:"pre_hash_check_enabled"`
+	Enabled                bool                            `json:"enabled"`
+	Mode                   string                          `json:"mode"`
+	BaseURL                string                          `json:"base_url"`
+	Model                  string                          `json:"model"`
+	ProxyID                *int64                          `json:"proxy_id"`
+	APIKeyConfigured       bool                            `json:"api_key_configured"`
+	APIKeyMasked           string                          `json:"api_key_masked"`
+	APIKeyCount            int                             `json:"api_key_count"`
+	APIKeyMasks            []string                        `json:"api_key_masks"`
+	APIKeyStatuses         []ContentModerationAPIKeyStatus `json:"api_key_statuses"`
+	TimeoutMS              int                             `json:"timeout_ms"`
+	SampleRate             int                             `json:"sample_rate"`
+	AllGroups              bool                            `json:"all_groups"`
+	GroupIDs               []int64                         `json:"group_ids"`
+	RecordNonHits          bool                            `json:"record_non_hits"`
+	WorkerCount            int                             `json:"worker_count"`
+	QueueSize              int                             `json:"queue_size"`
+	BlockStatus            int                             `json:"block_status"`
+	BlockMessage           string                          `json:"block_message"`
+	EmailOnHit             bool                            `json:"email_on_hit"`
+	AutoBanEnabled         bool                            `json:"auto_ban_enabled"`
+	BanThreshold           int                             `json:"ban_threshold"`
+	ViolationWindowHours   int                             `json:"violation_window_hours"`
+	RetryCount             int                             `json:"retry_count"`
+	HitRetentionDays       int                             `json:"hit_retention_days"`
+	NonHitRetentionDays    int                             `json:"non_hit_retention_days"`
+	PreHashCheckEnabled    bool                            `json:"pre_hash_check_enabled"`
+	ShortTextSkipEnabled   bool                            `json:"short_text_skip_enabled"`
+	ShortTextSkipRunes     int                             `json:"short_text_skip_runes"`
+	LowRiskCacheEnabled    bool                            `json:"low_risk_cache_enabled"`
+	LowRiskCacheTTLSeconds int                             `json:"low_risk_cache_ttl_seconds"`
+	LowRiskCacheMaxScore   float64                         `json:"low_risk_cache_max_score"`
 }
 
 type ContentModerationAPIKeyStatus struct {
@@ -219,34 +296,39 @@ type ContentModerationTestAuditResult struct {
 }
 
 type UpdateContentModerationConfigInput struct {
-	Enabled              *bool     `json:"enabled"`
-	Mode                 *string   `json:"mode"`
-	BaseURL              *string   `json:"base_url"`
-	Model                *string   `json:"model"`
-	ProxyID              *int64    `json:"proxy_id"`
-	ProxyIDSet           bool      `json:"-"`
-	APIKey               *string   `json:"api_key"`
-	APIKeys              *[]string `json:"api_keys"`
-	APIKeysMode          string    `json:"api_keys_mode"`
-	DeleteAPIKeyHashes   *[]string `json:"delete_api_key_hashes"`
-	ClearAPIKey          bool      `json:"clear_api_key"`
-	TimeoutMS            *int      `json:"timeout_ms"`
-	SampleRate           *int      `json:"sample_rate"`
-	AllGroups            *bool     `json:"all_groups"`
-	GroupIDs             *[]int64  `json:"group_ids"`
-	RecordNonHits        *bool     `json:"record_non_hits"`
-	WorkerCount          *int      `json:"worker_count"`
-	QueueSize            *int      `json:"queue_size"`
-	BlockStatus          *int      `json:"block_status"`
-	BlockMessage         *string   `json:"block_message"`
-	EmailOnHit           *bool     `json:"email_on_hit"`
-	AutoBanEnabled       *bool     `json:"auto_ban_enabled"`
-	BanThreshold         *int      `json:"ban_threshold"`
-	ViolationWindowHours *int      `json:"violation_window_hours"`
-	RetryCount           *int      `json:"retry_count"`
-	HitRetentionDays     *int      `json:"hit_retention_days"`
-	NonHitRetentionDays  *int      `json:"non_hit_retention_days"`
-	PreHashCheckEnabled  *bool     `json:"pre_hash_check_enabled"`
+	Enabled                *bool     `json:"enabled"`
+	Mode                   *string   `json:"mode"`
+	BaseURL                *string   `json:"base_url"`
+	Model                  *string   `json:"model"`
+	ProxyID                *int64    `json:"proxy_id"`
+	ProxyIDSet             bool      `json:"-"`
+	APIKey                 *string   `json:"api_key"`
+	APIKeys                *[]string `json:"api_keys"`
+	APIKeysMode            string    `json:"api_keys_mode"`
+	DeleteAPIKeyHashes     *[]string `json:"delete_api_key_hashes"`
+	ClearAPIKey            bool      `json:"clear_api_key"`
+	TimeoutMS              *int      `json:"timeout_ms"`
+	SampleRate             *int      `json:"sample_rate"`
+	AllGroups              *bool     `json:"all_groups"`
+	GroupIDs               *[]int64  `json:"group_ids"`
+	RecordNonHits          *bool     `json:"record_non_hits"`
+	WorkerCount            *int      `json:"worker_count"`
+	QueueSize              *int      `json:"queue_size"`
+	BlockStatus            *int      `json:"block_status"`
+	BlockMessage           *string   `json:"block_message"`
+	EmailOnHit             *bool     `json:"email_on_hit"`
+	AutoBanEnabled         *bool     `json:"auto_ban_enabled"`
+	BanThreshold           *int      `json:"ban_threshold"`
+	ViolationWindowHours   *int      `json:"violation_window_hours"`
+	RetryCount             *int      `json:"retry_count"`
+	HitRetentionDays       *int      `json:"hit_retention_days"`
+	NonHitRetentionDays    *int      `json:"non_hit_retention_days"`
+	PreHashCheckEnabled    *bool     `json:"pre_hash_check_enabled"`
+	ShortTextSkipEnabled   *bool     `json:"short_text_skip_enabled"`
+	ShortTextSkipRunes     *int      `json:"short_text_skip_runes"`
+	LowRiskCacheEnabled    *bool     `json:"low_risk_cache_enabled"`
+	LowRiskCacheTTLSeconds *int      `json:"low_risk_cache_ttl_seconds"`
+	LowRiskCacheMaxScore   *float64  `json:"low_risk_cache_max_score"`
 }
 
 type ContentModerationCheckInput struct {
@@ -391,6 +473,9 @@ type ContentModerationRuntimeStatus struct {
 	Errors                   int64                           `json:"errors"`
 	APIKeyStatuses           []ContentModerationAPIKeyStatus `json:"api_key_statuses"`
 	FlaggedHashCount         int64                           `json:"flagged_hash_count"`
+	ShortTextSkipped         int64                           `json:"short_text_skipped"`
+	LowRiskCacheHits         int64                           `json:"low_risk_cache_hits"`
+	LowRiskCacheWrites       int64                           `json:"low_risk_cache_writes"`
 	LastCleanupAt            *time.Time                      `json:"last_cleanup_at,omitempty"`
 	LastCleanupDeletedHit    int64                           `json:"last_cleanup_deleted_hit"`
 	LastCleanupDeletedNonHit int64                           `json:"last_cleanup_deleted_non_hit"`
@@ -423,6 +508,8 @@ type ContentModerationHashCache interface {
 	DeleteFlaggedInputHash(ctx context.Context, inputHash string) (bool, error)
 	ClearFlaggedInputHashes(ctx context.Context) (int64, error)
 	CountFlaggedInputHashes(ctx context.Context) (int64, error)
+	RecordLowRiskInputHash(ctx context.Context, inputHash string, ttl time.Duration) error
+	HasLowRiskInputHash(ctx context.Context, inputHash string) (bool, error)
 }
 
 type ContentModerationService struct {
@@ -443,6 +530,9 @@ type ContentModerationService struct {
 	asyncDropped             atomic.Int64
 	asyncProcessed           atomic.Int64
 	asyncErrors              atomic.Int64
+	shortTextSkipped         atomic.Int64
+	lowRiskCacheHits         atomic.Int64
+	lowRiskCacheWrites       atomic.Int64
 	lastCleanupUnix          atomic.Int64
 	lastCleanupDeletedHit    atomic.Int64
 	lastCleanupDeletedNonHit atomic.Int64
@@ -577,6 +667,21 @@ func (s *ContentModerationService) UpdateConfig(ctx context.Context, input Updat
 	}
 	if input.PreHashCheckEnabled != nil {
 		cfg.PreHashCheckEnabled = *input.PreHashCheckEnabled
+	}
+	if input.ShortTextSkipEnabled != nil {
+		cfg.ShortTextSkipEnabled = *input.ShortTextSkipEnabled
+	}
+	if input.ShortTextSkipRunes != nil {
+		cfg.ShortTextSkipRunes = *input.ShortTextSkipRunes
+	}
+	if input.LowRiskCacheEnabled != nil {
+		cfg.LowRiskCacheEnabled = *input.LowRiskCacheEnabled
+	}
+	if input.LowRiskCacheTTLSeconds != nil {
+		cfg.LowRiskCacheTTLSeconds = *input.LowRiskCacheTTLSeconds
+	}
+	if input.LowRiskCacheMaxScore != nil {
+		cfg.LowRiskCacheMaxScore = *input.LowRiskCacheMaxScore
 	}
 	if input.AllGroups != nil {
 		cfg.AllGroups = *input.AllGroups
@@ -737,6 +842,11 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		"sample_rate", cfg.SampleRate,
 		"api_key_count", len(cfg.apiKeys()),
 		"pre_hash_check_enabled", cfg.PreHashCheckEnabled,
+		"short_text_skip_enabled", cfg.ShortTextSkipEnabled,
+		"short_text_skip_runes", cfg.ShortTextSkipRunes,
+		"low_risk_cache_enabled", cfg.LowRiskCacheEnabled,
+		"low_risk_cache_ttl_seconds", cfg.LowRiskCacheTTLSeconds,
+		"low_risk_cache_max_score", cfg.LowRiskCacheMaxScore,
 		"record_non_hits", cfg.RecordNonHits)
 	if !cfg.Enabled {
 		slog.Info("content_moderation.skip_config_disabled",
@@ -814,6 +924,48 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 				StatusCode: cfg.BlockStatus,
 				InputHash:  hashText,
 				Action:     ContentModerationActionHashBlock,
+			}, nil
+		}
+	}
+	if cfg.shouldSkipShortText(content) {
+		s.shortTextSkipped.Add(1)
+		slog.Info("content_moderation.short_text_skip",
+			"user_id", input.UserID,
+			"api_key_id", input.APIKeyID,
+			"group_id", contentModerationLogGroupID(input.GroupID),
+			"endpoint", input.Endpoint,
+			"protocol", input.Protocol,
+			"text_runes", len([]rune(content.Text)),
+			"input_hash", hashText)
+		return &ContentModerationDecision{
+			Allowed:   true,
+			Action:    ContentModerationActionShortSkip,
+			InputHash: hashText,
+		}, nil
+	}
+	if cfg.LowRiskCacheEnabled && s.hashCache != nil && contentModerationLowRiskCacheable(content) {
+		cacheHash := cfg.lowRiskCacheHash(hashText)
+		matched, err := s.hashCache.HasLowRiskInputHash(ctx, cacheHash)
+		if err != nil {
+			slog.Warn("content_moderation.low_risk_cache_check_failed",
+				"user_id", input.UserID,
+				"endpoint", input.Endpoint,
+				"error", err)
+		}
+		if matched {
+			s.lowRiskCacheHits.Add(1)
+			slog.Info("content_moderation.low_risk_cache_hit",
+				"user_id", input.UserID,
+				"api_key_id", input.APIKeyID,
+				"group_id", contentModerationLogGroupID(input.GroupID),
+				"endpoint", input.Endpoint,
+				"protocol", input.Protocol,
+				"input_hash", hashText,
+				"cache_hash", cacheHash)
+			return &ContentModerationDecision{
+				Allowed:   true,
+				Action:    ContentModerationActionCacheAllow,
+				InputHash: hashText,
 			}, nil
 		}
 	}
@@ -910,6 +1062,13 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 		}
 		s.applyFlaggedSideEffects(ctx, cfg, log)
 		_ = s.repo.CreateLog(ctx, log)
+	}
+	if !flagged && cfg.LowRiskCacheEnabled && s.hashCache != nil && len(result.CategoryScores) > 0 && highestScore <= cfg.LowRiskCacheMaxScore && contentModerationLowRiskCacheable(content) {
+		if err := s.hashCache.RecordLowRiskInputHash(ctx, cfg.lowRiskCacheHash(hashText), cfg.lowRiskCacheTTL()); err != nil {
+			slog.Warn("content_moderation.record_low_risk_cache_failed", "user_id", input.UserID, "endpoint", input.Endpoint, "error", err)
+		} else {
+			s.lowRiskCacheWrites.Add(1)
+		}
 	}
 	if blocked {
 		return &ContentModerationDecision{
@@ -1144,6 +1303,9 @@ func (s *ContentModerationService) GetStatus(ctx context.Context) (*ContentModer
 		Errors:                   s.asyncErrors.Load(),
 		APIKeyStatuses:           s.apiKeyStatuses(cfg.apiKeys()),
 		FlaggedHashCount:         flaggedHashCount,
+		ShortTextSkipped:         s.shortTextSkipped.Load(),
+		LowRiskCacheHits:         s.lowRiskCacheHits.Load(),
+		LowRiskCacheWrites:       s.lowRiskCacheWrites.Load(),
 		LastCleanupAt:            lastCleanupAt,
 		LastCleanupDeletedHit:    s.lastCleanupDeletedHit.Load(),
 		LastCleanupDeletedNonHit: s.lastCleanupDeletedNonHit.Load(),
@@ -1490,28 +1652,33 @@ func (s *ContentModerationService) siteName(ctx context.Context) string {
 
 func defaultContentModerationConfig() *ContentModerationConfig {
 	return &ContentModerationConfig{
-		Enabled:              false,
-		Mode:                 ContentModerationModePreBlock,
-		BaseURL:              defaultContentModerationBaseURL,
-		Model:                defaultContentModerationModel,
-		TimeoutMS:            defaultContentModerationTimeoutMS,
-		SampleRate:           100,
-		AllGroups:            true,
-		GroupIDs:             []int64{},
-		RecordNonHits:        false,
-		Thresholds:           ContentModerationDefaultThresholds(),
-		WorkerCount:          defaultContentModerationWorkerCount,
-		QueueSize:            defaultContentModerationQueueSize,
-		BlockStatus:          defaultContentModerationBlockHTTPStatus,
-		BlockMessage:         defaultContentModerationBlockMessage,
-		EmailOnHit:           true,
-		AutoBanEnabled:       true,
-		BanThreshold:         defaultContentModerationBanThreshold,
-		ViolationWindowHours: defaultContentModerationViolationWindowHours,
-		RetryCount:           defaultContentModerationRetryCount,
-		HitRetentionDays:     defaultContentModerationHitRetentionDays,
-		NonHitRetentionDays:  defaultContentModerationNonHitRetentionDays,
-		PreHashCheckEnabled:  false,
+		Enabled:                false,
+		Mode:                   ContentModerationModePreBlock,
+		BaseURL:                defaultContentModerationBaseURL,
+		Model:                  defaultContentModerationModel,
+		TimeoutMS:              defaultContentModerationTimeoutMS,
+		SampleRate:             100,
+		AllGroups:              true,
+		GroupIDs:               []int64{},
+		RecordNonHits:          false,
+		Thresholds:             ContentModerationDefaultThresholds(),
+		WorkerCount:            defaultContentModerationWorkerCount,
+		QueueSize:              defaultContentModerationQueueSize,
+		BlockStatus:            defaultContentModerationBlockHTTPStatus,
+		BlockMessage:           defaultContentModerationBlockMessage,
+		EmailOnHit:             true,
+		AutoBanEnabled:         true,
+		BanThreshold:           defaultContentModerationBanThreshold,
+		ViolationWindowHours:   defaultContentModerationViolationWindowHours,
+		RetryCount:             defaultContentModerationRetryCount,
+		HitRetentionDays:       defaultContentModerationHitRetentionDays,
+		NonHitRetentionDays:    defaultContentModerationNonHitRetentionDays,
+		PreHashCheckEnabled:    false,
+		ShortTextSkipEnabled:   false,
+		ShortTextSkipRunes:     defaultContentModerationShortTextSkipRunes,
+		LowRiskCacheEnabled:    false,
+		LowRiskCacheTTLSeconds: int(defaultContentModerationLowRiskCacheTTL / time.Second),
+		LowRiskCacheMaxScore:   defaultContentModerationLowRiskCacheMaxScore,
 	}
 }
 
@@ -1576,6 +1743,24 @@ func (cfg *ContentModerationConfig) normalize() {
 	if cfg.RetryCount > maxContentModerationRetryCount {
 		cfg.RetryCount = maxContentModerationRetryCount
 	}
+	if cfg.ShortTextSkipRunes <= 0 {
+		cfg.ShortTextSkipRunes = defaultContentModerationShortTextSkipRunes
+	}
+	if cfg.ShortTextSkipRunes > maxContentModerationShortTextSkipRunes {
+		cfg.ShortTextSkipRunes = maxContentModerationShortTextSkipRunes
+	}
+	if cfg.LowRiskCacheTTLSeconds <= 0 {
+		cfg.LowRiskCacheTTLSeconds = int(defaultContentModerationLowRiskCacheTTL / time.Second)
+	}
+	if cfg.LowRiskCacheTTLSeconds > int(maxContentModerationLowRiskCacheTTL/time.Second) {
+		cfg.LowRiskCacheTTLSeconds = int(maxContentModerationLowRiskCacheTTL / time.Second)
+	}
+	if cfg.LowRiskCacheMaxScore <= 0 {
+		cfg.LowRiskCacheMaxScore = defaultContentModerationLowRiskCacheMaxScore
+	}
+	if cfg.LowRiskCacheMaxScore > 1 {
+		cfg.LowRiskCacheMaxScore = 1
+	}
 	if cfg.HitRetentionDays <= 0 {
 		cfg.HitRetentionDays = defaultContentModerationHitRetentionDays
 	}
@@ -1627,6 +1812,86 @@ func (cfg *ContentModerationConfig) shouldSample(hashText string) bool {
 		return true
 	}
 	return int(binary.BigEndian.Uint16(raw[:2])%100) < cfg.SampleRate
+}
+
+func (cfg *ContentModerationConfig) shouldSkipShortText(content ContentModerationInput) bool {
+	if cfg == nil || !cfg.ShortTextSkipEnabled || len(content.Images) > 0 {
+		return false
+	}
+	text := strings.TrimSpace(content.Text)
+	if text == "" {
+		return false
+	}
+	if len([]rune(text)) > cfg.ShortTextSkipRunes {
+		return false
+	}
+	if contentModerationIsLowSignalShortText(text) {
+		return true
+	}
+	_, ok := contentModerationShortSafePhrases[contentModerationNormalizeShortPhrase(text)]
+	return ok
+}
+
+func (cfg *ContentModerationConfig) lowRiskCacheTTL() time.Duration {
+	if cfg == nil || cfg.LowRiskCacheTTLSeconds <= 0 {
+		return defaultContentModerationLowRiskCacheTTL
+	}
+	ttl := time.Duration(cfg.LowRiskCacheTTLSeconds) * time.Second
+	if ttl > maxContentModerationLowRiskCacheTTL {
+		return maxContentModerationLowRiskCacheTTL
+	}
+	return ttl
+}
+
+func (cfg *ContentModerationConfig) lowRiskCacheHash(inputHash string) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte("low-risk:v1\ninput:"))
+	_, _ = h.Write([]byte(inputHash))
+	if cfg != nil {
+		_, _ = h.Write([]byte("\nbase_url:"))
+		_, _ = h.Write([]byte(cfg.BaseURL))
+		_, _ = h.Write([]byte("\nmodel:"))
+		_, _ = h.Write([]byte(cfg.Model))
+		_, _ = h.Write([]byte("\nmax_score:"))
+		_, _ = h.Write([]byte(fmt.Sprintf("%.6f", cfg.LowRiskCacheMaxScore)))
+		keys := make([]string, 0, len(cfg.Thresholds))
+		for key := range cfg.Thresholds {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			_, _ = h.Write([]byte("\nthreshold:"))
+			_, _ = h.Write([]byte(key))
+			_, _ = h.Write([]byte("="))
+			_, _ = h.Write([]byte(fmt.Sprintf("%.6f", cfg.Thresholds[key])))
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func contentModerationLowRiskCacheable(content ContentModerationInput) bool {
+	return strings.TrimSpace(content.Text) != "" && len(content.Images) == 0
+}
+
+func contentModerationNormalizeShortPhrase(text string) string {
+	text = strings.ToLower(normalizeContentModerationText(text))
+	text = strings.Trim(text, " \t\r\n.。!！?？,，;；:：~～")
+	return normalizeContentModerationText(text)
+}
+
+func contentModerationIsLowSignalShortText(text string) bool {
+	saw := false
+	for _, r := range text {
+		if unicode.IsSpace(r) {
+			continue
+		}
+		saw = true
+		if unicode.IsDigit(r) || unicode.IsPunct(r) {
+			continue
+		}
+		return false
+	}
+	return saw
 }
 
 func (cfg *ContentModerationConfig) apiKeys() []string {
@@ -1741,33 +2006,38 @@ func (s *ContentModerationService) configView(cfg *ContentModerationConfig) *Con
 		apiKeyMasked = masks[0]
 	}
 	return &ContentModerationConfigView{
-		Enabled:              cfg.Enabled,
-		Mode:                 cfg.Mode,
-		BaseURL:              cfg.BaseURL,
-		Model:                cfg.Model,
-		ProxyID:              cloneInt64Ptr(cfg.ProxyID),
-		APIKeyConfigured:     len(keys) > 0,
-		APIKeyMasked:         apiKeyMasked,
-		APIKeyCount:          len(keys),
-		APIKeyMasks:          masks,
-		APIKeyStatuses:       s.apiKeyStatuses(keys),
-		TimeoutMS:            cfg.TimeoutMS,
-		SampleRate:           cfg.SampleRate,
-		AllGroups:            cfg.AllGroups,
-		GroupIDs:             append([]int64(nil), cfg.GroupIDs...),
-		RecordNonHits:        cfg.RecordNonHits,
-		WorkerCount:          cfg.WorkerCount,
-		QueueSize:            cfg.QueueSize,
-		BlockStatus:          cfg.BlockStatus,
-		BlockMessage:         cfg.BlockMessage,
-		EmailOnHit:           cfg.EmailOnHit,
-		AutoBanEnabled:       cfg.AutoBanEnabled,
-		BanThreshold:         cfg.BanThreshold,
-		ViolationWindowHours: cfg.ViolationWindowHours,
-		RetryCount:           cfg.RetryCount,
-		HitRetentionDays:     cfg.HitRetentionDays,
-		NonHitRetentionDays:  cfg.NonHitRetentionDays,
-		PreHashCheckEnabled:  cfg.PreHashCheckEnabled,
+		Enabled:                cfg.Enabled,
+		Mode:                   cfg.Mode,
+		BaseURL:                cfg.BaseURL,
+		Model:                  cfg.Model,
+		ProxyID:                cloneInt64Ptr(cfg.ProxyID),
+		APIKeyConfigured:       len(keys) > 0,
+		APIKeyMasked:           apiKeyMasked,
+		APIKeyCount:            len(keys),
+		APIKeyMasks:            masks,
+		APIKeyStatuses:         s.apiKeyStatuses(keys),
+		TimeoutMS:              cfg.TimeoutMS,
+		SampleRate:             cfg.SampleRate,
+		AllGroups:              cfg.AllGroups,
+		GroupIDs:               append([]int64(nil), cfg.GroupIDs...),
+		RecordNonHits:          cfg.RecordNonHits,
+		WorkerCount:            cfg.WorkerCount,
+		QueueSize:              cfg.QueueSize,
+		BlockStatus:            cfg.BlockStatus,
+		BlockMessage:           cfg.BlockMessage,
+		EmailOnHit:             cfg.EmailOnHit,
+		AutoBanEnabled:         cfg.AutoBanEnabled,
+		BanThreshold:           cfg.BanThreshold,
+		ViolationWindowHours:   cfg.ViolationWindowHours,
+		RetryCount:             cfg.RetryCount,
+		HitRetentionDays:       cfg.HitRetentionDays,
+		NonHitRetentionDays:    cfg.NonHitRetentionDays,
+		PreHashCheckEnabled:    cfg.PreHashCheckEnabled,
+		ShortTextSkipEnabled:   cfg.ShortTextSkipEnabled,
+		ShortTextSkipRunes:     cfg.ShortTextSkipRunes,
+		LowRiskCacheEnabled:    cfg.LowRiskCacheEnabled,
+		LowRiskCacheTTLSeconds: cfg.LowRiskCacheTTLSeconds,
+		LowRiskCacheMaxScore:   cfg.LowRiskCacheMaxScore,
 	}
 }
 

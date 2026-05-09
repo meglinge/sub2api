@@ -3,12 +3,14 @@ package repository
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/redis/go-redis/v9"
 )
 
 const contentModerationFlaggedHashSetKey = "content_moderation:flagged_hashes"
+const contentModerationLowRiskHashKeyPrefix = "content_moderation:low_risk_hash:"
 
 type contentModerationHashCache struct {
 	rdb *redis.Client
@@ -68,4 +70,27 @@ func (c *contentModerationHashCache) CountFlaggedInputHashes(ctx context.Context
 		return 0, nil
 	}
 	return c.rdb.SCard(ctx, contentModerationFlaggedHashSetKey).Result()
+}
+
+func (c *contentModerationHashCache) RecordLowRiskInputHash(ctx context.Context, inputHash string, ttl time.Duration) error {
+	inputHash = strings.TrimSpace(inputHash)
+	if c == nil || c.rdb == nil || inputHash == "" || ttl <= 0 {
+		return nil
+	}
+	return c.rdb.Set(ctx, contentModerationLowRiskHashKeyPrefix+inputHash, "1", ttl).Err()
+}
+
+func (c *contentModerationHashCache) HasLowRiskInputHash(ctx context.Context, inputHash string) (bool, error) {
+	inputHash = strings.TrimSpace(inputHash)
+	if c == nil || c.rdb == nil || inputHash == "" {
+		return false, nil
+	}
+	value, err := c.rdb.Get(ctx, contentModerationLowRiskHashKeyPrefix+inputHash).Result()
+	if err == redis.Nil {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return value != "", nil
 }

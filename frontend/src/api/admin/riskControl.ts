@@ -30,6 +30,11 @@ export interface ContentModerationConfig {
   hit_retention_days: number
   non_hit_retention_days: number
   pre_hash_check_enabled: boolean
+  short_text_skip_enabled: boolean
+  short_text_skip_runes: number
+  low_risk_cache_enabled: boolean
+  low_risk_cache_ttl_seconds: number
+  low_risk_cache_max_score: number
 }
 
 export type ContentModerationAPIKeyStatusValue = 'unknown' | 'ok' | 'error' | 'frozen'
@@ -103,6 +108,11 @@ export interface UpdateContentModerationConfig {
   hit_retention_days?: number
   non_hit_retention_days?: number
   pre_hash_check_enabled?: boolean
+  short_text_skip_enabled?: boolean
+  short_text_skip_runes?: number
+  low_risk_cache_enabled?: boolean
+  low_risk_cache_ttl_seconds?: number
+  low_risk_cache_max_score?: number
 }
 
 export interface ContentModerationRuntimeStatus {
@@ -122,6 +132,9 @@ export interface ContentModerationRuntimeStatus {
   errors: number
   api_key_statuses: ContentModerationAPIKeyStatus[]
   flagged_hash_count: number
+  short_text_skipped: number
+  low_risk_cache_hits: number
+  low_risk_cache_writes: number
   last_cleanup_at?: string
   last_cleanup_deleted_hit: number
   last_cleanup_deleted_non_hit: number

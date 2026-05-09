@@ -159,7 +159,10 @@ func (r *contentModerationProxyRepoStub) ListAccountSummariesByProxyID(ctx conte
 
 type contentModerationTestHashCache struct {
 	hashes        map[string]struct{}
+	lowRisk       map[string]time.Duration
 	recorded      []string
+	lowRiskWrites []string
+	lowRiskChecks []string
 	checked       []string
 	deleted       []string
 	hasResult     bool
@@ -345,6 +348,24 @@ func (c *contentModerationTestHashCache) ClearFlaggedInputHashes(ctx context.Con
 
 func (c *contentModerationTestHashCache) CountFlaggedInputHashes(ctx context.Context) (int64, error) {
 	return int64(len(c.hashes)), nil
+}
+
+func (c *contentModerationTestHashCache) RecordLowRiskInputHash(ctx context.Context, inputHash string, ttl time.Duration) error {
+	if c.lowRisk == nil {
+		c.lowRisk = map[string]time.Duration{}
+	}
+	c.lowRisk[inputHash] = ttl
+	c.lowRiskWrites = append(c.lowRiskWrites, inputHash)
+	return nil
+}
+
+func (c *contentModerationTestHashCache) HasLowRiskInputHash(ctx context.Context, inputHash string) (bool, error) {
+	c.lowRiskChecks = append(c.lowRiskChecks, inputHash)
+	if c.lowRisk == nil {
+		return false, nil
+	}
+	_, ok := c.lowRisk[inputHash]
+	return ok, nil
 }
 
 func TestBuildContentModerationLog_RedactsInputExcerpt(t *testing.T) {
@@ -626,6 +647,165 @@ func TestContentModerationCheck_OpenAIResponsesRecordsNonHitForCodexPayload(t *t
 	require.Equal(t, "/responses", repo.logs[0].Endpoint)
 	require.Equal(t, "last user prompt", repo.logs[0].InputExcerpt)
 	require.Equal(t, "last user prompt", moderationRequest.Input)
+}
+
+func TestContentModerationCheck_ShortTextSkipOnlyForSafeLowSignalInputs(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		_ = json.NewEncoder(w).Encode(moderationAPIResponse{
+			Results: []moderationAPIResult{{
+				CategoryScores: map[string]float64{"sexual": 0.01},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	cfg := defaultContentModerationConfig()
+	cfg.Enabled = true
+	cfg.Mode = ContentModerationModePreBlock
+	cfg.BaseURL = server.URL
+	cfg.APIKeys = []string{"sk-test"}
+	cfg.ShortTextSkipEnabled = true
+	cfg.ShortTextSkipRunes = 16
+	rawCfg, err := json.Marshal(cfg)
+	require.NoError(t, err)
+
+	svc := NewContentModerationService(
+		&contentModerationTestSettingRepo{values: map[string]string{
+			SettingKeyRiskControlEnabled:      "true",
+			SettingKeyContentModerationConfig: string(rawCfg),
+		}},
+		&contentModerationTestRepo{},
+		&contentModerationTestHashCache{},
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	decision, err := svc.Check(context.Background(), ContentModerationCheckInput{
+		Protocol: ContentModerationProtocolOpenAIChat,
+		Body:     []byte(`{"messages":[{"role":"user","content":"继续"}]}`),
+	})
+	require.NoError(t, err)
+	require.Equal(t, ContentModerationActionShortSkip, decision.Action)
+	require.Equal(t, 0, requestCount)
+
+	decision, err = svc.Check(context.Background(), ContentModerationCheckInput{
+		Protocol: ContentModerationProtocolOpenAIChat,
+		Body:     []byte(`{"messages":[{"role":"user","content":"kill him"}]}`),
+	})
+	require.NoError(t, err)
+	require.Equal(t, ContentModerationActionAllow, decision.Action)
+	require.Equal(t, 1, requestCount)
+}
+
+func TestContentModerationCheck_LowRiskExactCacheAvoidsRepeatedModeration(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		_ = json.NewEncoder(w).Encode(moderationAPIResponse{
+			Results: []moderationAPIResult{{
+				CategoryScores: map[string]float64{"sexual": 0.01, "violence": 0.02},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	cfg := defaultContentModerationConfig()
+	cfg.Enabled = true
+	cfg.Mode = ContentModerationModePreBlock
+	cfg.BaseURL = server.URL
+	cfg.APIKeys = []string{"sk-test"}
+	cfg.LowRiskCacheEnabled = true
+	cfg.LowRiskCacheTTLSeconds = 3600
+	cfg.LowRiskCacheMaxScore = 0.05
+	rawCfg, err := json.Marshal(cfg)
+	require.NoError(t, err)
+
+	hashCache := &contentModerationTestHashCache{}
+	svc := NewContentModerationService(
+		&contentModerationTestSettingRepo{values: map[string]string{
+			SettingKeyRiskControlEnabled:      "true",
+			SettingKeyContentModerationConfig: string(rawCfg),
+		}},
+		&contentModerationTestRepo{},
+		hashCache,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	body := []byte(`{"messages":[{"role":"user","content":"repeatable harmless template"}]}`)
+	decision, err := svc.Check(context.Background(), ContentModerationCheckInput{
+		Protocol: ContentModerationProtocolOpenAIChat,
+		Body:     body,
+	})
+	require.NoError(t, err)
+	require.Equal(t, ContentModerationActionAllow, decision.Action)
+	require.Equal(t, 1, requestCount)
+	require.Len(t, hashCache.lowRiskWrites, 1)
+	require.Equal(t, time.Hour, hashCache.lowRisk[hashCache.lowRiskWrites[0]])
+
+	decision, err = svc.Check(context.Background(), ContentModerationCheckInput{
+		Protocol: ContentModerationProtocolOpenAIChat,
+		Body:     body,
+	})
+	require.NoError(t, err)
+	require.Equal(t, ContentModerationActionCacheAllow, decision.Action)
+	require.Equal(t, 1, requestCount)
+	require.Len(t, hashCache.lowRiskChecks, 2)
+}
+
+func TestContentModerationCheck_LowRiskCacheDoesNotStoreNearThresholdInputs(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		_ = json.NewEncoder(w).Encode(moderationAPIResponse{
+			Results: []moderationAPIResult{{
+				CategoryScores: map[string]float64{"sexual": 0.30},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	cfg := defaultContentModerationConfig()
+	cfg.Enabled = true
+	cfg.Mode = ContentModerationModePreBlock
+	cfg.BaseURL = server.URL
+	cfg.APIKeys = []string{"sk-test"}
+	cfg.LowRiskCacheEnabled = true
+	cfg.LowRiskCacheMaxScore = 0.05
+	rawCfg, err := json.Marshal(cfg)
+	require.NoError(t, err)
+
+	hashCache := &contentModerationTestHashCache{}
+	svc := NewContentModerationService(
+		&contentModerationTestSettingRepo{values: map[string]string{
+			SettingKeyRiskControlEnabled:      "true",
+			SettingKeyContentModerationConfig: string(rawCfg),
+		}},
+		&contentModerationTestRepo{},
+		hashCache,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	body := []byte(`{"messages":[{"role":"user","content":"uncached medium score text"}]}`)
+	for i := 0; i < 2; i++ {
+		decision, err := svc.Check(context.Background(), ContentModerationCheckInput{
+			Protocol: ContentModerationProtocolOpenAIChat,
+			Body:     body,
+		})
+		require.NoError(t, err)
+		require.Equal(t, ContentModerationActionAllow, decision.Action)
+	}
+	require.Equal(t, 2, requestCount)
+	require.Empty(t, hashCache.lowRiskWrites)
 }
 
 func TestContentModerationCheck_PreBlockBlocksCodexResponsesLatestUserInput(t *testing.T) {

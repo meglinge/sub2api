@@ -101,6 +101,14 @@
                   <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.droppedErrors') }}</p>
                   <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatNumber((status?.dropped ?? 0) + (status?.errors ?? 0)) }}</p>
                 </div>
+                <div class="rounded-lg bg-sky-50 p-4 dark:bg-sky-900/10">
+                  <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.shortTextSkipped') }}</p>
+                  <p class="mt-2 text-2xl font-semibold text-sky-700 dark:text-sky-300">{{ formatNumber(status?.short_text_skipped ?? 0) }}</p>
+                </div>
+                <div class="rounded-lg bg-indigo-50 p-4 dark:bg-indigo-900/10">
+                  <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.lowRiskCacheHits') }}</p>
+                  <p class="mt-2 text-2xl font-semibold text-indigo-700 dark:text-indigo-300">{{ formatNumber(status?.low_risk_cache_hits ?? 0) }}</p>
+                </div>
               </div>
             </div>
 
@@ -654,6 +662,38 @@
             <div class="space-y-4 rounded-lg border border-gray-100 p-4 dark:border-dark-700 lg:col-span-2">
               <div class="flex items-center justify-between gap-4">
                 <div>
+                  <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.riskControl.shortTextSkip') }}</p>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.shortTextSkipHint') }}</p>
+                </div>
+                <Toggle v-model="configForm.short_text_skip_enabled" />
+              </div>
+              <div>
+                <label class="input-label">{{ t('admin.riskControl.shortTextSkipRunes') }}</label>
+                <input v-model.number="configForm.short_text_skip_runes" type="number" min="1" max="64" class="input" />
+              </div>
+            </div>
+            <div class="space-y-4 rounded-lg border border-gray-100 p-4 dark:border-dark-700 lg:col-span-2">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.riskControl.lowRiskCache') }}</p>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.lowRiskCacheHint') }}</p>
+                </div>
+                <Toggle v-model="configForm.low_risk_cache_enabled" />
+              </div>
+              <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label class="input-label">{{ t('admin.riskControl.lowRiskCacheTTL') }}</label>
+                  <input v-model.number="configForm.low_risk_cache_ttl_seconds" type="number" min="60" max="604800" class="input" />
+                </div>
+                <div>
+                  <label class="input-label">{{ t('admin.riskControl.lowRiskCacheMaxScore') }}</label>
+                  <input v-model.number="configForm.low_risk_cache_max_score" type="number" min="0.001" max="1" step="0.001" class="input" />
+                </div>
+              </div>
+            </div>
+            <div class="space-y-4 rounded-lg border border-gray-100 p-4 dark:border-dark-700 lg:col-span-2">
+              <div class="flex items-center justify-between gap-4">
+                <div>
                   <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.riskControl.preHashCheck') }}</p>
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.preHashCheckHint') }}</p>
                 </div>
@@ -927,6 +967,11 @@ const configForm = reactive({
   hit_retention_days: 180,
   non_hit_retention_days: 3,
   pre_hash_check_enabled: false,
+  short_text_skip_enabled: false,
+  short_text_skip_runes: 16,
+  low_risk_cache_enabled: false,
+  low_risk_cache_ttl_seconds: 21600,
+  low_risk_cache_max_score: 0.05,
 })
 
 const pagination = reactive({
@@ -1204,6 +1249,11 @@ function applyConfig(config: ContentModerationConfig) {
   configForm.hit_retention_days = config.hit_retention_days || 180
   configForm.non_hit_retention_days = Math.min(Math.max(config.non_hit_retention_days || 3, 1), 3)
   configForm.pre_hash_check_enabled = config.pre_hash_check_enabled ?? false
+  configForm.short_text_skip_enabled = config.short_text_skip_enabled ?? false
+  configForm.short_text_skip_runes = config.short_text_skip_runes || 16
+  configForm.low_risk_cache_enabled = config.low_risk_cache_enabled ?? false
+  configForm.low_risk_cache_ttl_seconds = config.low_risk_cache_ttl_seconds || 21600
+  configForm.low_risk_cache_max_score = config.low_risk_cache_max_score || 0.05
 }
 
 async function loadAll() {
@@ -1276,6 +1326,11 @@ async function saveConfig() {
       hit_retention_days: Number(configForm.hit_retention_days) || 180,
       non_hit_retention_days: Math.min(Math.max(Number(configForm.non_hit_retention_days) || 3, 1), 3),
       pre_hash_check_enabled: configForm.pre_hash_check_enabled,
+      short_text_skip_enabled: configForm.short_text_skip_enabled,
+      short_text_skip_runes: Math.min(Math.max(Number(configForm.short_text_skip_runes) || 16, 1), 64),
+      low_risk_cache_enabled: configForm.low_risk_cache_enabled,
+      low_risk_cache_ttl_seconds: Math.min(Math.max(Number(configForm.low_risk_cache_ttl_seconds) || 21600, 60), 604800),
+      low_risk_cache_max_score: Math.min(Math.max(Number(configForm.low_risk_cache_max_score) || 0.05, 0.001), 1),
     }
     const keys = parseApiKeys(configForm.api_keys_text)
     if (!payload.clear_api_key && configForm.api_keys_mode === 'replace' && keys.length === 0) {

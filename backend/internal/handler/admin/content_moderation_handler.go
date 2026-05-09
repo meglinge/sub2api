@@ -41,33 +41,38 @@ func (f *nullableInt64Field) UnmarshalJSON(data []byte) error {
 }
 
 type contentModerationConfigRequest struct {
-	Enabled              *bool              `json:"enabled"`
-	Mode                 *string            `json:"mode"`
-	BaseURL              *string            `json:"base_url"`
-	Model                *string            `json:"model"`
-	ProxyID              nullableInt64Field `json:"proxy_id"`
-	APIKey               *string            `json:"api_key"`
-	APIKeys              *[]string          `json:"api_keys"`
-	APIKeysMode          string             `json:"api_keys_mode"`
-	DeleteAPIKeyHashes   *[]string          `json:"delete_api_key_hashes"`
-	ClearAPIKey          bool               `json:"clear_api_key"`
-	TimeoutMS            *int               `json:"timeout_ms"`
-	SampleRate           *int               `json:"sample_rate"`
-	AllGroups            *bool              `json:"all_groups"`
-	GroupIDs             *[]int64           `json:"group_ids"`
-	RecordNonHits        *bool              `json:"record_non_hits"`
-	WorkerCount          *int               `json:"worker_count"`
-	QueueSize            *int               `json:"queue_size"`
-	BlockStatus          *int               `json:"block_status"`
-	BlockMessage         *string            `json:"block_message"`
-	EmailOnHit           *bool              `json:"email_on_hit"`
-	AutoBanEnabled       *bool              `json:"auto_ban_enabled"`
-	BanThreshold         *int               `json:"ban_threshold"`
-	ViolationWindowHours *int               `json:"violation_window_hours"`
-	RetryCount           *int               `json:"retry_count"`
-	HitRetentionDays     *int               `json:"hit_retention_days"`
-	NonHitRetentionDays  *int               `json:"non_hit_retention_days"`
-	PreHashCheckEnabled  *bool              `json:"pre_hash_check_enabled"`
+	Enabled                *bool              `json:"enabled"`
+	Mode                   *string            `json:"mode"`
+	BaseURL                *string            `json:"base_url"`
+	Model                  *string            `json:"model"`
+	ProxyID                nullableInt64Field `json:"proxy_id"`
+	APIKey                 *string            `json:"api_key"`
+	APIKeys                *[]string          `json:"api_keys"`
+	APIKeysMode            string             `json:"api_keys_mode"`
+	DeleteAPIKeyHashes     *[]string          `json:"delete_api_key_hashes"`
+	ClearAPIKey            bool               `json:"clear_api_key"`
+	TimeoutMS              *int               `json:"timeout_ms"`
+	SampleRate             *int               `json:"sample_rate"`
+	AllGroups              *bool              `json:"all_groups"`
+	GroupIDs               *[]int64           `json:"group_ids"`
+	RecordNonHits          *bool              `json:"record_non_hits"`
+	WorkerCount            *int               `json:"worker_count"`
+	QueueSize              *int               `json:"queue_size"`
+	BlockStatus            *int               `json:"block_status"`
+	BlockMessage           *string            `json:"block_message"`
+	EmailOnHit             *bool              `json:"email_on_hit"`
+	AutoBanEnabled         *bool              `json:"auto_ban_enabled"`
+	BanThreshold           *int               `json:"ban_threshold"`
+	ViolationWindowHours   *int               `json:"violation_window_hours"`
+	RetryCount             *int               `json:"retry_count"`
+	HitRetentionDays       *int               `json:"hit_retention_days"`
+	NonHitRetentionDays    *int               `json:"non_hit_retention_days"`
+	PreHashCheckEnabled    *bool              `json:"pre_hash_check_enabled"`
+	ShortTextSkipEnabled   *bool              `json:"short_text_skip_enabled"`
+	ShortTextSkipRunes     *int               `json:"short_text_skip_runes"`
+	LowRiskCacheEnabled    *bool              `json:"low_risk_cache_enabled"`
+	LowRiskCacheTTLSeconds *int               `json:"low_risk_cache_ttl_seconds"`
+	LowRiskCacheMaxScore   *float64           `json:"low_risk_cache_max_score"`
 }
 
 type contentModerationAPIKeyTestRequest struct {
@@ -100,34 +105,39 @@ func (h *ContentModerationHandler) UpdateConfig(c *gin.Context) {
 		return
 	}
 	cfg, err := h.service.UpdateConfig(c.Request.Context(), service.UpdateContentModerationConfigInput{
-		Enabled:              req.Enabled,
-		Mode:                 req.Mode,
-		BaseURL:              req.BaseURL,
-		Model:                req.Model,
-		ProxyID:              req.ProxyID.Value,
-		ProxyIDSet:           req.ProxyID.Set,
-		APIKey:               req.APIKey,
-		APIKeys:              req.APIKeys,
-		APIKeysMode:          req.APIKeysMode,
-		DeleteAPIKeyHashes:   req.DeleteAPIKeyHashes,
-		ClearAPIKey:          req.ClearAPIKey,
-		TimeoutMS:            req.TimeoutMS,
-		SampleRate:           req.SampleRate,
-		AllGroups:            req.AllGroups,
-		GroupIDs:             req.GroupIDs,
-		RecordNonHits:        req.RecordNonHits,
-		WorkerCount:          req.WorkerCount,
-		QueueSize:            req.QueueSize,
-		BlockStatus:          req.BlockStatus,
-		BlockMessage:         req.BlockMessage,
-		EmailOnHit:           req.EmailOnHit,
-		AutoBanEnabled:       req.AutoBanEnabled,
-		BanThreshold:         req.BanThreshold,
-		ViolationWindowHours: req.ViolationWindowHours,
-		RetryCount:           req.RetryCount,
-		HitRetentionDays:     req.HitRetentionDays,
-		NonHitRetentionDays:  req.NonHitRetentionDays,
-		PreHashCheckEnabled:  req.PreHashCheckEnabled,
+		Enabled:                req.Enabled,
+		Mode:                   req.Mode,
+		BaseURL:                req.BaseURL,
+		Model:                  req.Model,
+		ProxyID:                req.ProxyID.Value,
+		ProxyIDSet:             req.ProxyID.Set,
+		APIKey:                 req.APIKey,
+		APIKeys:                req.APIKeys,
+		APIKeysMode:            req.APIKeysMode,
+		DeleteAPIKeyHashes:     req.DeleteAPIKeyHashes,
+		ClearAPIKey:            req.ClearAPIKey,
+		TimeoutMS:              req.TimeoutMS,
+		SampleRate:             req.SampleRate,
+		AllGroups:              req.AllGroups,
+		GroupIDs:               req.GroupIDs,
+		RecordNonHits:          req.RecordNonHits,
+		WorkerCount:            req.WorkerCount,
+		QueueSize:              req.QueueSize,
+		BlockStatus:            req.BlockStatus,
+		BlockMessage:           req.BlockMessage,
+		EmailOnHit:             req.EmailOnHit,
+		AutoBanEnabled:         req.AutoBanEnabled,
+		BanThreshold:           req.BanThreshold,
+		ViolationWindowHours:   req.ViolationWindowHours,
+		RetryCount:             req.RetryCount,
+		HitRetentionDays:       req.HitRetentionDays,
+		NonHitRetentionDays:    req.NonHitRetentionDays,
+		PreHashCheckEnabled:    req.PreHashCheckEnabled,
+		ShortTextSkipEnabled:   req.ShortTextSkipEnabled,
+		ShortTextSkipRunes:     req.ShortTextSkipRunes,
+		LowRiskCacheEnabled:    req.LowRiskCacheEnabled,
+		LowRiskCacheTTLSeconds: req.LowRiskCacheTTLSeconds,
+		LowRiskCacheMaxScore:   req.LowRiskCacheMaxScore,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
