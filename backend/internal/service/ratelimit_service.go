@@ -14,6 +14,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/util/httputil"
 	"github.com/tidwall/gjson"
 )
 
@@ -155,6 +156,16 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	if !account.ShouldHandleErrorCode(statusCode) {
 		slog.Info("account_error_code_skipped", "account_id", account.ID, "status_code", statusCode)
 		return false
+	}
+
+	if isOpenAITransientEdge403(account, statusCode, headers, responseBody) {
+		rayID := httputil.ExtractCloudflareRayID(headers, responseBody)
+		slog.Warn(
+			"openai_403_transient_edge_challenge",
+			"account_id", account.ID,
+			"cf_ray", rayID,
+		)
+		return true
 	}
 
 	// 先尝试临时不可调度规则（401除外）
@@ -746,6 +757,32 @@ func buildForbiddenErrorMessage(prefix string, upstreamMsg string, responseBody 
 	}
 
 	return prefix + fallback
+}
+
+func isOpenAITransientEdge403(account *Account, statusCode int, headers http.Header, responseBody []byte) bool {
+	if account == nil || account.Platform != PlatformOpenAI {
+		return false
+	}
+	if statusCode != http.StatusForbidden {
+		return false
+	}
+	if !httputil.IsCloudflareChallengeResponse(statusCode, headers, responseBody) {
+		rayID := httputil.ExtractCloudflareRayID(headers, responseBody)
+		if rayID == "" {
+			return false
+		}
+		preview := strings.ToLower(httputil.TruncateBody(responseBody, 4096))
+		contentType := ""
+		if headers != nil {
+			contentType = strings.ToLower(strings.TrimSpace(headers.Get("content-type")))
+		}
+		if !strings.Contains(contentType, "text/html") &&
+			!strings.Contains(preview, "<html") &&
+			!strings.Contains(preview, "<!doctype html") {
+			return false
+		}
+	}
+	return true
 }
 
 // handle403 处理 403 Forbidden 错误

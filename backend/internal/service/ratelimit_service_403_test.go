@@ -37,6 +37,39 @@ func TestRateLimitService_HandleUpstreamError_OpenAI403FirstHitTempUnschedulable
 	require.Contains(t, repo.lastTempReason, "(1/3)")
 }
 
+func TestRateLimitService_HandleUpstreamError_OpenAI403CloudflareChallengeOnlyFailovers(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	counter := &openAI403CounterCacheStub{counts: []int64{1}}
+	probe := &openAI403ProbeStub{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetOpenAI403CounterCache(counter)
+	service.SetOpenAI403Probe(probe)
+	account := &Account{
+		ID:       303,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+	}
+	headers := http.Header{
+		"Cf-Ray":       []string{"9fe90c66c85072a4-EWR"},
+		"Content-Type": []string{"text/html; charset=utf-8"},
+	}
+	body := []byte(`<html><head><meta http-equiv="refresh" content="360"></head><body><svg></svg></body></html>`)
+
+	shouldDisable := service.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusForbidden,
+		headers,
+		body,
+	)
+
+	require.True(t, shouldDisable)
+	require.Equal(t, 0, repo.setErrorCalls)
+	require.Equal(t, 0, repo.tempCalls)
+	require.Equal(t, 0, counter.incrementCalls)
+	require.Equal(t, 0, probe.calls)
+}
+
 func TestRateLimitService_HandleUpstreamError_OpenAI403ThresholdDisables(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	counter := &openAI403CounterCacheStub{counts: []int64{3}}
