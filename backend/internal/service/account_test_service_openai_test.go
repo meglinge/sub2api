@@ -90,8 +90,8 @@ func (r *openAIAccountTestRepo) SetRateLimited(_ context.Context, id int64, rese
 	return nil
 }
 
-func (r *openAIAccountTestRepo) ListAllWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, int64, error) {
-	return nil, 0, nil
+func (r *openAIAccountTestRepo) ListAllWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, error) {
+	return nil, nil
 }
 
 func (r *openAIAccountTestRepo) ClearError(_ context.Context, id int64) error {
@@ -139,6 +139,64 @@ func TestAccountTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing.
 	require.Equal(t, 42.0, repo.updatedExtra["codex_5h_used_percent"])
 	require.Equal(t, 88.0, repo.updatedExtra["codex_7d_used_percent"])
 	require.Contains(t, recorder.Body.String(), "test_complete")
+}
+
+func TestAccountTestService_OpenAIShadowUsesParentCredentialsAndShadowModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	resp := newJSONResponse(http.StatusOK, "")
+	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}
+
+`))
+
+	parentID := int64(100)
+	parent := &Account{
+		ID:       parentID,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"access_token":       "parent-token",
+			"chatgpt_account_id": "org-parent",
+		},
+	}
+	shadow := &Account{
+		ID:              200,
+		Platform:        PlatformOpenAI,
+		Type:            AccountTypeOAuth,
+		Status:          StatusActive,
+		ParentAccountID: &parentID,
+		QuotaDimension:  QuotaDimensionSpark,
+		Concurrency:     2,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"gpt-5.3-codex-spark": "gpt-5.3-codex-spark",
+			},
+		},
+	}
+
+	repo := &openAIAccountTestRepo{
+		mockAccountRepoForGemini: mockAccountRepoForGemini{
+			accountsByID: map[int64]*Account{
+				parentID: parent,
+				200:      shadow,
+			},
+		},
+	}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+
+	err := svc.TestAccountConnection(ctx, shadow.ID, "gpt-5.3-codex-spark", "", "")
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 1)
+	req := upstream.requests[0]
+	require.Equal(t, "Bearer parent-token", req.Header.Get("Authorization"))
+	require.Equal(t, "org-parent", req.Header.Get("chatgpt-account-id"))
+	body, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+	require.Equal(t, "gpt-5.3-codex-spark", gjson.GetBytes(body, "model").String())
+	require.Contains(t, recorder.Body.String(), `"success":true`)
 }
 
 func TestAccountTestService_OpenAIStreamEOFBeforeCompletedFails(t *testing.T) {

@@ -79,12 +79,12 @@ func (s *accountRepoStub) List(ctx context.Context, params pagination.Pagination
 	panic("unexpected List call")
 }
 
-func (s *accountRepoStub) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, *pagination.PaginationResult, error) {
-	panic("unexpected ListWithFilters call")
+func (s *accountRepoStub) ListAllWithFilters(context.Context, string, string, string, string, int64, string) ([]Account, error) {
+	return nil, nil
 }
 
-func (s *accountRepoStub) ListAllWithFilters(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, int64, error) {
-	return nil, 0, nil
+func (s *accountRepoStub) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, *pagination.PaginationResult, error) {
+	panic("unexpected ListWithFilters call")
 }
 
 func (s *accountRepoStub) ListByGroup(ctx context.Context, groupID int64) ([]Account, error) {
@@ -217,6 +217,10 @@ func (s *accountRepoStub) ResetQuotaUsed(ctx context.Context, id int64) error {
 
 func (s *accountRepoStub) RevertProxyFallback(ctx context.Context, accountID int64) error {
 	panic("unexpected RevertProxyFallback call")
+}
+
+func (s *accountRepoStub) ListShadowsByParent(ctx context.Context, parentID int64) ([]*Account, error) {
+	return nil, nil
 }
 
 // TestAccountService_Delete_NotFound 测试删除不存在的账号时返回正确的错误。
