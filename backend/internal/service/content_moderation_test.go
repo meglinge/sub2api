@@ -6,11 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -120,81 +117,6 @@ func (r *contentModerationTestRepo) CleanupExpiredLogs(ctx context.Context, hitB
 	return &ContentModerationCleanupResult{}, nil
 }
 
-type contentModerationProxyRepoStub struct {
-	proxy *Proxy
-}
-
-func (r *contentModerationProxyRepoStub) Create(ctx context.Context, proxy *Proxy) error {
-	panic("unexpected Create call")
-}
-
-func (r *contentModerationProxyRepoStub) GetByID(ctx context.Context, id int64) (*Proxy, error) {
-	if r.proxy == nil || r.proxy.ID != id {
-		return nil, ErrProxyNotFound
-	}
-	return r.proxy, nil
-}
-
-func (r *contentModerationProxyRepoStub) ListByIDs(ctx context.Context, ids []int64) ([]Proxy, error) {
-	panic("unexpected ListByIDs call")
-}
-
-func (r *contentModerationProxyRepoStub) Update(ctx context.Context, proxy *Proxy) error {
-	panic("unexpected Update call")
-}
-
-func (r *contentModerationProxyRepoStub) Delete(ctx context.Context, id int64) error {
-	panic("unexpected Delete call")
-}
-
-func (r *contentModerationProxyRepoStub) List(ctx context.Context, params pagination.PaginationParams) ([]Proxy, *pagination.PaginationResult, error) {
-	panic("unexpected List call")
-}
-
-func (r *contentModerationProxyRepoStub) ListWithFilters(ctx context.Context, params pagination.PaginationParams, protocol, status, search string) ([]Proxy, *pagination.PaginationResult, error) {
-	panic("unexpected ListWithFilters call")
-}
-
-func (r *contentModerationProxyRepoStub) ListWithFiltersAndAccountCount(ctx context.Context, params pagination.PaginationParams, protocol, status, search string) ([]ProxyWithAccountCount, *pagination.PaginationResult, error) {
-	panic("unexpected ListWithFiltersAndAccountCount call")
-}
-
-func (r *contentModerationProxyRepoStub) ListActive(ctx context.Context) ([]Proxy, error) {
-	panic("unexpected ListActive call")
-}
-
-func (r *contentModerationProxyRepoStub) ListActiveWithAccountCount(ctx context.Context) ([]ProxyWithAccountCount, error) {
-	panic("unexpected ListActiveWithAccountCount call")
-}
-
-func (r *contentModerationProxyRepoStub) ExistsByHostPortAuth(ctx context.Context, host string, port int, username, password string) (bool, error) {
-	panic("unexpected ExistsByHostPortAuth call")
-}
-
-func (r *contentModerationProxyRepoStub) CountAccountsByProxyID(ctx context.Context, proxyID int64) (int64, error) {
-	panic("unexpected CountAccountsByProxyID call")
-}
-
-func (r *contentModerationProxyRepoStub) ListAccountSummariesByProxyID(ctx context.Context, proxyID int64) ([]ProxyAccountSummary, error) {
-	panic("unexpected ListAccountSummariesByProxyID call")
-}
-
-func (r *contentModerationProxyRepoStub) CountExpired(ctx context.Context) (int64, error) {
-	panic("unexpected CountExpired call")
-}
-
-func (r *contentModerationProxyRepoStub) CountExpiringSoon(ctx context.Context, now time.Time) (int64, error) {
-	panic("unexpected CountExpiringSoon call")
-}
-
-func (r *contentModerationProxyRepoStub) SweepExpiredProxies(ctx context.Context, now time.Time) (int64, error) {
-	panic("unexpected SweepExpiredProxies call")
-}
-
-func (r *contentModerationProxyRepoStub) ListAllForFallback(ctx context.Context) ([]Proxy, error) {
-	panic("unexpected ListAllForFallback call")
-}
-
 func (r *contentModerationTestRepo) UpdateLogEmailSent(ctx context.Context, id int64, sent bool) error {
 	return nil
 }
@@ -230,10 +152,7 @@ func requireRecordedHashCount(t *testing.T, cache *contentModerationTestHashCach
 type contentModerationTestHashCache struct {
 	mu            sync.Mutex
 	hashes        map[string]struct{}
-	lowRisk       map[string]time.Duration
 	recorded      []string
-	lowRiskWrites []string
-	lowRiskChecks []string
 	checked       []string
 	deleted       []string
 	hasResult     bool
@@ -247,6 +166,10 @@ type contentModerationTestUserRepo struct {
 
 func (r *contentModerationTestUserRepo) Create(ctx context.Context, user *User) error {
 	panic("unexpected Create call")
+}
+
+func (r *contentModerationTestUserRepo) CreateWithEmailAliasGuard(ctx context.Context, user *User) error {
+	panic("unexpected CreateWithEmailAliasGuard call")
 }
 
 func (r *contentModerationTestUserRepo) GetByID(ctx context.Context, id int64) (*User, error) {
@@ -265,7 +188,7 @@ func (r *contentModerationTestUserRepo) GetFirstAdmin(ctx context.Context) (*Use
 	panic("unexpected GetFirstAdmin call")
 }
 
-func (r *contentModerationTestUserRepo) Update(ctx context.Context, user *User) error {
+func (r *contentModerationTestUserRepo) Update(ctx context.Context, user *User, fields UserUpdateFields) error {
 	if user == nil {
 		return nil
 	}
@@ -319,6 +242,14 @@ func (r *contentModerationTestUserRepo) DeductBalance(ctx context.Context, id in
 	panic("unexpected DeductBalance call")
 }
 
+func (r *contentModerationTestUserRepo) AdjustBalance(ctx context.Context, id int64, delta float64) (BalanceChange, error) {
+	panic("unexpected AdjustBalance call")
+}
+
+func (r *contentModerationTestUserRepo) SetBalance(ctx context.Context, id int64, value float64) (BalanceChange, error) {
+	panic("unexpected SetBalance call")
+}
+
 func (r *contentModerationTestUserRepo) UpdateConcurrency(ctx context.Context, id int64, amount int) error {
 	panic("unexpected UpdateConcurrency call")
 }
@@ -330,9 +261,16 @@ func (r *contentModerationTestUserRepo) BatchSetConcurrency(ctx context.Context,
 func (r *contentModerationTestUserRepo) BatchAddConcurrency(ctx context.Context, userIDs []int64, delta int) (int, error) {
 	panic("unexpected BatchAddConcurrency call")
 }
+func (r *contentModerationTestUserRepo) BatchUpdateLimits(ctx context.Context, userIDs []int64, concurrency, rpmLimit *int) (int, error) {
+	panic("unexpected BatchUpdateLimits call")
+}
 
 func (r *contentModerationTestUserRepo) ExistsByEmail(ctx context.Context, email string) (bool, error) {
 	panic("unexpected ExistsByEmail call")
+}
+
+func (r *contentModerationTestUserRepo) ExistsByEmailAlias(ctx context.Context, email string) (bool, error) {
+	panic("unexpected ExistsByEmailAlias call")
 }
 
 func (r *contentModerationTestUserRepo) RemoveGroupFromAllowedGroups(ctx context.Context, groupID int64) (int64, error) {
@@ -433,24 +371,6 @@ func (c *contentModerationTestHashCache) CountFlaggedInputHashes(ctx context.Con
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return int64(len(c.hashes)), nil
-}
-
-func (c *contentModerationTestHashCache) RecordLowRiskInputHash(ctx context.Context, inputHash string, ttl time.Duration) error {
-	if c.lowRisk == nil {
-		c.lowRisk = map[string]time.Duration{}
-	}
-	c.lowRisk[inputHash] = ttl
-	c.lowRiskWrites = append(c.lowRiskWrites, inputHash)
-	return nil
-}
-
-func (c *contentModerationTestHashCache) HasLowRiskInputHash(ctx context.Context, inputHash string) (bool, error) {
-	c.lowRiskChecks = append(c.lowRiskChecks, inputHash)
-	if c.lowRisk == nil {
-		return false, nil
-	}
-	_, ok := c.lowRisk[inputHash]
-	return ok, nil
 }
 
 func (c *contentModerationTestHashCache) snapshotRecorded() []string {
@@ -584,6 +504,7 @@ func TestContentModerationCheck_PreBlockKeywordHitSkipsUpstreamCall(t *testing.T
 	require.True(t, logs[0].Flagged)
 	require.Equal(t, ContentModerationActionKeywordBlock, logs[0].Action)
 	require.Equal(t, contentModerationKeywordCategory, logs[0].HighestCategory)
+	require.Equal(t, "secret-token", logs[0].MatchedKeyword, "blocked log must record which keyword was hit")
 }
 
 func TestContentModerationCheck_KeywordsIgnoredInObserveMode(t *testing.T) {
@@ -1146,165 +1067,6 @@ func TestContentModerationCheck_OpenAIResponsesRecordsNonHitForCodexPayload(t *t
 	require.Equal(t, "last user prompt", moderationRequest.Input)
 }
 
-func TestContentModerationCheck_ShortTextSkipOnlyForSafeLowSignalInputs(t *testing.T) {
-	requestCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
-		_ = json.NewEncoder(w).Encode(moderationAPIResponse{
-			Results: []moderationAPIResult{{
-				CategoryScores: map[string]float64{"sexual": 0.01},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	cfg := defaultContentModerationConfig()
-	cfg.Enabled = true
-	cfg.Mode = ContentModerationModePreBlock
-	cfg.BaseURL = server.URL
-	cfg.APIKeys = []string{"sk-test"}
-	cfg.ShortTextSkipEnabled = true
-	cfg.ShortTextSkipRunes = 16
-	rawCfg, err := json.Marshal(cfg)
-	require.NoError(t, err)
-
-	svc := NewContentModerationService(
-		&contentModerationTestSettingRepo{values: map[string]string{
-			SettingKeyRiskControlEnabled:      "true",
-			SettingKeyContentModerationConfig: string(rawCfg),
-		}},
-		&contentModerationTestRepo{},
-		&contentModerationTestHashCache{},
-		nil,
-		nil,
-		nil,
-		nil,
-	)
-
-	decision, err := svc.Check(context.Background(), ContentModerationCheckInput{
-		Protocol: ContentModerationProtocolOpenAIChat,
-		Body:     []byte(`{"messages":[{"role":"user","content":"继续"}]}`),
-	})
-	require.NoError(t, err)
-	require.Equal(t, ContentModerationActionShortSkip, decision.Action)
-	require.Equal(t, 0, requestCount)
-
-	decision, err = svc.Check(context.Background(), ContentModerationCheckInput{
-		Protocol: ContentModerationProtocolOpenAIChat,
-		Body:     []byte(`{"messages":[{"role":"user","content":"kill him"}]}`),
-	})
-	require.NoError(t, err)
-	require.Equal(t, ContentModerationActionAllow, decision.Action)
-	require.Equal(t, 1, requestCount)
-}
-
-func TestContentModerationCheck_LowRiskExactCacheAvoidsRepeatedModeration(t *testing.T) {
-	requestCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
-		_ = json.NewEncoder(w).Encode(moderationAPIResponse{
-			Results: []moderationAPIResult{{
-				CategoryScores: map[string]float64{"sexual": 0.01, "violence": 0.02},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	cfg := defaultContentModerationConfig()
-	cfg.Enabled = true
-	cfg.Mode = ContentModerationModePreBlock
-	cfg.BaseURL = server.URL
-	cfg.APIKeys = []string{"sk-test"}
-	cfg.LowRiskCacheEnabled = true
-	cfg.LowRiskCacheTTLSeconds = 3600
-	cfg.LowRiskCacheMaxScore = 0.05
-	rawCfg, err := json.Marshal(cfg)
-	require.NoError(t, err)
-
-	hashCache := &contentModerationTestHashCache{}
-	svc := NewContentModerationService(
-		&contentModerationTestSettingRepo{values: map[string]string{
-			SettingKeyRiskControlEnabled:      "true",
-			SettingKeyContentModerationConfig: string(rawCfg),
-		}},
-		&contentModerationTestRepo{},
-		hashCache,
-		nil,
-		nil,
-		nil,
-		nil,
-	)
-
-	body := []byte(`{"messages":[{"role":"user","content":"repeatable harmless template"}]}`)
-	decision, err := svc.Check(context.Background(), ContentModerationCheckInput{
-		Protocol: ContentModerationProtocolOpenAIChat,
-		Body:     body,
-	})
-	require.NoError(t, err)
-	require.Equal(t, ContentModerationActionAllow, decision.Action)
-	require.Equal(t, 1, requestCount)
-	require.Len(t, hashCache.lowRiskWrites, 1)
-	require.Equal(t, time.Hour, hashCache.lowRisk[hashCache.lowRiskWrites[0]])
-
-	decision, err = svc.Check(context.Background(), ContentModerationCheckInput{
-		Protocol: ContentModerationProtocolOpenAIChat,
-		Body:     body,
-	})
-	require.NoError(t, err)
-	require.Equal(t, ContentModerationActionCacheAllow, decision.Action)
-	require.Equal(t, 1, requestCount)
-	require.Len(t, hashCache.lowRiskChecks, 2)
-}
-
-func TestContentModerationCheck_LowRiskCacheDoesNotStoreNearThresholdInputs(t *testing.T) {
-	requestCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
-		_ = json.NewEncoder(w).Encode(moderationAPIResponse{
-			Results: []moderationAPIResult{{
-				CategoryScores: map[string]float64{"sexual": 0.30},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	cfg := defaultContentModerationConfig()
-	cfg.Enabled = true
-	cfg.Mode = ContentModerationModePreBlock
-	cfg.BaseURL = server.URL
-	cfg.APIKeys = []string{"sk-test"}
-	cfg.LowRiskCacheEnabled = true
-	cfg.LowRiskCacheMaxScore = 0.05
-	rawCfg, err := json.Marshal(cfg)
-	require.NoError(t, err)
-
-	hashCache := &contentModerationTestHashCache{}
-	svc := NewContentModerationService(
-		&contentModerationTestSettingRepo{values: map[string]string{
-			SettingKeyRiskControlEnabled:      "true",
-			SettingKeyContentModerationConfig: string(rawCfg),
-		}},
-		&contentModerationTestRepo{},
-		hashCache,
-		nil,
-		nil,
-		nil,
-		nil,
-	)
-
-	body := []byte(`{"messages":[{"role":"user","content":"uncached medium score text"}]}`)
-	for i := 0; i < 2; i++ {
-		decision, err := svc.Check(context.Background(), ContentModerationCheckInput{
-			Protocol: ContentModerationProtocolOpenAIChat,
-			Body:     body,
-		})
-		require.NoError(t, err)
-		require.Equal(t, ContentModerationActionAllow, decision.Action)
-	}
-	require.Equal(t, 2, requestCount)
-	require.Empty(t, hashCache.lowRiskWrites)
-}
-
 func TestContentModerationCheck_PreBlockBlocksCodexResponsesLatestUserInput(t *testing.T) {
 	var moderationRequest moderationAPIRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1636,54 +1398,6 @@ func TestContentModerationTestAPIKeys_400DoesNotFreezeAPIKey(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, result.Items[0].LastHTTPStatus)
 	require.Zero(t, result.Items[0].FailureCount)
 	require.Nil(t, result.Items[0].FrozenUntil)
-}
-
-func TestContentModerationCallModerationUsesConfiguredProxy(t *testing.T) {
-	proxyHit := false
-	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxyHit = true
-		require.Equal(t, http.MethodPost, r.Method)
-		require.Equal(t, "moderation.example", r.URL.Host)
-		require.Equal(t, "/v1/moderations", r.URL.Path)
-		require.Equal(t, "Bearer sk-test", r.Header.Get("Authorization"))
-		_ = json.NewEncoder(w).Encode(moderationAPIResponse{
-			Results: []moderationAPIResult{{
-				CategoryScores: map[string]float64{"sexual": 0.1},
-			}},
-		})
-	}))
-	defer proxyServer.Close()
-
-	proxyURL, err := url.Parse(proxyServer.URL)
-	require.NoError(t, err)
-	host, portText, err := net.SplitHostPort(proxyURL.Host)
-	require.NoError(t, err)
-	port, err := strconv.Atoi(portText)
-	require.NoError(t, err)
-	proxyID := int64(1001)
-
-	cfg := defaultContentModerationConfig()
-	cfg.BaseURL = "http://moderation.example"
-	cfg.APIKeys = []string{"sk-test"}
-	cfg.ProxyID = &proxyID
-	cfg.RetryCount = 0
-
-	svc := NewContentModerationService(nil, nil, nil, nil, nil, nil, nil)
-	svc.SetProxyRepository(&contentModerationProxyRepoStub{
-		proxy: &Proxy{
-			ID:       proxyID,
-			Protocol: proxyURL.Scheme,
-			Host:     host,
-			Port:     port,
-			Status:   StatusActive,
-		},
-	})
-
-	result, err := svc.callModeration(context.Background(), cfg, "hello")
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.True(t, proxyHit)
 }
 
 func TestContentModerationCheck_PreHashUsesRedisHashCache(t *testing.T) {

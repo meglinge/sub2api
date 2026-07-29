@@ -18,8 +18,13 @@ import type {
   AdminDataImportResult,
   CodexSessionImportRequest,
   CodexSessionImportResult,
+  OpenAICodexPATCreateRequest,
   CheckMixedChannelRequest,
-  CheckMixedChannelResponse
+  CheckMixedChannelResponse,
+  UpstreamBillingProbeResult,
+  UpstreamBillingProbeSettings,
+  OllamaCloudUsageSettings,
+  OllamaCloudUsageState
 } from '@/types'
 
 /**
@@ -40,6 +45,7 @@ export async function list(
     search?: string
     privacy_mode?: string
     lite?: string
+    include_scheduler_score?: string
     sort_by?: string
     sort_order?: 'asc' | 'desc'
   },
@@ -75,6 +81,7 @@ export async function listWithEtag(
     search?: string
     privacy_mode?: string
     lite?: string
+    include_scheduler_score?: string
     sort_by?: string
     sort_order?: 'asc' | 'desc'
   },
@@ -132,6 +139,50 @@ export async function getById(id: number): Promise<Account> {
  */
 export async function create(accountData: CreateAccountRequest): Promise<Account> {
   const { data } = await apiClient.post<Account>('/admin/accounts', accountData)
+  return data
+}
+
+/**
+ * Duplicate an account while keeping credentials on the server.
+ * @param id - Source account ID
+ * @returns Newly created account
+ */
+const duplicateOperationKeys = new Map<number, string>()
+
+function duplicateOperationStorageKey(id: number): string {
+  return `sub2api:admin:account-duplicate:${id}`
+}
+
+function getStoredDuplicateOperationKey(id: number): string | null {
+  try {
+    return globalThis.sessionStorage?.getItem(duplicateOperationStorageKey(id)) ?? null
+  } catch {
+    return null
+  }
+}
+
+function storeDuplicateOperationKey(id: number, key: string | null): void {
+  try {
+    if (key) globalThis.sessionStorage?.setItem(duplicateOperationStorageKey(id), key)
+    else globalThis.sessionStorage?.removeItem(duplicateOperationStorageKey(id))
+  } catch {
+    // In-memory retry protection still works when browser storage is unavailable.
+  }
+}
+
+export async function duplicate(id: number): Promise<Account> {
+  let idempotencyKey = duplicateOperationKeys.get(id) ?? getStoredDuplicateOperationKey(id)
+  if (!idempotencyKey) {
+    const requestID = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    idempotencyKey = `account-duplicate-${id}-${requestID}`
+  }
+  duplicateOperationKeys.set(id, idempotencyKey)
+  storeDuplicateOperationKey(id, idempotencyKey)
+  const { data } = await apiClient.post<Account>(`/admin/accounts/${id}/duplicate`, undefined, {
+    headers: { 'Idempotency-Key': idempotencyKey }
+  })
+  duplicateOperationKeys.delete(id)
+  storeDuplicateOperationKey(id, null)
   return data
 }
 
@@ -557,7 +608,9 @@ export async function syncFromCrs(params: {
       action: string
       error?: string
     }>
-  }>('/admin/accounts/sync/crs', params)
+  }>('/admin/accounts/sync/crs', params, {
+    timeout: 180000 // 180s timeout: sync refreshes each existing account's OAuth token serially
+  })
   return data
 }
 
@@ -608,7 +661,14 @@ export async function importData(payload: {
 }
 
 export async function importCodexSession(payload: CodexSessionImportRequest): Promise<CodexSessionImportResult> {
-  const { data } = await apiClient.post<CodexSessionImportResult>('/admin/accounts/import/codex-session', payload)
+  const { data } = await apiClient.post<CodexSessionImportResult>('/admin/accounts/import/codex-session', payload, {
+    timeout: 120000 // 120s timeout for large session imports
+  })
+  return data
+}
+
+export async function createOpenAICodexPAT(payload: OpenAICodexPATCreateRequest): Promise<Account> {
+  const { data } = await apiClient.post<Account>('/admin/openai/create-from-codex-pat', payload)
   return data
 }
 
@@ -728,8 +788,13 @@ export interface OpenAIAdditionalRateLimit {
   rate_limit?: OpenAIRateLimit | null
 }
 
+export interface OpenAIRateLimitResetCreditDetail {
+  expires_at?: string
+}
+
 export interface OpenAIRateLimitResetCredits {
   available_count: number
+  credits?: OpenAIRateLimitResetCreditDetail[]
 }
 
 export interface OpenAIQuotaUsage {
@@ -775,11 +840,100 @@ export async function resetOpenAIQuota(id: number): Promise<OpenAIQuotaResetResu
   return data
 }
 
+export interface SparkShadowCreatePayload {
+  name?: string
+  priority?: number
+  concurrency?: number
+  group_ids?: number[]
+}
+
+export async function createSparkShadow(parentId: number, payload: SparkShadowCreatePayload): Promise<Account> {
+  const { data } = await apiClient.post<Account>(`/admin/accounts/${parentId}/shadow`, payload)
+  return data
+}
+
+export async function getUpstreamBillingProbeSettings(): Promise<UpstreamBillingProbeSettings> {
+  const { data } = await apiClient.get<UpstreamBillingProbeSettings>('/admin/accounts/upstream-billing-probe/settings')
+  return data
+}
+
+export async function updateUpstreamBillingProbeSettings(
+  settings: UpstreamBillingProbeSettings
+): Promise<UpstreamBillingProbeSettings> {
+  const { data } = await apiClient.put<UpstreamBillingProbeSettings>(
+    '/admin/accounts/upstream-billing-probe/settings',
+    settings
+  )
+  return data
+}
+
+export async function setUpstreamBillingProbeEnabled(id: number, enabled: boolean): Promise<void> {
+  await apiClient.put(`/admin/accounts/${id}/upstream-billing-probe`, { enabled })
+}
+
+export async function probeUpstreamBilling(id: number): Promise<UpstreamBillingProbeResult> {
+  const { data } = await apiClient.post<UpstreamBillingProbeResult>(`/admin/accounts/${id}/upstream-billing-probe`)
+  return data
+}
+
+export async function probeUpstreamBillingBatch(accountIds: number[]): Promise<UpstreamBillingProbeResult[]> {
+  const { data } = await apiClient.post<{ results: UpstreamBillingProbeResult[] }>(
+    '/admin/accounts/upstream-billing-probe/batch',
+    { account_ids: accountIds }
+  )
+  return data.results
+}
+
+export async function getOllamaCloudUsageSettings(): Promise<OllamaCloudUsageSettings> {
+  const { data } = await apiClient.get<OllamaCloudUsageSettings>('/admin/accounts/ollama-cloud-usage/settings')
+  return data
+}
+
+export async function updateOllamaCloudUsageSettings(
+  settings: OllamaCloudUsageSettings
+): Promise<OllamaCloudUsageSettings> {
+  const { data } = await apiClient.put<OllamaCloudUsageSettings>(
+    '/admin/accounts/ollama-cloud-usage/settings',
+    settings
+  )
+  return data
+}
+
+export async function getOllamaCloudUsage(id: number): Promise<OllamaCloudUsageState> {
+  const { data } = await apiClient.get<OllamaCloudUsageState>(`/admin/accounts/${id}/ollama-cloud-usage`)
+  return data
+}
+
+export async function saveOllamaCloudUsageSession(id: number, session: string): Promise<OllamaCloudUsageState> {
+  const { data } = await apiClient.put<OllamaCloudUsageState>(`/admin/accounts/${id}/ollama-cloud-usage/session`, {
+    session
+  })
+  return data
+}
+
+export async function deleteOllamaCloudUsageSession(id: number): Promise<OllamaCloudUsageState> {
+  const { data } = await apiClient.delete<OllamaCloudUsageState>(`/admin/accounts/${id}/ollama-cloud-usage/session`)
+  return data
+}
+
+export async function setOllamaCloudUsageAutoRefresh(id: number, enabled: boolean): Promise<OllamaCloudUsageState> {
+  const { data } = await apiClient.put<OllamaCloudUsageState>(`/admin/accounts/${id}/ollama-cloud-usage/auto-refresh`, {
+    enabled
+  })
+  return data
+}
+
+export async function refreshOllamaCloudUsage(id: number): Promise<OllamaCloudUsageState> {
+  const { data } = await apiClient.post<OllamaCloudUsageState>(`/admin/accounts/${id}/ollama-cloud-usage/refresh`)
+  return data
+}
+
 export const accountsAPI = {
   list,
   listWithEtag,
   getById,
   create,
+  duplicate,
   update,
   checkMixedChannelRisk,
   delete: deleteAccount,
@@ -812,13 +966,27 @@ export const accountsAPI = {
   exportData,
   importData,
   importCodexSession,
+  createOpenAICodexPAT,
   getAntigravityDefaultModelMapping,
   batchClearError,
   batchRefresh,
   setPrivacy,
   revertProxyFallback,
   queryOpenAIQuota,
-  resetOpenAIQuota
+  resetOpenAIQuota,
+  createSparkShadow,
+  getUpstreamBillingProbeSettings,
+  updateUpstreamBillingProbeSettings,
+  setUpstreamBillingProbeEnabled,
+  probeUpstreamBilling,
+  probeUpstreamBillingBatch,
+  getOllamaCloudUsageSettings,
+  updateOllamaCloudUsageSettings,
+  getOllamaCloudUsage,
+  saveOllamaCloudUsageSession,
+  deleteOllamaCloudUsageSession,
+  setOllamaCloudUsageAutoRefresh,
+  refreshOllamaCloudUsage
 }
 
 export default accountsAPI

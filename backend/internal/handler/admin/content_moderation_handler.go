@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -20,32 +19,11 @@ func NewContentModerationHandler(svc *service.ContentModerationService) *Content
 	return &ContentModerationHandler{service: svc}
 }
 
-type nullableInt64Field struct {
-	Set   bool
-	Value *int64
-}
-
-func (f *nullableInt64Field) UnmarshalJSON(data []byte) error {
-	f.Set = true
-	raw := strings.TrimSpace(string(data))
-	if raw == "" || raw == "null" {
-		f.Value = nil
-		return nil
-	}
-	var value int64
-	if err := json.Unmarshal(data, &value); err != nil {
-		return err
-	}
-	f.Value = &value
-	return nil
-}
-
 type contentModerationConfigRequest struct {
 	Enabled              *bool               `json:"enabled"`
 	Mode                 *string             `json:"mode"`
 	BaseURL              *string             `json:"base_url"`
 	Model                *string             `json:"model"`
-	ProxyID              nullableInt64Field  `json:"proxy_id"`
 	APIKey               *string             `json:"api_key"`
 	APIKeys              *[]string           `json:"api_keys"`
 	APIKeysMode          string              `json:"api_keys_mode"`
@@ -75,22 +53,15 @@ type contentModerationConfigRequest struct {
 	BlockedKeywords                *[]string                             `json:"blocked_keywords"`
 	KeywordBlockingMode            *string                               `json:"keyword_blocking_mode"`
 	ModelFilter                    *service.ContentModerationModelFilter `json:"model_filter"`
-	// fork content moderation enhancements
-	ShortTextSkipEnabled   *bool    `json:"short_text_skip_enabled"`
-	ShortTextSkipRunes     *int     `json:"short_text_skip_runes"`
-	LowRiskCacheEnabled    *bool    `json:"low_risk_cache_enabled"`
-	LowRiskCacheTTLSeconds *int     `json:"low_risk_cache_ttl_seconds"`
-	LowRiskCacheMaxScore   *float64 `json:"low_risk_cache_max_score"`
 }
 
 type contentModerationAPIKeyTestRequest struct {
-	APIKeys   []string           `json:"api_keys"`
-	BaseURL   string             `json:"base_url"`
-	Model     string             `json:"model"`
-	ProxyID   nullableInt64Field `json:"proxy_id"`
-	TimeoutMS int                `json:"timeout_ms"`
-	Prompt    string             `json:"prompt"`
-	Images    []string           `json:"images"`
+	APIKeys   []string `json:"api_keys"`
+	BaseURL   string   `json:"base_url"`
+	Model     string   `json:"model"`
+	TimeoutMS int      `json:"timeout_ms"`
+	Prompt    string   `json:"prompt"`
+	Images    []string `json:"images"`
 }
 
 type contentModerationHashRequest struct {
@@ -117,8 +88,6 @@ func (h *ContentModerationHandler) UpdateConfig(c *gin.Context) {
 		Mode:                           req.Mode,
 		BaseURL:                        req.BaseURL,
 		Model:                          req.Model,
-		ProxyID:                        req.ProxyID.Value,
-		ProxyIDSet:                     req.ProxyID.Set,
 		APIKey:                         req.APIKey,
 		APIKeys:                        req.APIKeys,
 		APIKeysMode:                    req.APIKeysMode,
@@ -146,11 +115,6 @@ func (h *ContentModerationHandler) UpdateConfig(c *gin.Context) {
 		BlockedKeywords:                req.BlockedKeywords,
 		KeywordBlockingMode:            req.KeywordBlockingMode,
 		ModelFilter:                    req.ModelFilter,
-		ShortTextSkipEnabled:           req.ShortTextSkipEnabled,
-		ShortTextSkipRunes:             req.ShortTextSkipRunes,
-		LowRiskCacheEnabled:            req.LowRiskCacheEnabled,
-		LowRiskCacheTTLSeconds:         req.LowRiskCacheTTLSeconds,
-		LowRiskCacheMaxScore:           req.LowRiskCacheMaxScore,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -166,14 +130,12 @@ func (h *ContentModerationHandler) TestAPIKeys(c *gin.Context) {
 		return
 	}
 	result, err := h.service.TestAPIKeys(c.Request.Context(), service.TestContentModerationAPIKeysInput{
-		APIKeys:    req.APIKeys,
-		BaseURL:    req.BaseURL,
-		Model:      req.Model,
-		ProxyID:    req.ProxyID.Value,
-		ProxyIDSet: req.ProxyID.Set,
-		TimeoutMS:  req.TimeoutMS,
-		Prompt:     req.Prompt,
-		Images:     req.Images,
+		APIKeys:   req.APIKeys,
+		BaseURL:   req.BaseURL,
+		Model:     req.Model,
+		TimeoutMS: req.TimeoutMS,
+		Prompt:    req.Prompt,
+		Images:    req.Images,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

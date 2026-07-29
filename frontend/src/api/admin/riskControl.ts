@@ -14,7 +14,6 @@ export interface ContentModerationConfig {
   mode: ModerationMode
   base_url: string
   model: string
-  proxy_id: number | null
   api_key_configured: boolean
   api_key_masked: string
   api_key_count: number
@@ -42,11 +41,6 @@ export interface ContentModerationConfig {
   keyword_blocking_mode: KeywordBlockingMode
   model_filter: ContentModerationModelFilter
   cyber_policy_exclude_from_ban_count: boolean
-  short_text_skip_enabled: boolean
-  short_text_skip_runes: number
-  low_risk_cache_enabled: boolean
-  low_risk_cache_ttl_seconds: number
-  low_risk_cache_max_score: number
 }
 
 export type ContentModerationAPIKeyStatusValue = 'unknown' | 'ok' | 'error' | 'frozen'
@@ -71,7 +65,6 @@ export interface TestContentModerationAPIKeysPayload {
   api_keys?: string[]
   base_url?: string
   model?: string
-  proxy_id?: number | null
   timeout_ms?: number
   prompt?: string
   images?: string[]
@@ -97,7 +90,6 @@ export interface UpdateContentModerationConfig {
   mode?: ModerationMode
   base_url?: string
   model?: string
-  proxy_id?: number | null
   api_key?: string
   api_keys?: string[]
   api_keys_mode?: 'append' | 'replace'
@@ -125,11 +117,6 @@ export interface UpdateContentModerationConfig {
   keyword_blocking_mode?: KeywordBlockingMode
   model_filter?: ContentModerationModelFilter
   cyber_policy_exclude_from_ban_count?: boolean
-  short_text_skip_enabled?: boolean
-  short_text_skip_runes?: number
-  low_risk_cache_enabled?: boolean
-  low_risk_cache_ttl_seconds?: number
-  low_risk_cache_max_score?: number
 }
 
 export interface ContentModerationRuntimeStatus {
@@ -159,9 +146,6 @@ export interface ContentModerationRuntimeStatus {
   pre_block_api_key_loads: ContentModerationAPIKeyLoad[]
   api_key_statuses: ContentModerationAPIKeyStatus[]
   flagged_hash_count: number
-  short_text_skipped: number
-  low_risk_cache_hits: number
-  low_risk_cache_writes: number
   last_cleanup_at?: string
   last_cleanup_deleted_hit: number
   last_cleanup_deleted_non_hit: number
@@ -198,6 +182,7 @@ export interface ContentModerationLog {
   flagged: boolean
   highest_category: string
   highest_score: number
+  matched_keyword: string
   category_scores: Record<string, number>
   threshold_snapshot: Record<string, number>
   input_excerpt: string

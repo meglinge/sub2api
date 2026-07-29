@@ -46,14 +46,12 @@ const (
 
 // probeURLs 按优先级排列的探测 URL 列表
 // 某些 AI API 专用代理只允许访问特定域名，因此需要多个备选
-// ipinfo.io 和 ip-api.com 均支持 IPv4/IPv6 双栈，可用于 IPv6 代理检测
 var probeURLs = []struct {
 	url    string
-	parser string // "ip-api", "ipinfo", or "httpbin"
+	parser string // "ip-api" or "ipify"
 }{
 	{"http://ip-api.com/json/?lang=zh-CN", "ip-api"},
-	{"https://ipinfo.io/json", "ipinfo"},
-	{"http://httpbin.org/ip", "httpbin"},
+	{"http://api64.ipify.org?format=json", "ipify"},
 }
 
 type proxyProbeService struct {
@@ -121,10 +119,8 @@ func (s *proxyProbeService) probeWithURL(ctx context.Context, client *http.Clien
 	switch parser {
 	case "ip-api":
 		return s.parseIPAPI(body, latencyMs)
-	case "ipinfo":
-		return s.parseIPInfo(body, latencyMs)
-	case "httpbin":
-		return s.parseHTTPBin(body, latencyMs)
+	case "ipify":
+		return s.parseIPify(body, latencyMs)
 	default:
 		return nil, latencyMs, fmt.Errorf("unknown parser: %s", parser)
 	}
@@ -169,42 +165,17 @@ func (s *proxyProbeService) parseIPAPI(body []byte, latencyMs int64) (*service.P
 	}, latencyMs, nil
 }
 
-func (s *proxyProbeService) parseIPInfo(body []byte, latencyMs int64) (*service.ProxyExitInfo, int64, error) {
-	// ipinfo.io/json 返回格式: {"ip":"...","city":"...","region":"...","country":"US",...}
-	// "country" 字段为 ISO 3166-1 alpha-2 国家代码（2位），支持 IPv4 和 IPv6
+func (s *proxyProbeService) parseIPify(body []byte, latencyMs int64) (*service.ProxyExitInfo, int64, error) {
 	var result struct {
-		IP      string `json:"ip"`
-		City    string `json:"city"`
-		Region  string `json:"region"`
-		Country string `json:"country"` // 2-letter country code, e.g. "US"
+		IP string `json:"ip"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, latencyMs, fmt.Errorf("failed to parse ipinfo response: %w", err)
+		return nil, latencyMs, fmt.Errorf("failed to parse ipify response: %w", err)
 	}
 	if result.IP == "" {
-		return nil, latencyMs, fmt.Errorf("ipinfo: no IP found in response")
+		return nil, latencyMs, fmt.Errorf("ipify: no IP found in response")
 	}
 	return &service.ProxyExitInfo{
-		IP:          result.IP,
-		City:        result.City,
-		Region:      result.Region,
-		Country:     result.Country,
-		CountryCode: result.Country,
-	}, latencyMs, nil
-}
-
-func (s *proxyProbeService) parseHTTPBin(body []byte, latencyMs int64) (*service.ProxyExitInfo, int64, error) {
-	// httpbin.org/ip 返回格式: {"origin": "1.2.3.4"}
-	var result struct {
-		Origin string `json:"origin"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, latencyMs, fmt.Errorf("failed to parse httpbin response: %w", err)
-	}
-	if result.Origin == "" {
-		return nil, latencyMs, fmt.Errorf("httpbin: no IP found in response")
-	}
-	return &service.ProxyExitInfo{
-		IP: result.Origin,
+		IP: result.IP,
 	}, latencyMs, nil
 }

@@ -199,14 +199,6 @@
                   <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.droppedErrors') }}</p>
                   <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatNumber((status?.dropped ?? 0) + (status?.errors ?? 0)) }}</p>
                 </div>
-                <div class="rounded-lg bg-sky-50 p-4 dark:bg-sky-900/10">
-                  <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.shortTextSkipped') }}</p>
-                  <p class="mt-2 text-2xl font-semibold text-sky-700 dark:text-sky-300">{{ formatNumber(status?.short_text_skipped ?? 0) }}</p>
-                </div>
-                <div class="rounded-lg bg-indigo-50 p-4 dark:bg-indigo-900/10">
-                  <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.lowRiskCacheHits') }}</p>
-                  <p class="mt-2 text-2xl font-semibold text-indigo-700 dark:text-indigo-300">{{ formatNumber(status?.low_risk_cache_hits ?? 0) }}</p>
-                </div>
               </div>
             </div>
 
@@ -325,6 +317,9 @@
                     <td class="whitespace-nowrap px-5 py-4 text-sm text-gray-700 dark:text-gray-300">
                       <div>{{ row.highest_category || '-' }}</div>
                       <div class="text-xs text-gray-400">{{ percent(row.highest_score) }}</div>
+                      <div v-if="row.matched_keyword" class="mt-0.5 text-xs font-medium text-red-600 dark:text-red-300" :title="t('admin.riskControl.matchedKeyword') + ': ' + row.matched_keyword">
+                        {{ t('admin.riskControl.matchedKeyword') }}: {{ row.matched_keyword }}
+                      </div>
                     </td>
                     <td class="whitespace-nowrap px-5 py-4 text-sm text-gray-700 dark:text-gray-300">
                       <div>{{ violationCountText(row) }}</div>
@@ -413,11 +408,6 @@
               <div>
                 <label class="input-label">{{ t('admin.riskControl.model') }}</label>
                 <input v-model.trim="configForm.model" type="text" class="input" placeholder="omni-moderation-latest" />
-              </div>
-              <div>
-                <label class="input-label">{{ t('admin.riskControl.proxy') }}</label>
-                <ProxySelector v-model="configForm.proxy_id" :proxies="proxies" />
-                <p class="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.proxyHint') }}</p>
               </div>
               <div>
                 <label class="input-label">{{ t('admin.riskControl.timeoutMs') }}</label>
@@ -826,38 +816,6 @@
             <div class="space-y-4 rounded-lg border border-gray-100 p-4 dark:border-dark-700 lg:col-span-2">
               <div class="flex items-center justify-between gap-4">
                 <div>
-                  <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.riskControl.shortTextSkip') }}</p>
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.shortTextSkipHint') }}</p>
-                </div>
-                <Toggle v-model="configForm.short_text_skip_enabled" />
-              </div>
-              <div>
-                <label class="input-label">{{ t('admin.riskControl.shortTextSkipRunes') }}</label>
-                <input v-model.number="configForm.short_text_skip_runes" type="number" min="1" max="64" class="input" />
-              </div>
-            </div>
-            <div class="space-y-4 rounded-lg border border-gray-100 p-4 dark:border-dark-700 lg:col-span-2">
-              <div class="flex items-center justify-between gap-4">
-                <div>
-                  <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.riskControl.lowRiskCache') }}</p>
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.lowRiskCacheHint') }}</p>
-                </div>
-                <Toggle v-model="configForm.low_risk_cache_enabled" />
-              </div>
-              <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div>
-                  <label class="input-label">{{ t('admin.riskControl.lowRiskCacheTTL') }}</label>
-                  <input v-model.number="configForm.low_risk_cache_ttl_seconds" type="number" min="60" max="604800" class="input" />
-                </div>
-                <div>
-                  <label class="input-label">{{ t('admin.riskControl.lowRiskCacheMaxScore') }}</label>
-                  <input v-model.number="configForm.low_risk_cache_max_score" type="number" min="0.001" max="1" step="0.001" class="input" />
-                </div>
-              </div>
-            </div>
-            <div class="space-y-4 rounded-lg border border-gray-100 p-4 dark:border-dark-700 lg:col-span-2">
-              <div class="flex items-center justify-between gap-4">
-                <div>
                   <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.riskControl.preHashCheck') }}</p>
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.preHashCheckHint') }}</p>
                 </div>
@@ -1123,6 +1081,10 @@
                 {{ inputDetailRow.highest_category || '-' }} / {{ percent(inputDetailRow.highest_score) }}
               </p>
             </div>
+            <div v-if="inputDetailRow.matched_keyword" class="rounded-lg border border-red-100 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-900/20">
+              <p class="text-xs font-medium text-red-500 dark:text-red-300">{{ t('admin.riskControl.matchedKeyword') }}</p>
+              <p class="mt-1 truncate text-sm font-semibold text-red-700 dark:text-red-200" :title="inputDetailRow.matched_keyword">{{ inputDetailRow.matched_keyword }}</p>
+            </div>
           </div>
 
           <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-800">
@@ -1160,7 +1122,6 @@ import Icon from '@/components/icons/Icon.vue'
 import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Pagination from '@/components/common/Pagination.vue'
-import ProxySelector from '@/components/common/ProxySelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import { adminAPI } from '@/api/admin'
 import type {
@@ -1176,7 +1137,7 @@ import type {
   ModerationMode,
   UpdateContentModerationConfig,
 } from '@/api/admin/riskControl'
-import type { AdminGroup, Proxy, SelectOption } from '@/types'
+import type { AdminGroup, SelectOption } from '@/types'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatDateTime as formatDateTimeValue } from '@/utils/format'
@@ -1230,6 +1191,7 @@ const riskThresholdCategories = Object.keys(riskThresholdDefaults)
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const defaultBlockMessage = () => t('admin.riskControl.defaultBlockMessage')
 
 const loading = ref(true)
 const saving = ref(false)
@@ -1243,7 +1205,6 @@ const activeSettingsTab = ref<SettingsTab>('basic')
 const groupSearch = ref('')
 const flaggedHashInput = ref('')
 const groups = ref<AdminGroup[]>([])
-const proxies = ref<Proxy[]>([])
 const logs = ref<ContentModerationLog[]>([])
 const status = ref<ContentModerationRuntimeStatus | null>(null)
 const testedApiKeyStatuses = ref<ContentModerationAPIKeyStatus[]>([])
@@ -1260,7 +1221,6 @@ const configForm = reactive({
   mode: 'pre_block' as ModerationMode,
   base_url: 'https://api.openai.com',
   model: 'omni-moderation-latest',
-  proxy_id: null as number | null,
   api_keys_text: '',
   api_key_configured: false,
   api_key_masked: '',
@@ -1278,7 +1238,7 @@ const configForm = reactive({
   worker_count: 4,
   queue_size: 32768,
   block_status: 403,
-  block_message: '内容审计命中风险规则，请调整输入后重试',
+  block_message: defaultBlockMessage(),
   email_on_hit: true,
   auto_ban_enabled: true,
   cyber_policy_exclude_from_ban_count: false,
@@ -1292,11 +1252,6 @@ const configForm = reactive({
   keyword_blocking_mode: 'keyword_and_api' as KeywordBlockingMode,
   model_filter_type: 'all' as ContentModerationModelFilterType,
   model_filter_models: [] as string[],
-  short_text_skip_enabled: false,
-  short_text_skip_runes: 16,
-  low_risk_cache_enabled: false,
-  low_risk_cache_ttl_seconds: 21600,
-  low_risk_cache_max_score: 0.05,
 })
 
 const pagination = reactive({
@@ -1740,7 +1695,6 @@ function applyConfig(config: ContentModerationConfig) {
   configForm.mode = config.mode
   configForm.base_url = config.base_url || 'https://api.openai.com'
   configForm.model = config.model || 'omni-moderation-latest'
-  configForm.proxy_id = config.proxy_id ?? null
   configForm.api_keys_text = ''
   configForm.api_key_configured = config.api_key_configured
   configForm.api_key_masked = config.api_key_masked || ''
@@ -1761,7 +1715,7 @@ function applyConfig(config: ContentModerationConfig) {
   configForm.worker_count = config.worker_count || 4
   configForm.queue_size = config.queue_size || 32768
   configForm.block_status = config.block_status || 403
-  configForm.block_message = config.block_message || '内容审计命中风险规则，请调整输入后重试'
+  configForm.block_message = config.block_message || defaultBlockMessage()
   configForm.email_on_hit = config.email_on_hit ?? true
   configForm.auto_ban_enabled = config.auto_ban_enabled ?? true
   configForm.cyber_policy_exclude_from_ban_count = config.cyber_policy_exclude_from_ban_count ?? false
@@ -1776,25 +1730,18 @@ function applyConfig(config: ContentModerationConfig) {
   const modelFilter = normalizeModelFilter(config.model_filter)
   configForm.model_filter_type = modelFilter.type
   configForm.model_filter_models = modelFilter.models
-  configForm.short_text_skip_enabled = config.short_text_skip_enabled ?? false
-  configForm.short_text_skip_runes = config.short_text_skip_runes || 16
-  configForm.low_risk_cache_enabled = config.low_risk_cache_enabled ?? false
-  configForm.low_risk_cache_ttl_seconds = config.low_risk_cache_ttl_seconds || 21600
-  configForm.low_risk_cache_max_score = config.low_risk_cache_max_score || 0.05
 }
 
 async function loadAll() {
   loading.value = true
   try {
-    const [config, groupItems, proxyItems, runtimeStatus] = await Promise.all([
+    const [config, groupItems, runtimeStatus] = await Promise.all([
       adminAPI.riskControl.getConfig(),
       adminAPI.groups.getAll(),
-      adminAPI.proxies.getAllWithCount(),
       adminAPI.riskControl.getStatus(),
     ])
     applyConfig(config)
     groups.value = groupItems
-    proxies.value = proxyItems
     status.value = runtimeStatus
     if (Array.isArray(runtimeStatus.api_key_statuses)) {
       configForm.api_key_statuses = [...runtimeStatus.api_key_statuses]
@@ -1839,7 +1786,6 @@ async function saveConfig() {
       mode: configForm.mode,
       base_url: configForm.base_url,
       model: configForm.model,
-      proxy_id: configForm.proxy_id,
       timeout_ms: Number(configForm.timeout_ms) || 3000,
       retry_count: Number(configForm.retry_count) || 0,
       sample_rate: Number(configForm.sample_rate) || 0,
@@ -1850,7 +1796,7 @@ async function saveConfig() {
       worker_count: Number(configForm.worker_count) || 4,
       queue_size: Number(configForm.queue_size) || 32768,
       block_status: Number(configForm.block_status) || 403,
-      block_message: configForm.block_message || '内容审计命中风险规则，请调整输入后重试',
+      block_message: configForm.block_message || defaultBlockMessage(),
       email_on_hit: configForm.email_on_hit,
       auto_ban_enabled: configForm.auto_ban_enabled,
       cyber_policy_exclude_from_ban_count: configForm.cyber_policy_exclude_from_ban_count,
@@ -1863,11 +1809,6 @@ async function saveConfig() {
       blocked_keywords: blockedKeywordList.value,
       keyword_blocking_mode: configForm.keyword_blocking_mode,
       model_filter: modelFilterPayload,
-      short_text_skip_enabled: configForm.short_text_skip_enabled,
-      short_text_skip_runes: Math.min(Math.max(Number(configForm.short_text_skip_runes) || 16, 1), 64),
-      low_risk_cache_enabled: configForm.low_risk_cache_enabled,
-      low_risk_cache_ttl_seconds: Math.min(Math.max(Number(configForm.low_risk_cache_ttl_seconds) || 21600, 60), 604800),
-      low_risk_cache_max_score: Math.min(Math.max(Number(configForm.low_risk_cache_max_score) || 0.05, 0.001), 1),
     }
     const keys = parseApiKeys(configForm.api_keys_text)
     if (!payload.clear_api_key && configForm.api_keys_mode === 'replace' && keys.length === 0) {
@@ -2042,7 +1983,6 @@ async function testApiKeys(useInputKeys: boolean) {
       api_keys: keys,
       base_url: configForm.base_url,
       model: configForm.model,
-      proxy_id: configForm.proxy_id,
       timeout_ms: Number(configForm.timeout_ms) || 3000,
       prompt: moderationTestPrompt.value,
       images: moderationTestImages.value,
