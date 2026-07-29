@@ -413,6 +413,58 @@ func appendMissingGrokFreeCacheNativeTools(body []byte) ([]byte, error) {
 	return appendGrokFreeCacheNativeTools(body, false)
 }
 
+// normalizeGrokHostedSearchTools is the final compatibility guard before a
+// request is sent to xAI. xAI treats web_search and x_search as one hosted
+// tool and rejects any request containing more than one declaration.
+func normalizeGrokHostedSearchTools(body []byte) ([]byte, error) {
+	tools := gjson.GetBytes(body, "tools")
+	if !tools.Exists() || !tools.IsArray() {
+		return body, nil
+	}
+
+	items := tools.Array()
+	normalized := make([]json.RawMessage, 0, len(items))
+	searchAdded := false
+	changed := false
+	for _, tool := range items {
+		if !tool.IsObject() {
+			normalized = append(normalized, json.RawMessage(tool.Raw))
+			continue
+		}
+
+		toolType := strings.TrimSpace(tool.Get("type").String())
+		if toolType != "web_search" && toolType != "x_search" {
+			normalized = append(normalized, json.RawMessage(tool.Raw))
+			continue
+		}
+		if searchAdded {
+			changed = true
+			continue
+		}
+
+		raw := tool.Raw
+		if toolType == "web_search" {
+			var err error
+			raw, err = sjson.Set(tool.Raw, "type", "x_search")
+			if err != nil {
+				return nil, err
+			}
+			changed = true
+		}
+		normalized = append(normalized, json.RawMessage(raw))
+		searchAdded = true
+	}
+	if !changed {
+		return body, nil
+	}
+
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, err
+	}
+	return sjson.SetRawBytes(body, "tools", encoded)
+}
+
 func appendGrokFreeCacheNativeTools(body []byte, allowPureClientTools bool) ([]byte, error) {
 	return appendGrokFreeCacheNativeToolsWithPolicy(body, allowPureClientTools, true)
 }

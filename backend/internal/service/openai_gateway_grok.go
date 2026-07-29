@@ -84,6 +84,10 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if err != nil {
 		return nil, fmt.Errorf("apply grok Free function-tool cache route: %w", err)
 	}
+	patchedBody, err = normalizeGrokHostedSearchTools(patchedBody)
+	if err != nil {
+		return nil, fmt.Errorf("normalize grok hosted search tools: %w", err)
+	}
 
 	token, _, err := s.getRequestCredential(ctx, c, account)
 	if err != nil {

@@ -1635,7 +1635,13 @@ func TestForwardGrokResponsesAPIKeyUsesXAIResponses(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	body := []byte(`{"model":"grok","input":"hi","stream":true}`)
+	body := []byte(`{
+		"model":"grok",
+		"input":"hi",
+		"stream":true,
+		"tools":[{"type":"web_search"},{"type":"x_search"},{"type":"x_search"}],
+		"tool_choice":"auto"
+	}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
@@ -1670,6 +1676,8 @@ func TestForwardGrokResponsesAPIKeyUsesXAIResponses(t *testing.T) {
 	require.Empty(t, upstream.lastReq.Header.Get("X-Grok-Client-Version"))
 	require.NotEqual(t, grokUpstreamUserAgent, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "grok-4.5", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.Len(t, gjson.GetBytes(upstream.lastBody, "tools").Array(), 1)
+	require.Equal(t, "x_search", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
 	require.Equal(t, "resp_grok_api_key", result.ResponseID)
 	require.Equal(t, 2, result.Usage.InputTokens)
 	require.Equal(t, 1, result.Usage.OutputTokens)

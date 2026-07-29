@@ -87,6 +87,29 @@ func TestAppendGrokFreeCacheNativeTools_DeduplicatesHostedSearch(t *testing.T) {
 	assert.Equal(t, "low", tools[1].Get("search_context_size").String())
 }
 
+func TestNormalizeGrokHostedSearchTools_DeduplicatesWithoutCacheRoute(t *testing.T) {
+	body := []byte(`{
+		"model":"grok-4.5",
+		"tools":[
+			{"type":"function","name":"view_image","parameters":{"type":"object"}},
+			{"type":"web_search","search_context_size":"low"},
+			{"type":"x_search"},
+			{"type":"x_search","ignored":true}
+		],
+		"tool_choice":{"type":"auto"}
+	}`)
+
+	result, err := normalizeGrokHostedSearchTools(body)
+	require.NoError(t, err)
+
+	tools := gjson.GetBytes(result, "tools").Array()
+	require.Len(t, tools, 2)
+	assert.Equal(t, "function", tools[0].Get("type").String())
+	assert.Equal(t, "view_image", tools[0].Get("name").String())
+	assert.Equal(t, "x_search", tools[1].Get("type").String())
+	assert.Equal(t, "low", tools[1].Get("search_context_size").String())
+}
+
 func TestAppendMissingGrokFreeCacheNativeTools_MultipleFunctionsNoSearch(t *testing.T) {
 	body := []byte(`{
 		"model": "grok-4.5",
