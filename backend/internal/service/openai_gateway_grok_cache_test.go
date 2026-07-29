@@ -315,8 +315,8 @@ func TestApplyGrokCacheIdentityWritesResponsesBodyAndHeader(t *testing.T) {
 	body, err := applyGrokResponsesCacheIdentity(sourceBody, sourceBody, "isolated-id", true)
 	require.NoError(t, err)
 	require.Equal(t, "isolated-id", gjson.GetBytes(body, "prompt_cache_key").String())
-	require.Equal(t, "web_search", gjson.GetBytes(body, "tools.0.type").String())
-	require.Equal(t, "x_search", gjson.GetBytes(body, "tools.1.type").String())
+	require.Len(t, gjson.GetBytes(body, "tools").Array(), 1)
+	require.Equal(t, "x_search", gjson.GetBytes(body, "tools.0.type").String())
 	require.Equal(t, grokFreeCacheDisabledToolChoice, gjson.GetBytes(body, "tool_choice").String())
 
 	headers := make(http.Header)

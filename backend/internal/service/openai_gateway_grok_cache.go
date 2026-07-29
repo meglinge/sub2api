@@ -17,7 +17,7 @@ const (
 	grokConversationIDHeader         = "X-Grok-Conv-Id"
 	claudeCodeSessionHeader          = "X-Claude-Code-Session-Id"
 	grokClientToolCacheOptInHeader   = "X-Sub2API-Grok-Client-Tool-Cache"
-	grokFreeCacheNativeToolsJSON     = `[{"type":"web_search"},{"type":"x_search"}]`
+	grokFreeCacheNativeToolsJSON     = `[{"type":"x_search"}]`
 	grokFreeCacheDisabledToolChoice  = "none"
 	grokClientToolCacheOptInExtraKey = "grok_client_tool_cache_enabled"
 )
@@ -142,9 +142,9 @@ func isGrokRequestContext(c *gin.Context) bool {
 // xAI Responses request. Existing client values are deliberately replaced by
 // the tenant-isolated value to prevent collisions on shared OAuth accounts.
 //
-// Free OAuth requests without native search tools are routed by xAI to the
-// non-cacheable build-free model. For otherwise tool-free requests, add the
-// native tools with tool_choice=none: this selects the cache-capable tier
+// Free OAuth requests without a native search tool are routed by xAI to the
+// non-cacheable build-free model. For otherwise tool-free requests, add one
+// native x_search with tool_choice=none: this selects the cache-capable tier
 // without allowing an actual search. Explicit client function tools are handled by
 // applyGrokFreeMessagesFunctionToolCacheRoute (Messages bridge and native Responses).
 func applyGrokResponsesCacheIdentity(body, intentSourceBody []byte, identity string, injectFreeTierTools bool) ([]byte, error) {
