@@ -520,6 +520,10 @@ func validOpenAIPassthroughRetryAfter(raw string, now time.Time) bool {
 }
 
 func writeSanitizedOpenAIPassthroughError(c *gin.Context, upstreamStatus int, upstreamHeaders http.Header) {
+	// Generic envelope for untrusted/non-allowlisted upstream bodies.
+	// Keep original passthrough status semantics (preserve most upstream codes)
+	// and fixed client-safe messages — do NOT use MapOpenAIUpstreamClientError
+	// here, which rewrites auth messages and collapses exotic 5xx codes.
 	downstreamStatus := upstreamStatus
 	message := "Upstream request failed"
 	switch upstreamStatus {
@@ -540,12 +544,30 @@ func writeSanitizedOpenAIPassthroughError(c *gin.Context, upstreamStatus int, up
 // writeOpenAIPassthroughErrorEnvelope 以本地 JSON 信封 + 净化后的头策略写出
 // 错误响应；message 由调用方决定（净化通用文案或脱敏后的上游消息）。
 func writeOpenAIPassthroughErrorEnvelope(c *gin.Context, downstreamStatus int, upstreamHeaders http.Header, message string) {
+	writeOpenAIPassthroughErrorEnvelopeWithType(c, downstreamStatus, upstreamHeaders, "upstream_error", message)
+}
+
+// writeOpenAIPassthroughErrorEnvelopeWithType is the typed variant used when
+// MapOpenAIUpstreamClientError preserves invalid_request_error / rate_limit_error.
+func writeOpenAIPassthroughErrorEnvelopeWithType(
+	c *gin.Context,
+	downstreamStatus int,
+	upstreamHeaders http.Header,
+	errType string,
+	message string,
+) {
 	if c == nil {
 		return
 	}
+	if strings.TrimSpace(errType) == "" {
+		errType = "upstream_error"
+	}
+	if strings.TrimSpace(message) == "" {
+		message = "Upstream request failed"
+	}
 	body, _ := json.Marshal(gin.H{
 		"error": gin.H{
-			"type":    "upstream_error",
+			"type":    errType,
 			"message": message,
 		},
 	})
@@ -657,11 +679,17 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 		Detail:               upstreamDetail,
 		UpstreamResponseBody: upstreamDetail,
 	})
-	// context-window 超限是确定性请求失败（shouldFailoverOpenAIPassthroughResponse
-	// 已保证不切号），其文案对客户端可操作（如触发自动压缩）；在净化信封内保留
-	// 脱敏后的上游消息，而不是抹成通用文案。
+	// OAuth/passthrough mode intentionally rebuilds a local error envelope so
+	// upstream hostnames / tokens / HTML error pages never reach the client.
+	// Only a few deterministic, operator-useful messages are preserved.
+	//
+	// API-key accounts use handleErrorResponse instead, which now preserves
+	// real client-facing 4xx status + message via MapOpenAIUpstreamClientError.
 	if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
 		writeOpenAIPassthroughErrorEnvelope(c, resp.StatusCode, resp.Header, upstreamMsg)
+	} else if isSafeOpenAIClientFacingError(resp.StatusCode, body, upstreamMsg) {
+		status, errType, errMsg := MapOpenAIUpstreamClientError(resp.StatusCode, body, upstreamMsg)
+		writeOpenAIPassthroughErrorEnvelopeWithType(c, status, resp.Header, errType, errMsg)
 	} else {
 		writeSanitizedOpenAIPassthroughError(c, resp.StatusCode, resp.Header)
 	}
