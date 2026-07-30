@@ -40,7 +40,9 @@ func TestOpenAIGatewayService_APIKeyPassthrough_StripsInvalidInputItemIDs(t *tes
 			{"type":"message","id":"msg_valid","role":"user","content":[{"type":"input_text","text":"continue"}]},
 			{"type":"function_call","id":"fc_valid","call_id":"call_456","name":"apply_patch","arguments":"{}"},
 			{"type":"function_call_output","id":"item_output","call_id":"call_123","output":"done"},
-			{"type":"web_search_call","id":"item_unconstrained"}
+			{"type":"web_search_call","id":"item_unconstrained"},
+			{"type":"reasoning","id":"item_bad_reasoning","encrypted_content":"ENC","summary":[]},
+			{"type":"reasoning","id":"rs_valid","encrypted_content":"ENC2","summary":[]}
 		]
 	}`)
 
@@ -61,6 +63,11 @@ func TestOpenAIGatewayService_APIKeyPassthrough_StripsInvalidInputItemIDs(t *tes
 	require.Equal(t, "item_output", gjson.GetBytes(forwarded, "input.4.id").String())
 	require.Equal(t, "call_123", gjson.GetBytes(forwarded, "input.4.call_id").String())
 	require.Equal(t, "item_unconstrained", gjson.GetBytes(forwarded, "input.5.id").String())
+	// reasoning requires rs_* — strip generic item_* to avoid upstream 400
+	// "Expected an ID that begins with 'rs'."
+	require.False(t, gjson.GetBytes(forwarded, "input.6.id").Exists())
+	require.Equal(t, "ENC", gjson.GetBytes(forwarded, "input.6.encrypted_content").String())
+	require.Equal(t, "rs_valid", gjson.GetBytes(forwarded, "input.7.id").String())
 }
 
 func TestSanitizeOpenAIResponsesInputItemIDs_AllocationGrowthIsLinear(t *testing.T) {

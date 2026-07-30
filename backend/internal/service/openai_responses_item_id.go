@@ -9,18 +9,36 @@ import (
 )
 
 // Invalid replayed IDs are removed rather than rewritten because a fabricated
-// msg/fc ID may point at a different upstream object.
+// msg/fc/rs ID may point at a different upstream object.
+//
+// OpenAI Responses validates input item id prefixes by type:
+//   - message        -> must begin with "msg"
+//   - function_call* -> must begin with "fc"
+//   - reasoning      -> must begin with "rs"
+//
+// Codex / multi-turn clients (and some chat→responses bridges) often replay
+// history with a generic "item_*" id on every output item. Upstream then
+// rejects with 400:
+//
+//	Invalid 'input[N].id': 'item_...'. Expected an ID that begins with 'rs'.
+//
+// Stripping the bad id keeps the item content (encrypted_content / summary /
+// arguments) so multi-turn reasoning still works without the illegal lookup.
 func shouldStripOpenAIResponsesInputItemID(itemType, id string) bool {
 	if id == "" {
 		return false
 	}
-	if itemType == "message" {
+	switch itemType {
+	case "message":
 		return !strings.HasPrefix(id, "msg")
+	case "reasoning":
+		return !strings.HasPrefix(id, "rs")
+	default:
+		if isCodexToolCallInputType(itemType) {
+			return !strings.HasPrefix(id, "fc")
+		}
+		return false
 	}
-	if isCodexToolCallInputType(itemType) {
-		return !strings.HasPrefix(id, "fc")
-	}
-	return false
 }
 
 func sanitizeOpenAIResponsesInputItemIDs(body []byte) ([]byte, bool, error) {
