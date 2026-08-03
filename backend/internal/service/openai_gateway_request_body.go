@@ -322,6 +322,17 @@ func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 		normalized = next
 	}
 
+	// Responses Lite compact rejects parallel_tool_calls=true. Always force
+	// false for /responses/compact so OAuth Lite accounts accept the request
+	// even when the client (or a prior hop) left the field true/absent-as-true.
+	if !gjson.GetBytes(normalized, "parallel_tool_calls").Exists() || gjson.GetBytes(normalized, "parallel_tool_calls").Bool() {
+		next, err := sjson.SetBytes(normalized, "parallel_tool_calls", false)
+		if err != nil {
+			return body, false, fmt.Errorf("normalize compact body parallel_tool_calls: %w", err)
+		}
+		normalized = next
+	}
+
 	if bytes.Equal(bytes.TrimSpace(body), bytes.TrimSpace(normalized)) {
 		return body, false, nil
 	}

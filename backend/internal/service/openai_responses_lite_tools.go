@@ -12,10 +12,15 @@ import (
 // use the input.additional_tools carrier. Other top-level tools must belong to
 // the small set accepted by the Lite endpoint; rejecting unsupported hosted
 // tools is intentional because silently dropping them would change behavior.
+//
+// OpenAI rejects Lite requests when parallel_tool_calls is true:
+// "X-OpenAI-Internal-Codex-Responses-Lite requires parallel_tool_calls to be false."
+// Force false whenever Lite normalization runs, even if tools/reasoning are already valid.
 func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 	if reqBody == nil {
 		return false, nil
 	}
+	changed := ensureOpenAIResponsesLiteParallelToolCalls(reqBody)
 	if rawReasoning, exists := reqBody["reasoning"]; exists && rawReasoning != nil {
 		if _, ok := rawReasoning.(map[string]any); !ok {
 			return false, fmt.Errorf("responses Lite requires reasoning to be an object")
@@ -23,7 +28,8 @@ func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 	}
 	rawTools, exists := reqBody["tools"]
 	if !exists || rawTools == nil {
-		return ensureOpenAIResponsesLiteReasoningContext(reqBody)
+		contextChanged, err := ensureOpenAIResponsesLiteReasoningContext(reqBody)
+		return changed || contextChanged, err
 	}
 	tools, ok := rawTools.([]any)
 	if !ok {
@@ -57,7 +63,8 @@ func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 		}
 	}
 	if len(namespaceTools) == 0 {
-		return ensureOpenAIResponsesLiteReasoningContext(reqBody)
+		contextChanged, err := ensureOpenAIResponsesLiteReasoningContext(reqBody)
+		return changed || contextChanged, err
 	}
 
 	input, err := appendOpenAIResponsesLiteAdditionalTools(reqBody["input"], namespaceTools)
@@ -74,6 +81,21 @@ func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 		reqBody["tools"] = topLevelTools
 	}
 	return true, nil
+}
+
+// ensureOpenAIResponsesLiteParallelToolCalls forces parallel_tool_calls=false.
+// Returns true when the body was modified.
+func ensureOpenAIResponsesLiteParallelToolCalls(reqBody map[string]any) bool {
+	if reqBody == nil {
+		return false
+	}
+	if raw, exists := reqBody["parallel_tool_calls"]; exists {
+		if value, ok := raw.(bool); ok && !value {
+			return false
+		}
+	}
+	reqBody["parallel_tool_calls"] = false
+	return true
 }
 
 func ensureOpenAIResponsesLiteReasoningContext(reqBody map[string]any) (bool, error) {

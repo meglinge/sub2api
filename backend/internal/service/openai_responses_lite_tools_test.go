@@ -135,7 +135,8 @@ func TestNormalizeOpenAIResponsesLiteTools_ConvertsStringInput(t *testing.T) {
 
 func TestNormalizeOpenAIResponsesLiteTools_KeepsSupportedTopLevelTools(t *testing.T) {
 	reqBody := map[string]any{
-		"reasoning": map[string]any{"context": "all_turns"},
+		"reasoning":           map[string]any{"context": "all_turns"},
+		"parallel_tool_calls": false,
 		"tools": []any{
 			map[string]any{"type": "function", "name": "shell"},
 			map[string]any{"type": "custom", "name": "exec"},
@@ -149,6 +150,7 @@ func TestNormalizeOpenAIResponsesLiteTools_KeepsSupportedTopLevelTools(t *testin
 	require.NoError(t, err)
 	require.False(t, changed)
 	require.Len(t, reqBody["tools"], 4)
+	require.Equal(t, false, reqBody["parallel_tool_calls"])
 }
 
 func TestNormalizeOpenAIResponsesLiteTools_EnsuresReasoningContext(t *testing.T) {
@@ -230,6 +232,57 @@ func TestNormalizeOpenAIResponsesLiteToolsPayload_PreservesResponseCreateShape(t
 	require.False(t, gjson.GetBytes(updated, "tools").Exists())
 	require.Equal(t, "collaboration", gjson.GetBytes(updated, `input.#(type=="additional_tools").tools.0.name`).String())
 	require.Equal(t, "namespace", gjson.GetBytes(updated, "tool_choice.type").String())
+	require.True(t, gjson.GetBytes(updated, "parallel_tool_calls").Exists())
+	require.False(t, gjson.GetBytes(updated, "parallel_tool_calls").Bool())
+}
+
+func TestNormalizeOpenAIResponsesLiteTools_ForcesParallelToolCallsFalse(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]any
+	}{
+		{
+			name: "true becomes false even when tools already valid",
+			body: map[string]any{
+				"input":               "hello",
+				"reasoning":           map[string]any{"context": "all_turns"},
+				"parallel_tool_calls": true,
+				"tools": []any{
+					map[string]any{"type": "function", "name": "shell"},
+				},
+			},
+		},
+		{
+			name: "missing becomes false",
+			body: map[string]any{
+				"input":     "hello",
+				"reasoning": map[string]any{"context": "all_turns"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changed, err := normalizeOpenAIResponsesLiteTools(tt.body)
+			require.NoError(t, err)
+			require.True(t, changed)
+			require.Equal(t, false, tt.body["parallel_tool_calls"])
+		})
+	}
+}
+
+func TestNormalizeOpenAIResponsesLiteTools_PreservesExplicitFalse(t *testing.T) {
+	reqBody := map[string]any{
+		"input":               "hello",
+		"reasoning":           map[string]any{"context": "all_turns"},
+		"parallel_tool_calls": false,
+	}
+
+	changed, err := normalizeOpenAIResponsesLiteTools(reqBody)
+
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, false, reqBody["parallel_tool_calls"])
 }
 
 func TestApplyCodexOAuthTransform_PreservesLiteNamespaceToolChoice(t *testing.T) {
