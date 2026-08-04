@@ -275,6 +275,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 						return
 					}
 					if c.Writer.Size() != writerSizeBeforeForward {
+						h.gatewayService.HandleOpenAIFailoverStickyFailure(c.Request.Context(), apiKey.GroupID, sessionHash, account, failoverErr)
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
 					}
@@ -282,12 +283,13 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), false, nil)
 					}
 					if !failoverErr.ShouldRetryNextAccount() {
+						h.gatewayService.HandleOpenAIFailoverStickyFailure(c.Request.Context(), apiKey.GroupID, sessionHash, account, failoverErr)
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
-					// Pool mode: retry on the same account
+					// Pool mode: same-account retry (429 switches immediately)
 					if failoverErr.RetryableOnSameAccount {
-						retryLimit := account.GetPoolModeRetryCount()
+						retryLimit := service.OpenAIPoolModeSameAccountRetryLimit(account, failoverErr)
 						if sameAccountRetryCount[account.ID] < retryLimit {
 							sameAccountRetryCount[account.ID]++
 							reqLog.Warn("openai_chat_completions.pool_mode_same_account_retry",
@@ -304,6 +306,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 							continue
 						}
 					}
+					h.gatewayService.HandleOpenAIFailoverStickyFailure(c.Request.Context(), apiKey.GroupID, sessionHash, account, failoverErr)
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr

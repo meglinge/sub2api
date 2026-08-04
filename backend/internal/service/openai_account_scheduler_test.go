@@ -2295,7 +2295,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyEscapeByTT
 	require.Equal(t, int64(21102), selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	require.False(t, decision.StickySessionHit)
-	require.Equal(t, int64(21101), cache.sessionBindings["openai:session_hash_sticky_ttft"])
+	// Escape clears the bad sticky binding and rebinds to the healthy account.
+	require.Equal(t, int64(21102), cache.sessionBindings["openai:session_hash_sticky_ttft"])
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}
@@ -2345,7 +2346,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyEscapeByEr
 	require.Equal(t, int64(21202), selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	require.False(t, decision.StickySessionHit)
-	require.Equal(t, int64(21201), cache.sessionBindings["openai:session_hash_sticky_error_rate"])
+	// Escape clears the bad sticky binding and rebinds to the healthy account.
+	require.Equal(t, int64(21202), cache.sessionBindings["openai:session_hash_sticky_error_rate"])
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}

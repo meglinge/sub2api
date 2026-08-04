@@ -425,7 +425,13 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			return selection, decision, nil
 		}
 		if escapedSticky {
-			req.PreserveStickyBinding = true
+			// Escape means the sticky account is unhealthy (TTFT / error rate /
+			// concurrency full). Drop the binding so load-balance can rebind to
+			// the newly selected healthy account; preserving it re-sticks every
+			// subsequent request to the same bad account.
+			if s != nil && s.service != nil {
+				s.service.ClearStickySessionOnFailure(ctx, req.GroupID, req.SessionHash, "sticky_escape")
+			}
 		}
 	}
 
