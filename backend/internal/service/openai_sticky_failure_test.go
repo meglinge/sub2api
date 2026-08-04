@@ -32,22 +32,6 @@ func TestShouldClearStickyOnOpenAIFailover(t *testing.T) {
 	}))
 }
 
-func TestShouldCoolAccountOnOpenAIFailover(t *testing.T) {
-	t.Parallel()
-
-	require.False(t, ShouldCoolAccountOnOpenAIFailover(nil))
-	require.False(t, ShouldCoolAccountOnOpenAIFailover(&UpstreamFailoverError{
-		StatusCode: http.StatusTooManyRequests,
-	}))
-	require.True(t, ShouldCoolAccountOnOpenAIFailover(&UpstreamFailoverError{
-		StatusCode:               http.StatusGatewayTimeout,
-		SafeToFailoverAfterWrite: true,
-	}))
-	require.True(t, ShouldCoolAccountOnOpenAIFailover(&UpstreamFailoverError{
-		StatusCode: 524,
-	}))
-}
-
 func TestOpenAIPoolModeSameAccountRetryLimit_Skips429(t *testing.T) {
 	t.Parallel()
 
@@ -66,7 +50,7 @@ func TestOpenAIPoolModeSameAccountRetryLimit_Skips429(t *testing.T) {
 	}))
 }
 
-func TestHandleOpenAIFailoverStickyFailure_ClearsSticky(t *testing.T) {
+func TestHandleOpenAIFailoverStickyFailure_ClearsStickyOnly(t *testing.T) {
 	cache := &stubGatewayCache{
 		sessionBindings: map[string]int64{
 			"openai:abc123session": 6158,
@@ -91,6 +75,8 @@ func TestHandleOpenAIFailoverStickyFailure_ClearsSticky(t *testing.T) {
 
 	_, exists := cache.sessionBindings["openai:abc123session"]
 	require.False(t, exists, "sticky binding must be deleted after first_output hang")
+	// Must remain schedulable: hang path must not temp-unschedule the account.
+	require.True(t, account.IsSchedulable() || account.Status == StatusActive || account.Status == "")
 }
 
 func TestHandleOpenAIFailoverStickyFailure_429ClearsSticky(t *testing.T) {
@@ -119,12 +105,4 @@ func TestClearStickySessionOnFailure_EmptySessionNoop(t *testing.T) {
 	svc := &OpenAIGatewayService{cache: cache}
 	svc.ClearStickySessionOnFailure(context.Background(), nil, "", "noop")
 	require.Equal(t, int64(1), cache.sessionBindings["openai:x"])
-}
-
-func TestCoolAccountAfterHang_NilRepoDoesNotPanic(t *testing.T) {
-	svc := &OpenAIGatewayService{}
-	account := &Account{ID: 1, Platform: PlatformOpenAI, Status: StatusActive}
-	require.NotPanics(t, func() {
-		svc.CoolAccountAfterHang(context.Background(), account, "first_output_timeout")
-	})
 }

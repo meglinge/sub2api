@@ -4,17 +4,10 @@ import (
 	"context"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"go.uber.org/zap"
 )
-
-// openAIHangCoolDuration is a short cool-down after hang-style failures
-// (first-output timeout / gateway timeout) so concurrent sticky sessions
-// stop piling onto the same overloaded account. Keep this shorter than
-// transport-error cooling: hangs are often transient under load.
-const openAIHangCoolDuration = 2 * time.Minute
 
 // ShouldClearStickyOnOpenAIFailover reports whether a failover error should
 // drop the session→account sticky binding so the next request (or the next
@@ -23,6 +16,11 @@ const openAIHangCoolDuration = 2 * time.Minute
 // Covers hang/timeout (first_output → 504 SafeToFailoverAfterWrite), upstream
 // 5xx/524, and 429. Does not clear for credential/request-scoped stop actions
 // that cannot be fixed by another account.
+//
+// Intentionally does NOT temp-unschedule the account: first_output timeouts are
+// frequent under load and cooling would continuously empty the pool. Sticky
+// clear alone is enough to stop session pile-on; account health remains the
+// job of rate-limit / transport / ops rules.
 func ShouldClearStickyOnOpenAIFailover(failoverErr *UpstreamFailoverError) bool {
 	if failoverErr == nil {
 		return false
@@ -43,19 +41,6 @@ func ShouldClearStickyOnOpenAIFailover(failoverErr *UpstreamFailoverError) bool 
 	default:
 		return false
 	}
-}
-
-// ShouldCoolAccountOnOpenAIFailover reports whether the failed account should
-// receive a short temp-unschedulable cool-down in addition to sticky clear.
-// Limited to hang/timeout paths so a burst of 429s does not empty the pool.
-func ShouldCoolAccountOnOpenAIFailover(failoverErr *UpstreamFailoverError) bool {
-	if failoverErr == nil {
-		return false
-	}
-	if failoverErr.SafeToFailoverAfterWrite {
-		return true
-	}
-	return failoverErr.StatusCode == http.StatusGatewayTimeout || failoverErr.StatusCode == 524
 }
 
 // OpenAIPoolModeSameAccountRetryLimit returns how many same-account retries
@@ -99,61 +84,11 @@ func (s *OpenAIGatewayService) ClearStickySessionOnFailure(
 	)
 }
 
-// CoolAccountAfterHang marks an account temporarily unschedulable after a
-// hang/timeout so concurrent sticky hits stop selecting it for a short window.
-func (s *OpenAIGatewayService) CoolAccountAfterHang(
-	ctx context.Context,
-	account *Account,
-	reason string,
-) {
-	if s == nil || account == nil {
-		return
-	}
-	until := time.Now().Add(openAIHangCoolDuration)
-	coolReason := strings.TrimSpace(reason)
-	if coolReason == "" {
-		coolReason = "hang_timeout"
-	}
-	fullReason := "openai hang cool-down: " + coolReason
-
-	// Immediate in-memory block (scheduler selection honours this before DB
-	// cache refresh), matching transport-error cool-down behaviour.
-	s.BlockAccountScheduling(account, until, coolReason)
-
-	if s.accountRepo == nil {
-		logger.L().With(zap.String("component", "service.openai_gateway")).Warn(
-			"openai.account_temp_unscheduled_hang_memory_only",
-			zap.Int64("account_id", account.ID),
-			zap.String("account_name", account.Name),
-			zap.Time("until", until),
-			zap.String("reason", fullReason),
-		)
-		return
-	}
-
-	bgCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAIAccountStateUpdateTimeout)
-	defer cancel()
-	if err := s.accountRepo.SetTempUnschedulable(bgCtx, account.ID, until, fullReason); err != nil {
-		logger.L().With(zap.String("component", "service.openai_gateway")).Warn(
-			"openai.account_temp_unscheduled_hang_failed",
-			zap.Int64("account_id", account.ID),
-			zap.Error(err),
-		)
-		return
-	}
-
-	logger.L().With(zap.String("component", "service.openai_gateway")).Warn(
-		"openai.account_temp_unscheduled_hang",
-		zap.Int64("account_id", account.ID),
-		zap.String("account_name", account.Name),
-		zap.Time("until", until),
-		zap.String("reason", fullReason),
-	)
-}
-
-// HandleOpenAIFailoverStickyFailure clears sticky (and optionally cools the
-// account) after a hang/5xx/429 failover. Call on both switch-away and
-// failover-exhausted paths so the next request does not re-stick to a bad account.
+// HandleOpenAIFailoverStickyFailure clears the session→account sticky binding
+// after a hang/5xx/429 failover. Call on both switch-away and failover-exhausted
+// paths so the next request does not re-stick to a bad account.
+//
+// Does not temp-unschedule the account (see ShouldClearStickyOnOpenAIFailover).
 func (s *OpenAIGatewayService) HandleOpenAIFailoverStickyFailure(
 	ctx context.Context,
 	groupID *int64,
@@ -181,8 +116,6 @@ func (s *OpenAIGatewayService) HandleOpenAIFailoverStickyFailure(
 			reason = "first_output_timeout"
 		}
 	}
+	_ = account // retained for call-site symmetry / future metrics
 	s.ClearStickySessionOnFailure(ctx, groupID, sessionHash, reason)
-	if ShouldCoolAccountOnOpenAIFailover(failoverErr) && account != nil {
-		s.CoolAccountAfterHang(ctx, account, reason)
-	}
 }
