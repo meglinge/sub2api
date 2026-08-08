@@ -148,6 +148,29 @@ func (Account) Fields() []ent.Field {
 		field.Bool("schedulable").
 			Default(true),
 
+		// ai_disabled: 自动驾驶软停用，与 status/schedulable 正交
+		field.Bool("ai_disabled").
+			Default(false).
+			Comment("AI autopilot soft-disable; orthogonal to status/schedulable."),
+		// ai_managed: false 时自动驾驶不得改动该账号
+		field.Bool("ai_managed").
+			Default(true).
+			Comment("When false, AI autopilot cannot mutate this account."),
+		// ai_watched: 关注标记，便于自动驾驶通知
+		field.Bool("ai_watched").
+			Default(false).
+			Comment("Watch flag for high-signal autopilot notifications."),
+		// schedule_weight: OpenAI 同优先级/Top-K 分流权重
+		field.Int("schedule_weight").
+			Default(10).
+			Comment("OpenAI Top-K / same-priority traffic share weight (>=0)."),
+		// manual_touched_at: 人工最后修改时间（自动驾驶免疫期）
+		field.Time("manual_touched_at").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}).
+			Comment("Last human edit time; autopilot respects immunity window."),
+
 		// rate_limited_at: 触发速率限制的时间
 		// 当收到 429 错误时记录
 		field.Time("rate_limited_at").

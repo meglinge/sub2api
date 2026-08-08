@@ -150,6 +150,31 @@ func Schedulable(v bool) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldSchedulable, v))
 }
 
+// AiDisabled applies equality check predicate on the "ai_disabled" field. It's identical to AiDisabledEQ.
+func AiDisabled(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldAiDisabled, v))
+}
+
+// AiManaged applies equality check predicate on the "ai_managed" field. It's identical to AiManagedEQ.
+func AiManaged(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldAiManaged, v))
+}
+
+// AiWatched applies equality check predicate on the "ai_watched" field. It's identical to AiWatchedEQ.
+func AiWatched(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldAiWatched, v))
+}
+
+// ScheduleWeight applies equality check predicate on the "schedule_weight" field. It's identical to ScheduleWeightEQ.
+func ScheduleWeight(v int) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldScheduleWeight, v))
+}
+
+// ManualTouchedAt applies equality check predicate on the "manual_touched_at" field. It's identical to ManualTouchedAtEQ.
+func ManualTouchedAt(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldManualTouchedAt, v))
+}
+
 // RateLimitedAt applies equality check predicate on the "rate_limited_at" field. It's identical to RateLimitedAtEQ.
 func RateLimitedAt(v time.Time) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldRateLimitedAt, v))
@@ -1103,6 +1128,126 @@ func SchedulableEQ(v bool) predicate.Account {
 // SchedulableNEQ applies the NEQ predicate on the "schedulable" field.
 func SchedulableNEQ(v bool) predicate.Account {
 	return predicate.Account(sql.FieldNEQ(FieldSchedulable, v))
+}
+
+// AiDisabledEQ applies the EQ predicate on the "ai_disabled" field.
+func AiDisabledEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldAiDisabled, v))
+}
+
+// AiDisabledNEQ applies the NEQ predicate on the "ai_disabled" field.
+func AiDisabledNEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldAiDisabled, v))
+}
+
+// AiManagedEQ applies the EQ predicate on the "ai_managed" field.
+func AiManagedEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldAiManaged, v))
+}
+
+// AiManagedNEQ applies the NEQ predicate on the "ai_managed" field.
+func AiManagedNEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldAiManaged, v))
+}
+
+// AiWatchedEQ applies the EQ predicate on the "ai_watched" field.
+func AiWatchedEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldAiWatched, v))
+}
+
+// AiWatchedNEQ applies the NEQ predicate on the "ai_watched" field.
+func AiWatchedNEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldAiWatched, v))
+}
+
+// ScheduleWeightEQ applies the EQ predicate on the "schedule_weight" field.
+func ScheduleWeightEQ(v int) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldScheduleWeight, v))
+}
+
+// ScheduleWeightNEQ applies the NEQ predicate on the "schedule_weight" field.
+func ScheduleWeightNEQ(v int) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldScheduleWeight, v))
+}
+
+// ScheduleWeightIn applies the In predicate on the "schedule_weight" field.
+func ScheduleWeightIn(vs ...int) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldScheduleWeight, vs...))
+}
+
+// ScheduleWeightNotIn applies the NotIn predicate on the "schedule_weight" field.
+func ScheduleWeightNotIn(vs ...int) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldScheduleWeight, vs...))
+}
+
+// ScheduleWeightGT applies the GT predicate on the "schedule_weight" field.
+func ScheduleWeightGT(v int) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldScheduleWeight, v))
+}
+
+// ScheduleWeightGTE applies the GTE predicate on the "schedule_weight" field.
+func ScheduleWeightGTE(v int) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldScheduleWeight, v))
+}
+
+// ScheduleWeightLT applies the LT predicate on the "schedule_weight" field.
+func ScheduleWeightLT(v int) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldScheduleWeight, v))
+}
+
+// ScheduleWeightLTE applies the LTE predicate on the "schedule_weight" field.
+func ScheduleWeightLTE(v int) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldScheduleWeight, v))
+}
+
+// ManualTouchedAtEQ applies the EQ predicate on the "manual_touched_at" field.
+func ManualTouchedAtEQ(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldManualTouchedAt, v))
+}
+
+// ManualTouchedAtNEQ applies the NEQ predicate on the "manual_touched_at" field.
+func ManualTouchedAtNEQ(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldManualTouchedAt, v))
+}
+
+// ManualTouchedAtIn applies the In predicate on the "manual_touched_at" field.
+func ManualTouchedAtIn(vs ...time.Time) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldManualTouchedAt, vs...))
+}
+
+// ManualTouchedAtNotIn applies the NotIn predicate on the "manual_touched_at" field.
+func ManualTouchedAtNotIn(vs ...time.Time) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldManualTouchedAt, vs...))
+}
+
+// ManualTouchedAtGT applies the GT predicate on the "manual_touched_at" field.
+func ManualTouchedAtGT(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldManualTouchedAt, v))
+}
+
+// ManualTouchedAtGTE applies the GTE predicate on the "manual_touched_at" field.
+func ManualTouchedAtGTE(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldManualTouchedAt, v))
+}
+
+// ManualTouchedAtLT applies the LT predicate on the "manual_touched_at" field.
+func ManualTouchedAtLT(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldManualTouchedAt, v))
+}
+
+// ManualTouchedAtLTE applies the LTE predicate on the "manual_touched_at" field.
+func ManualTouchedAtLTE(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldManualTouchedAt, v))
+}
+
+// ManualTouchedAtIsNil applies the IsNil predicate on the "manual_touched_at" field.
+func ManualTouchedAtIsNil() predicate.Account {
+	return predicate.Account(sql.FieldIsNull(FieldManualTouchedAt))
+}
+
+// ManualTouchedAtNotNil applies the NotNil predicate on the "manual_touched_at" field.
+func ManualTouchedAtNotNil() predicate.Account {
+	return predicate.Account(sql.FieldNotNull(FieldManualTouchedAt))
 }
 
 // RateLimitedAtEQ applies the EQ predicate on the "rate_limited_at" field.

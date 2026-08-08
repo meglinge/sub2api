@@ -141,11 +141,13 @@ type UpdateAccountRequest struct {
 	ProxyID                 *int64         `json:"proxy_id"`
 	Concurrency             *int           `json:"concurrency"`
 	Priority                *int           `json:"priority"`
-	RateMultiplier          *float64       `json:"rate_multiplier"`
-	LoadFactor              *int           `json:"load_factor"`
-	Status                  string         `json:"status" binding:"omitempty,oneof=active inactive error"`
-	GroupIDs                *[]int64       `json:"group_ids"`
-	ExpiresAt               *int64         `json:"expires_at"`
+	RateMultiplier *float64 `json:"rate_multiplier"`
+	LoadFactor     *int     `json:"load_factor"`
+	// ScheduleWeight OpenAI Top-K / same-priority share; nil = leave unchanged.
+	ScheduleWeight *int    `json:"schedule_weight"`
+	Status         string  `json:"status" binding:"omitempty,oneof=active inactive error"`
+	GroupIDs       *[]int64 `json:"group_ids"`
+	ExpiresAt      *int64  `json:"expires_at"`
 	AutoPauseOnExpired      *bool          `json:"auto_pause_on_expired"`
 	ProbeEnabled            *bool          `json:"upstream_billing_probe_enabled"`
 	RateSyncEnabled         *bool          `json:"upstream_billing_rate_sync_enabled"`
@@ -985,6 +987,7 @@ func (h *AccountHandler) Update(c *gin.Context) {
 		Priority:              req.Priority,    // 指针类型，nil 表示未提供
 		RateMultiplier:        req.RateMultiplier,
 		LoadFactor:            req.LoadFactor,
+		ScheduleWeight:        req.ScheduleWeight,
 		Status:                req.Status,
 		GroupIDs:              req.GroupIDs,
 		ExpiresAt:             req.ExpiresAt,

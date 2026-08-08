@@ -370,6 +370,89 @@ func (_u *AccountUpdate) SetNillableSchedulable(v *bool) *AccountUpdate {
 	return _u
 }
 
+// SetAiDisabled sets the "ai_disabled" field.
+func (_u *AccountUpdate) SetAiDisabled(v bool) *AccountUpdate {
+	_u.mutation.SetAiDisabled(v)
+	return _u
+}
+
+// SetNillableAiDisabled sets the "ai_disabled" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableAiDisabled(v *bool) *AccountUpdate {
+	if v != nil {
+		_u.SetAiDisabled(*v)
+	}
+	return _u
+}
+
+// SetAiManaged sets the "ai_managed" field.
+func (_u *AccountUpdate) SetAiManaged(v bool) *AccountUpdate {
+	_u.mutation.SetAiManaged(v)
+	return _u
+}
+
+// SetNillableAiManaged sets the "ai_managed" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableAiManaged(v *bool) *AccountUpdate {
+	if v != nil {
+		_u.SetAiManaged(*v)
+	}
+	return _u
+}
+
+// SetAiWatched sets the "ai_watched" field.
+func (_u *AccountUpdate) SetAiWatched(v bool) *AccountUpdate {
+	_u.mutation.SetAiWatched(v)
+	return _u
+}
+
+// SetNillableAiWatched sets the "ai_watched" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableAiWatched(v *bool) *AccountUpdate {
+	if v != nil {
+		_u.SetAiWatched(*v)
+	}
+	return _u
+}
+
+// SetScheduleWeight sets the "schedule_weight" field.
+func (_u *AccountUpdate) SetScheduleWeight(v int) *AccountUpdate {
+	_u.mutation.ResetScheduleWeight()
+	_u.mutation.SetScheduleWeight(v)
+	return _u
+}
+
+// SetNillableScheduleWeight sets the "schedule_weight" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableScheduleWeight(v *int) *AccountUpdate {
+	if v != nil {
+		_u.SetScheduleWeight(*v)
+	}
+	return _u
+}
+
+// AddScheduleWeight adds value to the "schedule_weight" field.
+func (_u *AccountUpdate) AddScheduleWeight(v int) *AccountUpdate {
+	_u.mutation.AddScheduleWeight(v)
+	return _u
+}
+
+// SetManualTouchedAt sets the "manual_touched_at" field.
+func (_u *AccountUpdate) SetManualTouchedAt(v time.Time) *AccountUpdate {
+	_u.mutation.SetManualTouchedAt(v)
+	return _u
+}
+
+// SetNillableManualTouchedAt sets the "manual_touched_at" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableManualTouchedAt(v *time.Time) *AccountUpdate {
+	if v != nil {
+		_u.SetManualTouchedAt(*v)
+	}
+	return _u
+}
+
+// ClearManualTouchedAt clears the value of the "manual_touched_at" field.
+func (_u *AccountUpdate) ClearManualTouchedAt() *AccountUpdate {
+	_u.mutation.ClearManualTouchedAt()
+	return _u
+}
+
 // SetRateLimitedAt sets the "rate_limited_at" field.
 func (_u *AccountUpdate) SetRateLimitedAt(v time.Time) *AccountUpdate {
 	_u.mutation.SetRateLimitedAt(v)
@@ -894,6 +977,27 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Schedulable(); ok {
 		_spec.SetField(account.FieldSchedulable, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.AiDisabled(); ok {
+		_spec.SetField(account.FieldAiDisabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.AiManaged(); ok {
+		_spec.SetField(account.FieldAiManaged, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.AiWatched(); ok {
+		_spec.SetField(account.FieldAiWatched, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.ScheduleWeight(); ok {
+		_spec.SetField(account.FieldScheduleWeight, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedScheduleWeight(); ok {
+		_spec.AddField(account.FieldScheduleWeight, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.ManualTouchedAt(); ok {
+		_spec.SetField(account.FieldManualTouchedAt, field.TypeTime, value)
+	}
+	if _u.mutation.ManualTouchedAtCleared() {
+		_spec.ClearField(account.FieldManualTouchedAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.RateLimitedAt(); ok {
 		_spec.SetField(account.FieldRateLimitedAt, field.TypeTime, value)
@@ -1510,6 +1614,89 @@ func (_u *AccountUpdateOne) SetNillableSchedulable(v *bool) *AccountUpdateOne {
 	return _u
 }
 
+// SetAiDisabled sets the "ai_disabled" field.
+func (_u *AccountUpdateOne) SetAiDisabled(v bool) *AccountUpdateOne {
+	_u.mutation.SetAiDisabled(v)
+	return _u
+}
+
+// SetNillableAiDisabled sets the "ai_disabled" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableAiDisabled(v *bool) *AccountUpdateOne {
+	if v != nil {
+		_u.SetAiDisabled(*v)
+	}
+	return _u
+}
+
+// SetAiManaged sets the "ai_managed" field.
+func (_u *AccountUpdateOne) SetAiManaged(v bool) *AccountUpdateOne {
+	_u.mutation.SetAiManaged(v)
+	return _u
+}
+
+// SetNillableAiManaged sets the "ai_managed" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableAiManaged(v *bool) *AccountUpdateOne {
+	if v != nil {
+		_u.SetAiManaged(*v)
+	}
+	return _u
+}
+
+// SetAiWatched sets the "ai_watched" field.
+func (_u *AccountUpdateOne) SetAiWatched(v bool) *AccountUpdateOne {
+	_u.mutation.SetAiWatched(v)
+	return _u
+}
+
+// SetNillableAiWatched sets the "ai_watched" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableAiWatched(v *bool) *AccountUpdateOne {
+	if v != nil {
+		_u.SetAiWatched(*v)
+	}
+	return _u
+}
+
+// SetScheduleWeight sets the "schedule_weight" field.
+func (_u *AccountUpdateOne) SetScheduleWeight(v int) *AccountUpdateOne {
+	_u.mutation.ResetScheduleWeight()
+	_u.mutation.SetScheduleWeight(v)
+	return _u
+}
+
+// SetNillableScheduleWeight sets the "schedule_weight" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableScheduleWeight(v *int) *AccountUpdateOne {
+	if v != nil {
+		_u.SetScheduleWeight(*v)
+	}
+	return _u
+}
+
+// AddScheduleWeight adds value to the "schedule_weight" field.
+func (_u *AccountUpdateOne) AddScheduleWeight(v int) *AccountUpdateOne {
+	_u.mutation.AddScheduleWeight(v)
+	return _u
+}
+
+// SetManualTouchedAt sets the "manual_touched_at" field.
+func (_u *AccountUpdateOne) SetManualTouchedAt(v time.Time) *AccountUpdateOne {
+	_u.mutation.SetManualTouchedAt(v)
+	return _u
+}
+
+// SetNillableManualTouchedAt sets the "manual_touched_at" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableManualTouchedAt(v *time.Time) *AccountUpdateOne {
+	if v != nil {
+		_u.SetManualTouchedAt(*v)
+	}
+	return _u
+}
+
+// ClearManualTouchedAt clears the value of the "manual_touched_at" field.
+func (_u *AccountUpdateOne) ClearManualTouchedAt() *AccountUpdateOne {
+	_u.mutation.ClearManualTouchedAt()
+	return _u
+}
+
 // SetRateLimitedAt sets the "rate_limited_at" field.
 func (_u *AccountUpdateOne) SetRateLimitedAt(v time.Time) *AccountUpdateOne {
 	_u.mutation.SetRateLimitedAt(v)
@@ -2064,6 +2251,27 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if value, ok := _u.mutation.Schedulable(); ok {
 		_spec.SetField(account.FieldSchedulable, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.AiDisabled(); ok {
+		_spec.SetField(account.FieldAiDisabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.AiManaged(); ok {
+		_spec.SetField(account.FieldAiManaged, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.AiWatched(); ok {
+		_spec.SetField(account.FieldAiWatched, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.ScheduleWeight(); ok {
+		_spec.SetField(account.FieldScheduleWeight, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedScheduleWeight(); ok {
+		_spec.AddField(account.FieldScheduleWeight, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.ManualTouchedAt(); ok {
+		_spec.SetField(account.FieldManualTouchedAt, field.TypeTime, value)
+	}
+	if _u.mutation.ManualTouchedAtCleared() {
+		_spec.ClearField(account.FieldManualTouchedAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.RateLimitedAt(); ok {
 		_spec.SetField(account.FieldRateLimitedAt, field.TypeTime, value)

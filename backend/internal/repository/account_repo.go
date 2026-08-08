@@ -116,6 +116,10 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 		SetStatus(account.Status).
 		SetErrorMessage(account.ErrorMessage).
 		SetSchedulable(account.Schedulable).
+		SetAiDisabled(account.AIDisabled).
+		SetAiManaged(accountAIManagedOrDefault(account)).
+		SetAiWatched(account.AIWatched).
+		SetScheduleWeight(normalizeScheduleWeight(account.ScheduleWeight)).
 		SetAutoPauseOnExpired(account.AutoPauseOnExpired)
 
 	if account.RateMultiplier != nil {
@@ -123,6 +127,9 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 	}
 	if account.LoadFactor != nil {
 		builder.SetLoadFactor(*account.LoadFactor)
+	}
+	if account.ManualTouchedAt != nil {
+		builder.SetManualTouchedAt(*account.ManualTouchedAt)
 	}
 
 	if account.ProxyID != nil {
@@ -505,7 +512,17 @@ func (r *accountRepository) updateLockedAccount(
 		SetStatus(account.Status).
 		SetErrorMessage(account.ErrorMessage).
 		SetSchedulable(schedulable).
+		SetAiDisabled(account.AIDisabled).
+		SetAiManaged(account.AIManaged).
+		SetAiWatched(account.AIWatched).
+		SetScheduleWeight(account.ScheduleWeight).
 		SetAutoPauseOnExpired(account.AutoPauseOnExpired)
+
+	// Only write manual_touched_at when the caller set a value; do not clear
+	// existing immunity timestamps on unrelated updates.
+	if account.ManualTouchedAt != nil {
+		builder.SetManualTouchedAt(*account.ManualTouchedAt)
+	}
 
 	if explicitRateMultiplier != nil {
 		builder.SetRateMultiplier(*explicitRateMultiplier)
@@ -1871,6 +1888,7 @@ func (r *accountRepository) schedulableAccountsQuery(now time.Time) *dbent.Accou
 		Where(
 			dbaccount.StatusEQ(service.StatusActive),
 			dbaccount.SchedulableEQ(true),
+			dbaccount.AiDisabledEQ(false),
 			tempUnschedulablePredicate(),
 			notExpiredPredicate(now),
 			dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
@@ -1929,6 +1947,7 @@ func (r *accountRepository) ListSchedulableCapacityByGroupIDs(ctx context.Contex
 			AND a.deleted_at IS NULL
 			AND a.status = $2
 			AND a.schedulable = TRUE
+			AND a.ai_disabled = FALSE
 			AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= $3)
 			AND (a.expires_at IS NULL OR a.expires_at > $3 OR a.auto_pause_on_expired = FALSE)
 			AND (a.overload_until IS NULL OR a.overload_until <= $3)
@@ -2851,6 +2870,14 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		args = append(args, *updates.Schedulable)
 		idx++
 	}
+	// Human edit stamp for AI autopilot immunity (bulk admin edits count as manual).
+	if updates.ManualTouchedAt != nil {
+		setClauses = append(setClauses, "manual_touched_at = $"+itoa(idx))
+		args = append(args, *updates.ManualTouchedAt)
+		idx++
+	} else if len(setClauses) > 0 || len(updates.Credentials) > 0 || len(updates.Extra) > 0 || updates.ProbeEnabled != nil {
+		setClauses = append(setClauses, "manual_touched_at = NOW()")
+	}
 	if updates.ProbeEnabled != nil {
 		if updates.Extra == nil {
 			updates.Extra = make(map[string]any)
@@ -3025,7 +3052,7 @@ func (r *accountRepository) queryAccountsByGroup(ctx context.Context, groupID in
 		preds = append(preds, dbaccount.PlatformIn(opts.platforms...))
 	}
 	if opts.schedulable {
-		preds = append(preds, dbaccount.SchedulableEQ(true))
+		preds = append(preds, dbaccount.SchedulableEQ(true), dbaccount.AiDisabledEQ(false))
 		if !opts.ignoreTransientState {
 			now := time.Now()
 			preds = append(preds,
@@ -3341,6 +3368,7 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 		Priority:                m.Priority,
 		RateMultiplier:          &rateMultiplier,
 		LoadFactor:              m.LoadFactor,
+		ScheduleWeight:          m.ScheduleWeight,
 		Status:                  m.Status,
 		ErrorMessage:            derefString(m.ErrorMessage),
 		LastUsedAt:              m.LastUsedAt,
@@ -3349,6 +3377,10 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 		CreatedAt:               m.CreatedAt,
 		UpdatedAt:               m.UpdatedAt,
 		Schedulable:             m.Schedulable,
+		AIDisabled:              m.AiDisabled,
+		AIManaged:               m.AiManaged,
+		AIWatched:               m.AiWatched,
+		ManualTouchedAt:         m.ManualTouchedAt,
 		RateLimitedAt:           m.RateLimitedAt,
 		RateLimitResetAt:        m.RateLimitResetAt,
 		OverloadUntil:           m.OverloadUntil,
@@ -3360,6 +3392,30 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 		ParentAccountID:         m.ParentAccountID,
 		QuotaDimension:          string(m.QuotaDimension),
 	}
+}
+
+func normalizeScheduleWeight(w int) int {
+	if w < 0 {
+		return 10
+	}
+	if w == 0 {
+		// Create path: 0 is treated as "use default" so new accounts get a neutral weight.
+		// Callers that want 0 must set ScheduleWeight via ApplyAIOp after create.
+		return 10
+	}
+	return w
+}
+
+func accountAIManagedOrDefault(account *service.Account) bool {
+	if account == nil {
+		return true
+	}
+	// Zero-value false is ambiguous for legacy callers that never set the field.
+	// Prefer true unless the account already has AI control surface data.
+	if !account.AIManaged && (account.AIDisabled || account.AIWatched || account.ScheduleWeight > 0 || account.ManualTouchedAt != nil) {
+		return false
+	}
+	return true
 }
 
 func normalizeJSONMap(in map[string]any) map[string]any {

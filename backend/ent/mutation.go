@@ -2310,6 +2310,12 @@ type AccountMutation struct {
 	expires_at                  *time.Time
 	auto_pause_on_expired       *bool
 	schedulable                 *bool
+	ai_disabled                 *bool
+	ai_managed                  *bool
+	ai_watched                  *bool
+	schedule_weight             *int
+	addschedule_weight          *int
+	manual_touched_at           *time.Time
 	rate_limited_at             *time.Time
 	rate_limit_reset_at         *time.Time
 	overload_until              *time.Time
@@ -3398,6 +3404,219 @@ func (m *AccountMutation) ResetSchedulable() {
 	m.schedulable = nil
 }
 
+// SetAiDisabled sets the "ai_disabled" field.
+func (m *AccountMutation) SetAiDisabled(b bool) {
+	m.ai_disabled = &b
+}
+
+// AiDisabled returns the value of the "ai_disabled" field in the mutation.
+func (m *AccountMutation) AiDisabled() (r bool, exists bool) {
+	v := m.ai_disabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAiDisabled returns the old "ai_disabled" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldAiDisabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAiDisabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAiDisabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAiDisabled: %w", err)
+	}
+	return oldValue.AiDisabled, nil
+}
+
+// ResetAiDisabled resets all changes to the "ai_disabled" field.
+func (m *AccountMutation) ResetAiDisabled() {
+	m.ai_disabled = nil
+}
+
+// SetAiManaged sets the "ai_managed" field.
+func (m *AccountMutation) SetAiManaged(b bool) {
+	m.ai_managed = &b
+}
+
+// AiManaged returns the value of the "ai_managed" field in the mutation.
+func (m *AccountMutation) AiManaged() (r bool, exists bool) {
+	v := m.ai_managed
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAiManaged returns the old "ai_managed" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldAiManaged(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAiManaged is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAiManaged requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAiManaged: %w", err)
+	}
+	return oldValue.AiManaged, nil
+}
+
+// ResetAiManaged resets all changes to the "ai_managed" field.
+func (m *AccountMutation) ResetAiManaged() {
+	m.ai_managed = nil
+}
+
+// SetAiWatched sets the "ai_watched" field.
+func (m *AccountMutation) SetAiWatched(b bool) {
+	m.ai_watched = &b
+}
+
+// AiWatched returns the value of the "ai_watched" field in the mutation.
+func (m *AccountMutation) AiWatched() (r bool, exists bool) {
+	v := m.ai_watched
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAiWatched returns the old "ai_watched" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldAiWatched(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAiWatched is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAiWatched requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAiWatched: %w", err)
+	}
+	return oldValue.AiWatched, nil
+}
+
+// ResetAiWatched resets all changes to the "ai_watched" field.
+func (m *AccountMutation) ResetAiWatched() {
+	m.ai_watched = nil
+}
+
+// SetScheduleWeight sets the "schedule_weight" field.
+func (m *AccountMutation) SetScheduleWeight(i int) {
+	m.schedule_weight = &i
+	m.addschedule_weight = nil
+}
+
+// ScheduleWeight returns the value of the "schedule_weight" field in the mutation.
+func (m *AccountMutation) ScheduleWeight() (r int, exists bool) {
+	v := m.schedule_weight
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldScheduleWeight returns the old "schedule_weight" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldScheduleWeight(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldScheduleWeight is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldScheduleWeight requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldScheduleWeight: %w", err)
+	}
+	return oldValue.ScheduleWeight, nil
+}
+
+// AddScheduleWeight adds i to the "schedule_weight" field.
+func (m *AccountMutation) AddScheduleWeight(i int) {
+	if m.addschedule_weight != nil {
+		*m.addschedule_weight += i
+	} else {
+		m.addschedule_weight = &i
+	}
+}
+
+// AddedScheduleWeight returns the value that was added to the "schedule_weight" field in this mutation.
+func (m *AccountMutation) AddedScheduleWeight() (r int, exists bool) {
+	v := m.addschedule_weight
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetScheduleWeight resets all changes to the "schedule_weight" field.
+func (m *AccountMutation) ResetScheduleWeight() {
+	m.schedule_weight = nil
+	m.addschedule_weight = nil
+}
+
+// SetManualTouchedAt sets the "manual_touched_at" field.
+func (m *AccountMutation) SetManualTouchedAt(t time.Time) {
+	m.manual_touched_at = &t
+}
+
+// ManualTouchedAt returns the value of the "manual_touched_at" field in the mutation.
+func (m *AccountMutation) ManualTouchedAt() (r time.Time, exists bool) {
+	v := m.manual_touched_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldManualTouchedAt returns the old "manual_touched_at" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldManualTouchedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldManualTouchedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldManualTouchedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldManualTouchedAt: %w", err)
+	}
+	return oldValue.ManualTouchedAt, nil
+}
+
+// ClearManualTouchedAt clears the value of the "manual_touched_at" field.
+func (m *AccountMutation) ClearManualTouchedAt() {
+	m.manual_touched_at = nil
+	m.clearedFields[account.FieldManualTouchedAt] = struct{}{}
+}
+
+// ManualTouchedAtCleared returns if the "manual_touched_at" field was cleared in this mutation.
+func (m *AccountMutation) ManualTouchedAtCleared() bool {
+	_, ok := m.clearedFields[account.FieldManualTouchedAt]
+	return ok
+}
+
+// ResetManualTouchedAt resets all changes to the "manual_touched_at" field.
+func (m *AccountMutation) ResetManualTouchedAt() {
+	m.manual_touched_at = nil
+	delete(m.clearedFields, account.FieldManualTouchedAt)
+}
+
 // SetRateLimitedAt sets the "rate_limited_at" field.
 func (m *AccountMutation) SetRateLimitedAt(t time.Time) {
 	m.rate_limited_at = &t
@@ -4138,7 +4357,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 31)
+	fields := make([]string, 0, 36)
 	if m.created_at != nil {
 		fields = append(fields, account.FieldCreatedAt)
 	}
@@ -4201,6 +4420,21 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.schedulable != nil {
 		fields = append(fields, account.FieldSchedulable)
+	}
+	if m.ai_disabled != nil {
+		fields = append(fields, account.FieldAiDisabled)
+	}
+	if m.ai_managed != nil {
+		fields = append(fields, account.FieldAiManaged)
+	}
+	if m.ai_watched != nil {
+		fields = append(fields, account.FieldAiWatched)
+	}
+	if m.schedule_weight != nil {
+		fields = append(fields, account.FieldScheduleWeight)
+	}
+	if m.manual_touched_at != nil {
+		fields = append(fields, account.FieldManualTouchedAt)
 	}
 	if m.rate_limited_at != nil {
 		fields = append(fields, account.FieldRateLimitedAt)
@@ -4282,6 +4516,16 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.AutoPauseOnExpired()
 	case account.FieldSchedulable:
 		return m.Schedulable()
+	case account.FieldAiDisabled:
+		return m.AiDisabled()
+	case account.FieldAiManaged:
+		return m.AiManaged()
+	case account.FieldAiWatched:
+		return m.AiWatched()
+	case account.FieldScheduleWeight:
+		return m.ScheduleWeight()
+	case account.FieldManualTouchedAt:
+		return m.ManualTouchedAt()
 	case account.FieldRateLimitedAt:
 		return m.RateLimitedAt()
 	case account.FieldRateLimitResetAt:
@@ -4353,6 +4597,16 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldAutoPauseOnExpired(ctx)
 	case account.FieldSchedulable:
 		return m.OldSchedulable(ctx)
+	case account.FieldAiDisabled:
+		return m.OldAiDisabled(ctx)
+	case account.FieldAiManaged:
+		return m.OldAiManaged(ctx)
+	case account.FieldAiWatched:
+		return m.OldAiWatched(ctx)
+	case account.FieldScheduleWeight:
+		return m.OldScheduleWeight(ctx)
+	case account.FieldManualTouchedAt:
+		return m.OldManualTouchedAt(ctx)
 	case account.FieldRateLimitedAt:
 		return m.OldRateLimitedAt(ctx)
 	case account.FieldRateLimitResetAt:
@@ -4529,6 +4783,41 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetSchedulable(v)
 		return nil
+	case account.FieldAiDisabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAiDisabled(v)
+		return nil
+	case account.FieldAiManaged:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAiManaged(v)
+		return nil
+	case account.FieldAiWatched:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAiWatched(v)
+		return nil
+	case account.FieldScheduleWeight:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetScheduleWeight(v)
+		return nil
+	case account.FieldManualTouchedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetManualTouchedAt(v)
+		return nil
 	case account.FieldRateLimitedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -4622,6 +4911,9 @@ func (m *AccountMutation) AddedFields() []string {
 	if m.addrate_multiplier != nil {
 		fields = append(fields, account.FieldRateMultiplier)
 	}
+	if m.addschedule_weight != nil {
+		fields = append(fields, account.FieldScheduleWeight)
+	}
 	return fields
 }
 
@@ -4640,6 +4932,8 @@ func (m *AccountMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedPriority()
 	case account.FieldRateMultiplier:
 		return m.AddedRateMultiplier()
+	case account.FieldScheduleWeight:
+		return m.AddedScheduleWeight()
 	}
 	return nil, false
 }
@@ -4684,6 +4978,13 @@ func (m *AccountMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddRateMultiplier(v)
 		return nil
+	case account.FieldScheduleWeight:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddScheduleWeight(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Account numeric field %s", name)
 }
@@ -4715,6 +5016,9 @@ func (m *AccountMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(account.FieldExpiresAt) {
 		fields = append(fields, account.FieldExpiresAt)
+	}
+	if m.FieldCleared(account.FieldManualTouchedAt) {
+		fields = append(fields, account.FieldManualTouchedAt)
 	}
 	if m.FieldCleared(account.FieldRateLimitedAt) {
 		fields = append(fields, account.FieldRateLimitedAt)
@@ -4780,6 +5084,9 @@ func (m *AccountMutation) ClearField(name string) error {
 		return nil
 	case account.FieldExpiresAt:
 		m.ClearExpiresAt()
+		return nil
+	case account.FieldManualTouchedAt:
+		m.ClearManualTouchedAt()
 		return nil
 	case account.FieldRateLimitedAt:
 		m.ClearRateLimitedAt()
@@ -4878,6 +5185,21 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldSchedulable:
 		m.ResetSchedulable()
+		return nil
+	case account.FieldAiDisabled:
+		m.ResetAiDisabled()
+		return nil
+	case account.FieldAiManaged:
+		m.ResetAiManaged()
+		return nil
+	case account.FieldAiWatched:
+		m.ResetAiWatched()
+		return nil
+	case account.FieldScheduleWeight:
+		m.ResetScheduleWeight()
+		return nil
+	case account.FieldManualTouchedAt:
+		m.ResetManualTouchedAt()
 		return nil
 	case account.FieldRateLimitedAt:
 		m.ResetRateLimitedAt()

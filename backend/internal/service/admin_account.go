@@ -810,6 +810,15 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			account.LoadFactor = input.LoadFactor
 		}
 	}
+	if input.ScheduleWeight != nil {
+		if *input.ScheduleWeight < 0 {
+			return nil, errors.New("schedule_weight must be >= 0")
+		}
+		if *input.ScheduleWeight > 1000000 {
+			return nil, errors.New("schedule_weight must be <= 1000000")
+		}
+		account.ScheduleWeight = *input.ScheduleWeight
+	}
 	if input.Status != "" {
 		account.Status = input.Status
 	}
@@ -824,6 +833,11 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if input.AutoPauseOnExpired != nil {
 		account.AutoPauseOnExpired = *input.AutoPauseOnExpired
 	}
+
+	// Human edit immunity for AI autopilot: any admin account save stamps the
+	// timestamp so the pilot will not re-mutate this account for a while.
+	now := time.Now()
+	account.ManualTouchedAt = &now
 
 	// 先验证分组是否存在（在任何写操作之前）
 	if input.GroupIDs != nil {
@@ -1297,6 +1311,12 @@ func (s *adminServiceImpl) SetAccountError(ctx context.Context, id int64, errorM
 func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*Account, error) {
 	if err := s.accountRepo.SetSchedulable(ctx, id, schedulable); err != nil {
 		return nil, err
+	}
+	// Touch manual_touched_at so autopilot respects human toggle of schedulable.
+	if account, err := s.accountRepo.GetByID(ctx, id); err == nil && account != nil {
+		now := time.Now()
+		account.ManualTouchedAt = &now
+		_ = s.accountRepo.Update(ctx, account)
 	}
 	updated, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {

@@ -61,6 +61,16 @@ type Account struct {
 	AutoPauseOnExpired bool `json:"auto_pause_on_expired,omitempty"`
 	// Schedulable holds the value of the "schedulable" field.
 	Schedulable bool `json:"schedulable,omitempty"`
+	// AI autopilot soft-disable; orthogonal to status/schedulable.
+	AiDisabled bool `json:"ai_disabled,omitempty"`
+	// When false, AI autopilot cannot mutate this account.
+	AiManaged bool `json:"ai_managed,omitempty"`
+	// Watch flag for high-signal autopilot notifications.
+	AiWatched bool `json:"ai_watched,omitempty"`
+	// OpenAI Top-K / same-priority traffic share weight (>=0).
+	ScheduleWeight int `json:"schedule_weight,omitempty"`
+	// Last human edit time; autopilot respects immunity window.
+	ManualTouchedAt *time.Time `json:"manual_touched_at,omitempty"`
 	// RateLimitedAt holds the value of the "rate_limited_at" field.
 	RateLimitedAt *time.Time `json:"rate_limited_at,omitempty"`
 	// RateLimitResetAt holds the value of the "rate_limit_reset_at" field.
@@ -171,15 +181,15 @@ func (*Account) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case account.FieldCredentials, account.FieldExtra:
 			values[i] = new([]byte)
-		case account.FieldAutoPauseOnExpired, account.FieldSchedulable:
+		case account.FieldAutoPauseOnExpired, account.FieldSchedulable, account.FieldAiDisabled, account.FieldAiManaged, account.FieldAiWatched:
 			values[i] = new(sql.NullBool)
 		case account.FieldRateMultiplier:
 			values[i] = new(sql.NullFloat64)
-		case account.FieldID, account.FieldProxyID, account.FieldProxyFallbackOriginID, account.FieldConcurrency, account.FieldLoadFactor, account.FieldPriority, account.FieldParentAccountID:
+		case account.FieldID, account.FieldProxyID, account.FieldProxyFallbackOriginID, account.FieldConcurrency, account.FieldLoadFactor, account.FieldPriority, account.FieldScheduleWeight, account.FieldParentAccountID:
 			values[i] = new(sql.NullInt64)
 		case account.FieldName, account.FieldNotes, account.FieldPlatform, account.FieldType, account.FieldStatus, account.FieldErrorMessage, account.FieldTempUnschedulableReason, account.FieldSessionWindowStatus, account.FieldQuotaDimension:
 			values[i] = new(sql.NullString)
-		case account.FieldCreatedAt, account.FieldUpdatedAt, account.FieldDeletedAt, account.FieldLastUsedAt, account.FieldExpiresAt, account.FieldRateLimitedAt, account.FieldRateLimitResetAt, account.FieldOverloadUntil, account.FieldTempUnschedulableUntil, account.FieldSessionWindowStart, account.FieldSessionWindowEnd:
+		case account.FieldCreatedAt, account.FieldUpdatedAt, account.FieldDeletedAt, account.FieldLastUsedAt, account.FieldExpiresAt, account.FieldManualTouchedAt, account.FieldRateLimitedAt, account.FieldRateLimitResetAt, account.FieldOverloadUntil, account.FieldTempUnschedulableUntil, account.FieldSessionWindowStart, account.FieldSessionWindowEnd:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -339,6 +349,37 @@ func (_m *Account) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field schedulable", values[i])
 			} else if value.Valid {
 				_m.Schedulable = value.Bool
+			}
+		case account.FieldAiDisabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field ai_disabled", values[i])
+			} else if value.Valid {
+				_m.AiDisabled = value.Bool
+			}
+		case account.FieldAiManaged:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field ai_managed", values[i])
+			} else if value.Valid {
+				_m.AiManaged = value.Bool
+			}
+		case account.FieldAiWatched:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field ai_watched", values[i])
+			} else if value.Valid {
+				_m.AiWatched = value.Bool
+			}
+		case account.FieldScheduleWeight:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field schedule_weight", values[i])
+			} else if value.Valid {
+				_m.ScheduleWeight = int(value.Int64)
+			}
+		case account.FieldManualTouchedAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field manual_touched_at", values[i])
+			} else if value.Valid {
+				_m.ManualTouchedAt = new(time.Time)
+				*_m.ManualTouchedAt = value.Time
 			}
 		case account.FieldRateLimitedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -553,6 +594,23 @@ func (_m *Account) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("schedulable=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Schedulable))
+	builder.WriteString(", ")
+	builder.WriteString("ai_disabled=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AiDisabled))
+	builder.WriteString(", ")
+	builder.WriteString("ai_managed=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AiManaged))
+	builder.WriteString(", ")
+	builder.WriteString("ai_watched=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AiWatched))
+	builder.WriteString(", ")
+	builder.WriteString("schedule_weight=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ScheduleWeight))
+	builder.WriteString(", ")
+	if v := _m.ManualTouchedAt; v != nil {
+		builder.WriteString("manual_touched_at=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
 	builder.WriteString(", ")
 	if v := _m.RateLimitedAt; v != nil {
 		builder.WriteString("rate_limited_at=")

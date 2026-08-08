@@ -252,8 +252,24 @@ func init() {
 	accountDescSchedulable := accountFields[17].Descriptor()
 	// account.DefaultSchedulable holds the default value on creation for the schedulable field.
 	account.DefaultSchedulable = accountDescSchedulable.Default.(bool)
+	// accountDescAiDisabled is the schema descriptor for ai_disabled field.
+	accountDescAiDisabled := accountFields[18].Descriptor()
+	// account.DefaultAiDisabled holds the default value on creation for the ai_disabled field.
+	account.DefaultAiDisabled = accountDescAiDisabled.Default.(bool)
+	// accountDescAiManaged is the schema descriptor for ai_managed field.
+	accountDescAiManaged := accountFields[19].Descriptor()
+	// account.DefaultAiManaged holds the default value on creation for the ai_managed field.
+	account.DefaultAiManaged = accountDescAiManaged.Default.(bool)
+	// accountDescAiWatched is the schema descriptor for ai_watched field.
+	accountDescAiWatched := accountFields[20].Descriptor()
+	// account.DefaultAiWatched holds the default value on creation for the ai_watched field.
+	account.DefaultAiWatched = accountDescAiWatched.Default.(bool)
+	// accountDescScheduleWeight is the schema descriptor for schedule_weight field.
+	accountDescScheduleWeight := accountFields[21].Descriptor()
+	// account.DefaultScheduleWeight holds the default value on creation for the schedule_weight field.
+	account.DefaultScheduleWeight = accountDescScheduleWeight.Default.(int)
 	// accountDescSessionWindowStatus is the schema descriptor for session_window_status field.
-	accountDescSessionWindowStatus := accountFields[25].Descriptor()
+	accountDescSessionWindowStatus := accountFields[30].Descriptor()
 	// account.SessionWindowStatusValidator is a validator for the "session_window_status" field. It is called by the builders before save.
 	account.SessionWindowStatusValidator = accountDescSessionWindowStatus.Validators[0].(func(string) error)
 	accountgroupFields := schema.AccountGroup{}.Fields()

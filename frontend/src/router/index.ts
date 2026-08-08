@@ -525,6 +525,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/autopilot',
+    name: 'AdminAutopilot',
+    component: () => import('@/views/admin/AutopilotView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'AI Autopilot',
+      titleKey: 'admin.autopilot.title',
+      descriptionKey: 'admin.autopilot.description'
+    }
+  },
+  {
     path: '/admin/announcements',
     name: 'AdminAnnouncements',
     component: () => import('@/views/admin/AnnouncementsView.vue'),

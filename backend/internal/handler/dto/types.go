@@ -214,6 +214,13 @@ type Account struct {
 
 	Schedulable bool `json:"schedulable"`
 
+	// AI autopilot control surface (orthogonal to status/schedulable).
+	AIDisabled      bool       `json:"ai_disabled"`
+	AIManaged       bool       `json:"ai_managed"`
+	AIWatched       bool       `json:"ai_watched"`
+	ScheduleWeight  int        `json:"schedule_weight"`
+	ManualTouchedAt *time.Time `json:"manual_touched_at,omitempty"`
+
 	RateLimitedAt    *time.Time `json:"rate_limited_at"`
 	RateLimitResetAt *time.Time `json:"rate_limit_reset_at"`
 	OverloadUntil    *time.Time `json:"overload_until"`

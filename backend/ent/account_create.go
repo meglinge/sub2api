@@ -279,6 +279,76 @@ func (_c *AccountCreate) SetNillableSchedulable(v *bool) *AccountCreate {
 	return _c
 }
 
+// SetAiDisabled sets the "ai_disabled" field.
+func (_c *AccountCreate) SetAiDisabled(v bool) *AccountCreate {
+	_c.mutation.SetAiDisabled(v)
+	return _c
+}
+
+// SetNillableAiDisabled sets the "ai_disabled" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableAiDisabled(v *bool) *AccountCreate {
+	if v != nil {
+		_c.SetAiDisabled(*v)
+	}
+	return _c
+}
+
+// SetAiManaged sets the "ai_managed" field.
+func (_c *AccountCreate) SetAiManaged(v bool) *AccountCreate {
+	_c.mutation.SetAiManaged(v)
+	return _c
+}
+
+// SetNillableAiManaged sets the "ai_managed" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableAiManaged(v *bool) *AccountCreate {
+	if v != nil {
+		_c.SetAiManaged(*v)
+	}
+	return _c
+}
+
+// SetAiWatched sets the "ai_watched" field.
+func (_c *AccountCreate) SetAiWatched(v bool) *AccountCreate {
+	_c.mutation.SetAiWatched(v)
+	return _c
+}
+
+// SetNillableAiWatched sets the "ai_watched" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableAiWatched(v *bool) *AccountCreate {
+	if v != nil {
+		_c.SetAiWatched(*v)
+	}
+	return _c
+}
+
+// SetScheduleWeight sets the "schedule_weight" field.
+func (_c *AccountCreate) SetScheduleWeight(v int) *AccountCreate {
+	_c.mutation.SetScheduleWeight(v)
+	return _c
+}
+
+// SetNillableScheduleWeight sets the "schedule_weight" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableScheduleWeight(v *int) *AccountCreate {
+	if v != nil {
+		_c.SetScheduleWeight(*v)
+	}
+	return _c
+}
+
+// SetManualTouchedAt sets the "manual_touched_at" field.
+func (_c *AccountCreate) SetManualTouchedAt(v time.Time) *AccountCreate {
+	_c.mutation.SetManualTouchedAt(v)
+	return _c
+}
+
+// SetNillableManualTouchedAt sets the "manual_touched_at" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableManualTouchedAt(v *time.Time) *AccountCreate {
+	if v != nil {
+		_c.SetManualTouchedAt(*v)
+	}
+	return _c
+}
+
 // SetRateLimitedAt sets the "rate_limited_at" field.
 func (_c *AccountCreate) SetRateLimitedAt(v time.Time) *AccountCreate {
 	_c.mutation.SetRateLimitedAt(v)
@@ -577,6 +647,22 @@ func (_c *AccountCreate) defaults() error {
 		v := account.DefaultSchedulable
 		_c.mutation.SetSchedulable(v)
 	}
+	if _, ok := _c.mutation.AiDisabled(); !ok {
+		v := account.DefaultAiDisabled
+		_c.mutation.SetAiDisabled(v)
+	}
+	if _, ok := _c.mutation.AiManaged(); !ok {
+		v := account.DefaultAiManaged
+		_c.mutation.SetAiManaged(v)
+	}
+	if _, ok := _c.mutation.AiWatched(); !ok {
+		v := account.DefaultAiWatched
+		_c.mutation.SetAiWatched(v)
+	}
+	if _, ok := _c.mutation.ScheduleWeight(); !ok {
+		v := account.DefaultScheduleWeight
+		_c.mutation.SetScheduleWeight(v)
+	}
 	if _, ok := _c.mutation.QuotaDimension(); !ok {
 		v := account.DefaultQuotaDimension
 		_c.mutation.SetQuotaDimension(v)
@@ -644,6 +730,18 @@ func (_c *AccountCreate) check() error {
 	}
 	if _, ok := _c.mutation.Schedulable(); !ok {
 		return &ValidationError{Name: "schedulable", err: errors.New(`ent: missing required field "Account.schedulable"`)}
+	}
+	if _, ok := _c.mutation.AiDisabled(); !ok {
+		return &ValidationError{Name: "ai_disabled", err: errors.New(`ent: missing required field "Account.ai_disabled"`)}
+	}
+	if _, ok := _c.mutation.AiManaged(); !ok {
+		return &ValidationError{Name: "ai_managed", err: errors.New(`ent: missing required field "Account.ai_managed"`)}
+	}
+	if _, ok := _c.mutation.AiWatched(); !ok {
+		return &ValidationError{Name: "ai_watched", err: errors.New(`ent: missing required field "Account.ai_watched"`)}
+	}
+	if _, ok := _c.mutation.ScheduleWeight(); !ok {
+		return &ValidationError{Name: "schedule_weight", err: errors.New(`ent: missing required field "Account.schedule_weight"`)}
 	}
 	if v, ok := _c.mutation.SessionWindowStatus(); ok {
 		if err := account.SessionWindowStatusValidator(v); err != nil {
@@ -764,6 +862,26 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Schedulable(); ok {
 		_spec.SetField(account.FieldSchedulable, field.TypeBool, value)
 		_node.Schedulable = value
+	}
+	if value, ok := _c.mutation.AiDisabled(); ok {
+		_spec.SetField(account.FieldAiDisabled, field.TypeBool, value)
+		_node.AiDisabled = value
+	}
+	if value, ok := _c.mutation.AiManaged(); ok {
+		_spec.SetField(account.FieldAiManaged, field.TypeBool, value)
+		_node.AiManaged = value
+	}
+	if value, ok := _c.mutation.AiWatched(); ok {
+		_spec.SetField(account.FieldAiWatched, field.TypeBool, value)
+		_node.AiWatched = value
+	}
+	if value, ok := _c.mutation.ScheduleWeight(); ok {
+		_spec.SetField(account.FieldScheduleWeight, field.TypeInt, value)
+		_node.ScheduleWeight = value
+	}
+	if value, ok := _c.mutation.ManualTouchedAt(); ok {
+		_spec.SetField(account.FieldManualTouchedAt, field.TypeTime, value)
+		_node.ManualTouchedAt = &value
 	}
 	if value, ok := _c.mutation.RateLimitedAt(); ok {
 		_spec.SetField(account.FieldRateLimitedAt, field.TypeTime, value)
@@ -1254,6 +1372,78 @@ func (u *AccountUpsert) SetSchedulable(v bool) *AccountUpsert {
 // UpdateSchedulable sets the "schedulable" field to the value that was provided on create.
 func (u *AccountUpsert) UpdateSchedulable() *AccountUpsert {
 	u.SetExcluded(account.FieldSchedulable)
+	return u
+}
+
+// SetAiDisabled sets the "ai_disabled" field.
+func (u *AccountUpsert) SetAiDisabled(v bool) *AccountUpsert {
+	u.Set(account.FieldAiDisabled, v)
+	return u
+}
+
+// UpdateAiDisabled sets the "ai_disabled" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateAiDisabled() *AccountUpsert {
+	u.SetExcluded(account.FieldAiDisabled)
+	return u
+}
+
+// SetAiManaged sets the "ai_managed" field.
+func (u *AccountUpsert) SetAiManaged(v bool) *AccountUpsert {
+	u.Set(account.FieldAiManaged, v)
+	return u
+}
+
+// UpdateAiManaged sets the "ai_managed" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateAiManaged() *AccountUpsert {
+	u.SetExcluded(account.FieldAiManaged)
+	return u
+}
+
+// SetAiWatched sets the "ai_watched" field.
+func (u *AccountUpsert) SetAiWatched(v bool) *AccountUpsert {
+	u.Set(account.FieldAiWatched, v)
+	return u
+}
+
+// UpdateAiWatched sets the "ai_watched" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateAiWatched() *AccountUpsert {
+	u.SetExcluded(account.FieldAiWatched)
+	return u
+}
+
+// SetScheduleWeight sets the "schedule_weight" field.
+func (u *AccountUpsert) SetScheduleWeight(v int) *AccountUpsert {
+	u.Set(account.FieldScheduleWeight, v)
+	return u
+}
+
+// UpdateScheduleWeight sets the "schedule_weight" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateScheduleWeight() *AccountUpsert {
+	u.SetExcluded(account.FieldScheduleWeight)
+	return u
+}
+
+// AddScheduleWeight adds v to the "schedule_weight" field.
+func (u *AccountUpsert) AddScheduleWeight(v int) *AccountUpsert {
+	u.Add(account.FieldScheduleWeight, v)
+	return u
+}
+
+// SetManualTouchedAt sets the "manual_touched_at" field.
+func (u *AccountUpsert) SetManualTouchedAt(v time.Time) *AccountUpsert {
+	u.Set(account.FieldManualTouchedAt, v)
+	return u
+}
+
+// UpdateManualTouchedAt sets the "manual_touched_at" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateManualTouchedAt() *AccountUpsert {
+	u.SetExcluded(account.FieldManualTouchedAt)
+	return u
+}
+
+// ClearManualTouchedAt clears the value of the "manual_touched_at" field.
+func (u *AccountUpsert) ClearManualTouchedAt() *AccountUpsert {
+	u.SetNull(account.FieldManualTouchedAt)
 	return u
 }
 
@@ -1844,6 +2034,90 @@ func (u *AccountUpsertOne) SetSchedulable(v bool) *AccountUpsertOne {
 func (u *AccountUpsertOne) UpdateSchedulable() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateSchedulable()
+	})
+}
+
+// SetAiDisabled sets the "ai_disabled" field.
+func (u *AccountUpsertOne) SetAiDisabled(v bool) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetAiDisabled(v)
+	})
+}
+
+// UpdateAiDisabled sets the "ai_disabled" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateAiDisabled() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateAiDisabled()
+	})
+}
+
+// SetAiManaged sets the "ai_managed" field.
+func (u *AccountUpsertOne) SetAiManaged(v bool) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetAiManaged(v)
+	})
+}
+
+// UpdateAiManaged sets the "ai_managed" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateAiManaged() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateAiManaged()
+	})
+}
+
+// SetAiWatched sets the "ai_watched" field.
+func (u *AccountUpsertOne) SetAiWatched(v bool) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetAiWatched(v)
+	})
+}
+
+// UpdateAiWatched sets the "ai_watched" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateAiWatched() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateAiWatched()
+	})
+}
+
+// SetScheduleWeight sets the "schedule_weight" field.
+func (u *AccountUpsertOne) SetScheduleWeight(v int) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetScheduleWeight(v)
+	})
+}
+
+// AddScheduleWeight adds v to the "schedule_weight" field.
+func (u *AccountUpsertOne) AddScheduleWeight(v int) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddScheduleWeight(v)
+	})
+}
+
+// UpdateScheduleWeight sets the "schedule_weight" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateScheduleWeight() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateScheduleWeight()
+	})
+}
+
+// SetManualTouchedAt sets the "manual_touched_at" field.
+func (u *AccountUpsertOne) SetManualTouchedAt(v time.Time) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetManualTouchedAt(v)
+	})
+}
+
+// UpdateManualTouchedAt sets the "manual_touched_at" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateManualTouchedAt() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateManualTouchedAt()
+	})
+}
+
+// ClearManualTouchedAt clears the value of the "manual_touched_at" field.
+func (u *AccountUpsertOne) ClearManualTouchedAt() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearManualTouchedAt()
 	})
 }
 
@@ -2629,6 +2903,90 @@ func (u *AccountUpsertBulk) SetSchedulable(v bool) *AccountUpsertBulk {
 func (u *AccountUpsertBulk) UpdateSchedulable() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateSchedulable()
+	})
+}
+
+// SetAiDisabled sets the "ai_disabled" field.
+func (u *AccountUpsertBulk) SetAiDisabled(v bool) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetAiDisabled(v)
+	})
+}
+
+// UpdateAiDisabled sets the "ai_disabled" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateAiDisabled() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateAiDisabled()
+	})
+}
+
+// SetAiManaged sets the "ai_managed" field.
+func (u *AccountUpsertBulk) SetAiManaged(v bool) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetAiManaged(v)
+	})
+}
+
+// UpdateAiManaged sets the "ai_managed" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateAiManaged() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateAiManaged()
+	})
+}
+
+// SetAiWatched sets the "ai_watched" field.
+func (u *AccountUpsertBulk) SetAiWatched(v bool) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetAiWatched(v)
+	})
+}
+
+// UpdateAiWatched sets the "ai_watched" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateAiWatched() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateAiWatched()
+	})
+}
+
+// SetScheduleWeight sets the "schedule_weight" field.
+func (u *AccountUpsertBulk) SetScheduleWeight(v int) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetScheduleWeight(v)
+	})
+}
+
+// AddScheduleWeight adds v to the "schedule_weight" field.
+func (u *AccountUpsertBulk) AddScheduleWeight(v int) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddScheduleWeight(v)
+	})
+}
+
+// UpdateScheduleWeight sets the "schedule_weight" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateScheduleWeight() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateScheduleWeight()
+	})
+}
+
+// SetManualTouchedAt sets the "manual_touched_at" field.
+func (u *AccountUpsertBulk) SetManualTouchedAt(v time.Time) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetManualTouchedAt(v)
+	})
+}
+
+// UpdateManualTouchedAt sets the "manual_touched_at" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateManualTouchedAt() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateManualTouchedAt()
+	})
+}
+
+// ClearManualTouchedAt clears the value of the "manual_touched_at" field.
+func (u *AccountUpsertBulk) ClearManualTouchedAt() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearManualTouchedAt()
 	})
 }
 

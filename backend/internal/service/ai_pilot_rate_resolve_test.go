@@ -1,0 +1,259 @@
+package service
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestFetchNewAPIRate_TokenVipRatio(t *testing.T) {
+	t.Parallel()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/user/self/groups", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("New-Api-User") != "42" {
+			w.WriteHeader(401)
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true,"data":{"vip":{"ratio":0.5,"desc":"VIP"},"default":{"ratio":1}}}`)
+	})
+	mux.HandleFunc("/api/token/", func(w http.ResponseWriter, r *http.Request) {
+		// Accept only raw Authorization (no Bearer) — some new-api builds do this.
+		auth := r.Header.Get("Authorization")
+		if auth == "Bearer mgmt-tok" {
+			w.WriteHeader(401)
+			_, _ = io.WriteString(w, `{"success":false,"message":"invalid"}`)
+			return
+		}
+		if auth != "mgmt-tok" {
+			w.WriteHeader(401)
+			return
+		}
+		// Only p=0 returns data (p=1 empty) — pagination variance.
+		if r.URL.Query().Get("p") == "1" {
+			_, _ = io.WriteString(w, `{"success":true,"data":{"items":[]}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true,"data":{"items":[{"id":1,"key":"ZNC0**********bmx4","group":"vip","status":1,"remain_quota":1000},{"id":2,"key":"sk-vip-key-001","group":"vip","status":1,"remain_quota":1000}]}}`)
+	})
+	mux.HandleFunc("/api/user/self", func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth == "Bearer mgmt-tok" {
+			w.WriteHeader(401)
+			return
+		}
+		if auth != "mgmt-tok" {
+			w.WriteHeader(401)
+			return
+		}
+		_, _ = io.WriteString(w, `{"success":true,"data":{"quota":1000000,"used_quota":0}}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	p := &AIPilotService{HTTP: srv.Client()}
+	// Masked token without sk- prefix must still match full sk- key.
+	rate, src, remain, ok := p.fetchNewAPIRate(context.Background(), srv.URL, "mgmt-tok", "42", "sk-ZNC0U3Qr6Z5WgBv3eszAtlCv2hw0kcTkYRkEAXFUVMtUbmx4")
+	if !ok || rate != 0.5 || src != "newapi" {
+		t.Fatalf("rate=%v src=%s ok=%v", rate, src, ok)
+	}
+	if remain != 1000 {
+		t.Fatalf("remain=%d want 1000", remain)
+	}
+
+	// missing mgmt → resolveAccountRate falls to default
+	acc := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Extra: map[string]any{}}
+	r, source := resolveAccountRate(acc)
+	if r != 1 || source != "default_one" {
+		t.Fatalf("no mgmt: rate=%v source=%s", r, source)
+	}
+
+	// ResolveAccountMoney with mgmt fills rate + balance (Bearer-fail → raw auth).
+	acc2 := &Account{
+		Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-vip-key-001", "base_url": srv.URL},
+		Extra: map[string]any{
+			ExtraUpstreamKind:       "newapi",
+			ExtraUpstreamMgmtToken:  "mgmt-tok",
+			ExtraUpstreamMgmtUserID: "42",
+		},
+	}
+	rate2, src2, balSt, balUSD := p.ResolveAccountMoney(context.Background(), acc2)
+	if rate2 != 0.5 || !strings.Contains(src2, "newapi") {
+		t.Fatalf("money rate=%v src=%s", rate2, src2)
+	}
+	if balSt != "ok" || balUSD != 2 {
+		t.Fatalf("bal st=%s usd=%v", balSt, balUSD)
+	}
+}
+
+func TestMoneyView_MissingMgmtLowConfidence(t *testing.T) {
+	t.Parallel()
+	acc := &Account{Extra: map[string]any{ExtraRechargeMultiplier: 1.0}}
+	m := moneyView(acc)
+	rc := m["rateConfidence"].(map[string]any)
+	if rc["level"].(int) != 3 {
+		t.Fatalf("expected low confidence, got %+v", rc)
+	}
+	if m["rateMultiplier"].(float64) != 1 {
+		t.Fatalf("rate=%v", m["rateMultiplier"])
+	}
+}
+
+func TestFetchNewAPIRate_NoFirstGroupFallback(t *testing.T) {
+	t.Parallel()
+	// multi-group + no matching token → must NOT invent first group's ratio (was Niko 0.3 bug)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/user/self/groups", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"success":true,"data":{"gemini":{"ratio":0.3},"codex-混池":{"ratio":0.06}}}`)
+	})
+	mux.HandleFunc("/api/token/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"success":true,"data":{"items":[{"id":1,"key":"sk-other-zzzz","group":"gemini","status":1,"remain_quota":1}]}}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	p := &AIPilotService{HTTP: srv.Client()}
+	_, _, _, ok := p.fetchNewAPIRate(context.Background(), srv.URL, "mgmt", "1", "sk-real-codex-key")
+	if ok {
+		t.Fatal("multi-group without token match must fail, not fall back to groups[0]")
+	}
+
+	// single group still ok without match
+	mux2 := http.NewServeMux()
+	mux2.HandleFunc("/api/user/self/groups", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"success":true,"data":{"only":{"ratio":0.12}}}`)
+	})
+	mux2.HandleFunc("/api/token/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"success":true,"data":{"items":[]}}`)
+	})
+	srv2 := httptest.NewServer(mux2)
+	defer srv2.Close()
+	p2 := &AIPilotService{HTTP: srv2.Client()}
+	rate, src, _, ok := p2.fetchNewAPIRate(context.Background(), srv2.URL, "mgmt", "1", "sk-x")
+	if !ok || rate != 0.12 || src != "newapi" {
+		t.Fatalf("single group: rate=%v src=%s ok=%v", rate, src, ok)
+	}
+}
+
+func TestTokenKeyMatch_MaskedWithoutSkPrefix(t *testing.T) {
+	t.Parallel()
+	// Niko-class: listed drops "sk-", full key keeps it
+	full := "sk-8M3m87GRQxxxxERo3IdjNwlh3"
+	listed := "8M3m**********wlh3"
+	if !tokenKeyMatch(full, listed) {
+		t.Fatalf("should match masked key without sk- prefix")
+	}
+	if tokenKeyMatch("sk-other**********zzzz", listed) {
+		t.Fatal("should not match different key")
+	}
+	if !tokenKeyMatch(full, full) {
+		t.Fatal("exact match")
+	}
+	// also works when both have sk-
+	if !tokenKeyMatch(full, "sk-8M3m**********wlh3") {
+		t.Fatal("masked with sk- should match")
+	}
+}
+
+func TestResolveAccountMoney_APIKeyUsageTokenTrailingSlash(t *testing.T) {
+	t.Parallel()
+	mux := http.NewServeMux()
+	// bare path 301s; trailing slash works (new-api)
+	mux.HandleFunc("/api/usage/token", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/usage/token/", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("/api/usage/token/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"code":true,"data":{"object":"token_usage","total_available":-1,"unlimited_quota":true},"message":"ok"}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	p := &AIPilotService{HTTP: srv.Client()}
+	acc := &Account{
+		Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-x", "base_url": srv.URL},
+		Extra:       map[string]any{ExtraUpstreamKind: "newapi"},
+	}
+	_, _, balSt, _ := p.ForceResolveAccountMoney(context.Background(), acc)
+	if balSt != "unlimited" {
+		t.Fatalf("expected unlimited from trailing-slash usage, got %s", balSt)
+	}
+}
+
+func TestResolveAccountMoney_APIKeyUsageBalance(t *testing.T) {
+	t.Parallel()
+	mux := http.NewServeMux()
+	// Original UpstreamRouter path for sub2api pool vendors
+	mux.HandleFunc("/v1/usage", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer sk-") {
+			w.WriteHeader(401)
+			return
+		}
+		_, _ = io.WriteString(w, `{"balance":24.74,"daily_usage":[{"date":"2026-08-05","cost":1}]}`)
+	})
+	mux.HandleFunc("/v1/sub2api/billing", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"object":"sub2api.key_billing","schema_version":1,"billing_scope":"token","resolved_rate_multiplier":0.07,"group_rate_multiplier":0.07,"effective_rate_multiplier":0.07}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	acc := &Account{
+		Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-test-usage-001", "base_url": srv.URL},
+		Extra:       map[string]any{},
+	}
+	p := &AIPilotService{HTTP: srv.Client()}
+	rate, src, balSt, balUSD := p.ResolveAccountMoney(context.Background(), acc)
+	if rate != 0.07 || src != "sub2api" {
+		t.Fatalf("rate=%v src=%s want 0.07/sub2api", rate, src)
+	}
+	if balSt != "ok" || balUSD < 24 || balUSD > 25 {
+		t.Fatalf("bal st=%s usd=%v want ~24.74 from /v1/usage", balSt, balUSD)
+	}
+	if extraFloat(acc.Extra, ExtraAIRateMultiplier) != 0.07 {
+		t.Fatalf("extra rate not persisted in memory: %+v", acc.Extra)
+	}
+	if extraString(acc.Extra, ExtraAIBalanceStatus) != "ok" {
+		t.Fatalf("extra bal not set: %+v", acc.Extra)
+	}
+}
+
+func TestParseSub2APIUsageBalance_PoolShape(t *testing.T) {
+	t.Parallel()
+	st, usd, ok := ParseSub2APIUsageBalance([]byte(`{"balance":333.71,"daily_usage":[]}`))
+	if !ok || st != "ok" || usd < 333 || usd > 334 {
+		t.Fatalf("st=%s usd=%v ok=%v", st, usd, ok)
+	}
+	st, usd, ok = ParseSub2APIUsageBalance([]byte(`{"mode":"quota_limited","isValid":true,"remaining":12.5}`))
+	if !ok || st != "ok" || usd != 12.5 {
+		t.Fatalf("remaining st=%s usd=%v ok=%v", st, usd, ok)
+	}
+	st, _, ok = ParseSub2APIUsageBalance([]byte(`{"mode":"unrestricted","isValid":true}`))
+	if !ok || st != "unlimited" {
+		t.Fatalf("unlimited st=%s ok=%v", st, ok)
+	}
+	_, _, ok = ParseSub2APIUsageBalance([]byte(`{"hello":"world"}`))
+	if ok {
+		t.Fatal("should reject unknown shape")
+	}
+}
+
+func TestFetchOneAPIDashboardBalance(t *testing.T) {
+	t.Parallel()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/dashboard/billing/subscription", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"object":"billing_subscription","hard_limit_usd":100}`)
+	})
+	mux.HandleFunc("/v1/dashboard/billing/usage", func(w http.ResponseWriter, r *http.Request) {
+		// 2550 cents = $25.50
+		_, _ = io.WriteString(w, `{"object":"list","total_usage":2550}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	p := &AIPilotService{HTTP: srv.Client()}
+	st, usd, ok := p.fetchOneAPIDashboardBalance(context.Background(), srv.URL, "sk-x")
+	if !ok || st != "ok" || usd != 74.5 {
+		t.Fatalf("st=%s usd=%v ok=%v want 74.5", st, usd, ok)
+	}
+}

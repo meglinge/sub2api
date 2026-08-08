@@ -78,6 +78,9 @@ func RegisterAdminRoutes(
 		// 运维监控（Ops）
 		registerOpsRoutes(admin, h)
 
+		// AI 自动驾驶
+		registerAIPilotRoutes(admin, h)
+
 		// 系统管理
 		registerSystemRoutes(admin, h)
 
@@ -174,6 +177,30 @@ func registerAdminAPIKeyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	apiKeys := admin.Group("/api-keys")
 	{
 		apiKeys.PUT("/:id", h.Admin.APIKey.UpdateGroup)
+	}
+}
+
+func registerAIPilotRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	if h.Admin == nil || h.Admin.AIPilot == nil {
+		return
+	}
+	ai := admin.Group("/ai")
+	{
+		ai.GET("/status", h.Admin.AIPilot.Status)
+		ai.GET("/runs", h.Admin.AIPilot.ListRuns)
+		ai.GET("/runs/:id", h.Admin.AIPilot.GetRun)
+		ai.POST("/runs/:id/approve-all", h.Admin.AIPilot.ApproveRunSuggestions)
+		ai.POST("/runs/:id/dismiss-all", h.Admin.AIPilot.DismissRunSuggestions)
+		ai.POST("/analyze", h.Admin.AIPilot.Analyze)
+		ai.GET("/suggestions", h.Admin.AIPilot.ListSuggestions)
+		ai.GET("/history", h.Admin.AIPilot.History)
+		ai.GET("/scores", h.Admin.AIPilot.ListScores)
+		ai.GET("/scores/:id/history", h.Admin.AIPilot.ScoreHistory)
+		ai.POST("/actions/:id/rollback", h.Admin.AIPilot.RollbackAction)
+		ai.POST("/actions/:id/approve", h.Admin.AIPilot.ApproveAction)
+		ai.POST("/actions/:id/dismiss", h.Admin.AIPilot.DismissAction)
+		ai.GET("/settings", h.Admin.AIPilot.GetSettings)
+		ai.PUT("/settings", h.Admin.AIPilot.UpdateSettings)
 	}
 }
 

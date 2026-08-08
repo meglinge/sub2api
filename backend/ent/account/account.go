@@ -58,6 +58,16 @@ const (
 	FieldAutoPauseOnExpired = "auto_pause_on_expired"
 	// FieldSchedulable holds the string denoting the schedulable field in the database.
 	FieldSchedulable = "schedulable"
+	// FieldAiDisabled holds the string denoting the ai_disabled field in the database.
+	FieldAiDisabled = "ai_disabled"
+	// FieldAiManaged holds the string denoting the ai_managed field in the database.
+	FieldAiManaged = "ai_managed"
+	// FieldAiWatched holds the string denoting the ai_watched field in the database.
+	FieldAiWatched = "ai_watched"
+	// FieldScheduleWeight holds the string denoting the schedule_weight field in the database.
+	FieldScheduleWeight = "schedule_weight"
+	// FieldManualTouchedAt holds the string denoting the manual_touched_at field in the database.
+	FieldManualTouchedAt = "manual_touched_at"
 	// FieldRateLimitedAt holds the string denoting the rate_limited_at field in the database.
 	FieldRateLimitedAt = "rate_limited_at"
 	// FieldRateLimitResetAt holds the string denoting the rate_limit_reset_at field in the database.
@@ -152,6 +162,11 @@ var Columns = []string{
 	FieldExpiresAt,
 	FieldAutoPauseOnExpired,
 	FieldSchedulable,
+	FieldAiDisabled,
+	FieldAiManaged,
+	FieldAiWatched,
+	FieldScheduleWeight,
+	FieldManualTouchedAt,
 	FieldRateLimitedAt,
 	FieldRateLimitResetAt,
 	FieldOverloadUntil,
@@ -218,6 +233,14 @@ var (
 	DefaultAutoPauseOnExpired bool
 	// DefaultSchedulable holds the default value on creation for the "schedulable" field.
 	DefaultSchedulable bool
+	// DefaultAiDisabled holds the default value on creation for the "ai_disabled" field.
+	DefaultAiDisabled bool
+	// DefaultAiManaged holds the default value on creation for the "ai_managed" field.
+	DefaultAiManaged bool
+	// DefaultAiWatched holds the default value on creation for the "ai_watched" field.
+	DefaultAiWatched bool
+	// DefaultScheduleWeight holds the default value on creation for the "schedule_weight" field.
+	DefaultScheduleWeight int
 	// SessionWindowStatusValidator is a validator for the "session_window_status" field. It is called by the builders before save.
 	SessionWindowStatusValidator func(string) error
 )
@@ -349,6 +372,31 @@ func ByAutoPauseOnExpired(opts ...sql.OrderTermOption) OrderOption {
 // BySchedulable orders the results by the schedulable field.
 func BySchedulable(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSchedulable, opts...).ToFunc()
+}
+
+// ByAiDisabled orders the results by the ai_disabled field.
+func ByAiDisabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAiDisabled, opts...).ToFunc()
+}
+
+// ByAiManaged orders the results by the ai_managed field.
+func ByAiManaged(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAiManaged, opts...).ToFunc()
+}
+
+// ByAiWatched orders the results by the ai_watched field.
+func ByAiWatched(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAiWatched, opts...).ToFunc()
+}
+
+// ByScheduleWeight orders the results by the schedule_weight field.
+func ByScheduleWeight(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldScheduleWeight, opts...).ToFunc()
+}
+
+// ByManualTouchedAt orders the results by the manual_touched_at field.
+func ByManualTouchedAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldManualTouchedAt, opts...).ToFunc()
 }
 
 // ByRateLimitedAt orders the results by the rate_limited_at field.

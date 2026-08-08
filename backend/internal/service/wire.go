@@ -847,7 +847,21 @@ var ProviderSet = wire.NewSet(
 	ProvideChannelMonitorRunner,
 	NewChannelMonitorRequestTemplateService,
 	ProvideUserPlatformQuotaUsageFlusher,
+	ProvideAIPilotService,
 )
+
+// ProvideAIPilotService constructs and starts the account autopilot scheduler.
+// Stop is wired via cmd/server provideCleanup.
+func ProvideAIPilotService(
+	settings *SettingService,
+	accounts AccountRepository,
+	groups GroupRepository,
+	repo AIPilotStore,
+) *AIPilotService {
+	svc := NewAIPilotService(settings, accounts, groups, repo)
+	svc.Start()
+	return svc
+}
 
 // ProvideUserPlatformQuotaUsageFlusher 创建并启动 UserPlatformQuotaUsageFlusher。
 func ProvideUserPlatformQuotaUsageFlusher(cfg *config.Config, cache BillingCache, quotaRepo UserPlatformQuotaRepository, tw *TimingWheelService) *UserPlatformQuotaUsageFlusher {

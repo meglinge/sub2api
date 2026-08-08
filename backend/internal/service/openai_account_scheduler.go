@@ -762,6 +762,16 @@ func buildOpenAIWeightedSelectionOrder(
 		if math.IsNaN(weight) || math.IsInf(weight, 0) || weight <= 0 {
 			weight = 1.0
 		}
+		// AI / 人工 schedule_weight：同 Top-K 内再调分流比例；0 = 本轮不进加权抽选。
+		if pool[i].account != nil {
+			sw := float64(pool[i].account.EffectiveScheduleWeight())
+			if sw <= 0 {
+				weight = 0
+			} else {
+				// 默认 10 为中性基准，避免放大/缩小历史 score 语义。
+				weight *= sw / 10.0
+			}
+		}
 		weights[i] = weight
 	}
 
