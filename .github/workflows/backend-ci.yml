@@ -1,8 +1,9 @@
 name: CI
 
+# Disabled for this fork's release-only workflow to save GitHub Actions minutes.
+# Re-enable auto runs by restoring push/pull_request if needed.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

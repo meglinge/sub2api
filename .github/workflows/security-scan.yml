@@ -1,10 +1,9 @@
 name: Security Scan
 
+# Disabled for this fork's release-only workflow to save GitHub Actions minutes.
+# Manual only; weekly cron and push/PR triggers removed.
 on:
-  push:
-  pull_request:
-  schedule:
-    - cron: '0 3 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
