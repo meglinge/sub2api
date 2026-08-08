@@ -86,8 +86,11 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       vue(),
+      // Dev-only typecheck: build:ci / production builds skip vue-tsc for speed
+      // (CI release path uses FE_BUILD_CMD=build:ci).
       checker({
-        vueTsc: true
+        vueTsc: true,
+        enableBuild: false,
       }),
       injectPublicSettings(backendUrl)
     ],
