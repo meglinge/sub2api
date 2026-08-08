@@ -31,6 +31,27 @@
           <p>{{ t('admin.accounts.upstreamBilling.effectiveRate', { value: currentEffectiveRate ?? '-' }) }}</p>
           <p>{{ t('admin.accounts.upstreamBilling.updatedAt', { value: formatDate(snapshot?.received_at) }) }}</p>
         </template>
+        <template v-else-if="billingRate != null || aiBalanceStatus || aiMoneyError">
+          <p v-if="billingRate != null" data-testid="upstream-ai-rate">
+            {{ t('admin.accounts.autopilotMoney.statusRate', { rate: billingRate, source: (account.extra as any)?.ai_rate_source || (probeRate != null ? 'billing_probe' : 'newapi') }) }}
+          </p>
+          <p v-if="compositeRate != null && rechargeMultiplier !== 1" data-testid="upstream-composite-rate">
+            {{ t('admin.accounts.autopilotMoney.compositeRate', { composite: formatMultiplier(compositeRate), rate: billingRate, recharge: rechargeMultiplier }) }}
+          </p>
+          <p v-if="aiBalanceStatus" data-testid="upstream-ai-balance">
+            {{
+              aiBalanceStatus === 'unlimited'
+                ? t('admin.accounts.upstreamBalance.unlimited')
+                : aiBalanceUsd != null && aiBalanceStatus === 'ok'
+                  ? t('admin.accounts.autopilotMoney.statusBalance', { status: aiBalanceStatus, usd: aiBalanceUsd.toFixed(2) })
+                  : t('admin.accounts.autopilotMoney.statusBalanceOnly', { status: aiBalanceStatus })
+            }}
+          </p>
+          <p v-if="aiMoneyError" class="text-amber-500" data-testid="upstream-ai-money-error">
+            {{ aiMoneyError }}
+          </p>
+          <p v-if="snapshot?.status === 'unsupported' && billingRate == null" class="text-gray-400">{{ t('admin.accounts.upstreamBilling.sub2apiProbeN_A') }}</p>
+        </template>
         <template v-else-if="stale && lastDetectedRate != null">
           <p data-testid="upstream-billing-last-rate">
             {{ t('admin.accounts.upstreamBilling.lastDetectedRate', { value: lastDetectedRate }) }}
@@ -194,7 +215,49 @@ const effectiveRate = computed(() => {
   const value = currentEffectiveRate.value
   return value == null ? '-' : `${formatMultiplier(value)}x`
 })
+// Autopilot new-api/sub2api path stores rate/balance in extra.ai_* when sub2api billing probe is N/A.
+const extraMap = computed(() => (props.account.extra || {}) as Record<string, unknown>)
+const aiRate = computed(() => {
+  const v = Number(extraMap.value.ai_rate_multiplier)
+  return Number.isFinite(v) && v > 0 ? v : null
+})
+// billing probe may be "unsupported" for new-api, but still prefer any known numeric rate
+const probeRate = computed(() => {
+  const d = data.value as Record<string, unknown> | undefined
+  if (!d) return null
+  for (const k of ['resolved_rate_multiplier', 'effective_rate_multiplier', 'group_rate_multiplier'] as const) {
+    const v = Number(d[k])
+    if (Number.isFinite(v) && v > 0) return v
+  }
+  return null
+})
+const billingRate = computed(() => aiRate.value ?? probeRate.value)
+const rechargeMultiplier = computed(() => {
+  const v = Number(extraMap.value.recharge_multiplier)
+  return Number.isFinite(v) && v > 0 ? v : 1
+})
+/** composite = billing_rate / recharge (maok 1÷10 = 0.1) — this is what cost ranking uses */
+const compositeRate = computed(() => {
+  if (billingRate.value == null) return null
+  return billingRate.value / rechargeMultiplier.value
+})
+const aiBalanceStatus = computed(() => {
+  const s = extraMap.value.ai_balance_status
+  return typeof s === 'string' ? s : ''
+})
+const aiBalanceUsd = computed(() => {
+  const v = Number(extraMap.value.ai_balance_usd)
+  return Number.isFinite(v) ? v : null
+})
+const aiMoneyError = computed(() => {
+  const s = extraMap.value.ai_money_error
+  return typeof s === 'string' && s.trim() ? s.trim() : ''
+})
 const statusLabel = computed(() => {
+  // Prefer any known rate over bare "unsupported" (new-api has no /v1/sub2api/billing).
+  if (billingRate.value != null) return ''
+  if (aiBalanceStatus.value) return ''
+  if (aiMoneyError.value) return t('admin.accounts.upstreamBilling.failed')
   if (!snapshot.value) return t('admin.accounts.upstreamBilling.notProbed')
   if (snapshot.value.status === 'unsupported') return t('admin.accounts.upstreamBilling.unsupported')
   if (stale.value) return t('admin.accounts.upstreamBilling.stale')
@@ -202,14 +265,23 @@ const statusLabel = computed(() => {
   return ''
 })
 const statusClass = computed(() => {
+  if (billingRate.value != null) return ''
   if (!snapshot.value) return 'text-gray-400 dark:text-gray-500'
   if (snapshot.value.status === 'unsupported') return 'text-gray-500 dark:text-gray-400'
   if (stale.value) return 'text-amber-600 dark:text-amber-400'
   if (snapshot.value.status === 'failed') return 'text-red-600 dark:text-red-400'
   return ''
 })
-const hasEffectiveRate = computed(() => effectiveRate.value !== '-')
-const primaryValue = computed(() => hasEffectiveRate.value ? effectiveRate.value : statusLabel.value || '-')
+const hasEffectiveRate = computed(() => effectiveRate.value !== '-' || billingRate.value != null)
+const primaryValue = computed(() => {
+  // Show composite when recharge ≠ 1 so maok-class 1:10 is not mistaken for "1x expensive"
+  if (compositeRate.value != null && rechargeMultiplier.value !== 1) {
+    return `${formatMultiplier(compositeRate.value)}x`
+  }
+  if (effectiveRate.value !== '-') return effectiveRate.value
+  if (billingRate.value != null) return `${formatMultiplier(billingRate.value)}x`
+  return statusLabel.value || '-'
+})
 const formatDate = (value?: string) => value
   ? new Date(value).toLocaleString(undefined, {
       month: '2-digit',

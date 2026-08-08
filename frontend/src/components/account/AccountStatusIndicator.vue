@@ -151,6 +151,25 @@
         ></div>
       </div>
     </div>
+
+    <!-- AI Autopilot: soft-disabled by pilot -->
+    <div v-if="account.ai_disabled" class="group relative">
+      <span
+        class="inline-flex items-center gap-1 rounded bg-orange-100 px-1.5 py-0.5 text-xs font-medium text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+        :title="t('admin.accounts.status.aiDisabled')"
+      >
+        {{ t('admin.accounts.status.aiDisabled') }}
+      </span>
+    </div>
+    <!-- AI Autopilot: not managed -->
+    <div v-else-if="account.ai_managed === false" class="group relative">
+      <span
+        class="inline-flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+        :title="t('admin.accounts.status.aiUnmanaged')"
+      >
+        {{ t('admin.accounts.status.aiUnmanaged') }}
+      </span>
+    </div>
   </div>
 </template>
 

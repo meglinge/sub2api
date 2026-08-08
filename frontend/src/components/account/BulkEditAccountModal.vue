@@ -759,6 +759,55 @@
             <span>{{ t('admin.accounts.bulkEdit.rateSyncWarning') }}</span>
           </p>
         </div>
+        <!-- 充值倍率：1:10 填 10 → 综合成本 = rate/10 -->
+        <div>
+          <div class="mb-3 flex items-center justify-between">
+            <label
+              id="bulk-edit-recharge-multiplier-label"
+              class="input-label mb-0"
+              for="bulk-edit-recharge-multiplier-enabled"
+            >
+              {{ t('admin.accounts.autopilotMoney.rechargeMultiplier') }}
+            </label>
+            <input
+              v-model="enableRechargeMultiplier"
+              id="bulk-edit-recharge-multiplier-enabled"
+              type="checkbox"
+              aria-controls="bulk-edit-recharge-multiplier"
+              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              data-testid="bulk-enable-recharge-multiplier"
+            />
+          </div>
+          <input
+            v-model.number="rechargeMultiplier"
+            id="bulk-edit-recharge-multiplier"
+            type="number"
+            min="0.001"
+            step="0.001"
+            :disabled="!enableRechargeMultiplier"
+            class="input"
+            :class="!enableRechargeMultiplier && 'cursor-not-allowed opacity-50'"
+            data-testid="bulk-recharge-multiplier"
+            aria-labelledby="bulk-edit-recharge-multiplier-label"
+          />
+          <p class="input-hint">{{ t('admin.accounts.autopilotMoney.rechargeMultiplierHint') }}</p>
+          <p
+            v-if="enableRechargeMultiplier"
+            class="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300"
+          >
+            {{
+              t('admin.accounts.autopilotMoney.compositePreview', {
+                rate: enableRateMultiplier ? Number(rateMultiplier) || 1 : '?',
+                recharge: Number(rechargeMultiplier) || 1,
+                composite: enableRateMultiplier
+                  ? Number(
+                      ((Number(rateMultiplier) || 1) / (Number(rechargeMultiplier) || 1)).toPrecision(6)
+                    ).toString()
+                  : '?'
+              })
+            }}
+          </p>
+        </div>
       </div>
 
       <!-- Status -->
@@ -1473,6 +1522,7 @@ const enableConcurrency = ref(false)
 const enableLoadFactor = ref(false)
 const enablePriority = ref(false)
 const enableRateMultiplier = ref(false)
+const enableRechargeMultiplier = ref(false)
 const enableStatus = ref(false)
 const enableGroups = ref(false)
 const enableOpenAIPassthrough = ref(false)
@@ -1505,6 +1555,7 @@ const concurrency = ref(1)
 const loadFactor = ref<number | null>(null)
 const priority = ref(1)
 const rateMultiplier = ref(1)
+const rechargeMultiplier = ref(1)
 const status = ref<'active' | 'inactive'>('active')
 const groupIds = ref<number[]>([])
 const openaiPassthroughEnabled = ref(false)
@@ -1693,6 +1744,12 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
 
   if (enableRateMultiplier.value) {
     updates.rate_multiplier = rateMultiplier.value
+  }
+
+  if (enableRechargeMultiplier.value) {
+    const extra = ensureExtra()
+    const rm = Number(rechargeMultiplier.value)
+    extra.recharge_multiplier = Number.isFinite(rm) && rm > 0 ? rm : 1
   }
 
   if (enableStatus.value) {
@@ -1903,6 +1960,7 @@ const handleSubmit = async () => {
     enableLoadFactor.value ||
     enablePriority.value ||
     enableRateMultiplier.value ||
+    enableRechargeMultiplier.value ||
     enableStatus.value ||
     enableGroups.value ||
     enableOpenAIWSMode.value ||
@@ -2035,6 +2093,8 @@ watch(
       enableLoadFactor.value = false
       enablePriority.value = false
       enableRateMultiplier.value = false
+      enableRechargeMultiplier.value = false
+      rechargeMultiplier.value = 1
       enableStatus.value = false
       enableGroups.value = false
       enableOpenAIPassthrough.value = false

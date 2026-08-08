@@ -373,6 +373,17 @@
               @probe="handleProbeUpstreamBilling(row)"
             />
           </template>
+          <template #cell-upstream_balance="{ row }">
+            <span
+              v-if="showUpstreamBalance(row)"
+              class="text-sm font-mono tabular-nums"
+              :class="upstreamBalanceClass(row)"
+              data-testid="account-upstream-balance"
+            >
+              {{ formatUpstreamBalance(row) }}
+            </span>
+            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+          </template>
           <template #cell-priority="{ value }">
             <span class="text-sm text-gray-700 dark:text-gray-300">{{ value }}</span>
           </template>
@@ -774,6 +785,36 @@ const getSchedulerScoreRows = (account: Account): AccountSchedulerGroupScore[] =
     return [{ group_id: null, ...account.scheduler_score }]
   }
   return []
+}
+
+/** Pool-mode apikey (credentials.pool_mode) or autopilot money-enabled apikey shows balance. */
+const showUpstreamBalance = (row: Account): boolean => {
+  if (row.type !== 'apikey') return false
+  const creds = (row.credentials || {}) as Record<string, unknown>
+  const extra = (row.extra || {}) as Record<string, unknown>
+  if (creds.pool_mode === true) return true
+  // Also show when autopilot has fetched balance (new-api) so Niko-class accounts work without pool_mode
+  if (typeof extra.ai_balance_status === 'string' && extra.ai_balance_status) return true
+  if (typeof extra.upstream_kind === 'string' && extra.upstream_kind) return true
+  return false
+}
+const formatUpstreamBalance = (row: Account): string => {
+  const extra = (row.extra || {}) as Record<string, unknown>
+  const st = typeof extra.ai_balance_status === 'string' ? extra.ai_balance_status : ''
+  const usd = Number(extra.ai_balance_usd)
+  if (!st || st === 'unknown') return t('admin.accounts.upstreamBalance.unknown')
+  if (st === 'depleted') return t('admin.accounts.upstreamBalance.depleted')
+  if (st === 'unlimited') return t('admin.accounts.upstreamBalance.unlimited')
+  if (st === 'ok' && Number.isFinite(usd)) return `$${usd.toFixed(2)}`
+  if (st === 'error') return t('admin.accounts.upstreamBalance.error')
+  return st
+}
+const upstreamBalanceClass = (row: Account): string => {
+  const extra = (row.extra || {}) as Record<string, unknown>
+  const st = typeof extra.ai_balance_status === 'string' ? extra.ai_balance_status : ''
+  if (st === 'depleted' || st === 'error') return 'text-red-600 dark:text-red-400'
+  if (st === 'ok' || st === 'unlimited') return 'text-emerald-700 dark:text-emerald-400'
+  return 'text-gray-500 dark:text-gray-400'
 }
 
 const formatSchedulerScoreGroup = (score: AccountSchedulerGroupScore): string => {
@@ -1452,6 +1493,7 @@ const allColumns = computed(() => {
     { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false },
     { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true },
     { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true },
+    { key: 'upstream_balance', label: t('admin.accounts.columns.upstreamBalance'), sortable: false },
     { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true },
     { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true },
     { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true },
@@ -1913,10 +1955,12 @@ const handleProbeUpstreamBilling = async (account: Account) => {
   probingUpstreamBilling.add(account.id)
   try {
     const result = await adminAPI.accounts.probeUpstreamBilling(account.id)
-    if (result.snapshot) {
+    if (result?.snapshot) {
       patchUpstreamBillingSnapshot(account.id, result.snapshot)
-      await refreshAccountsAfterUpstreamBillingProbe()
     }
+    // Always reload: new-api money (ai_rate/ai_balance) is written even when
+    // sub2api billing snapshot is "unsupported".
+    await refreshAccountsAfterUpstreamBillingProbe()
   } catch (error) {
     console.error('Failed to probe upstream billing:', error)
     appStore.showError(extractApiErrorMessage(error, t('admin.accounts.upstreamBilling.probeFailed')))

@@ -88,7 +88,24 @@ func (h *AccountHandler) ProbeUpstreamBilling(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, service.UpstreamBillingProbeResult{AccountID: accountID, Snapshot: snapshot})
+	// Return fresh ai_* money fields so the FE can update without a full list reload wait.
+	// Snapshot may still be "unsupported" for new-api; money lives in account.extra.
+	out := gin.H{
+		"account_id": accountID,
+		"snapshot":   snapshot,
+	}
+	if acc, loadErr := h.adminService.GetAccount(c.Request.Context(), accountID); loadErr == nil && acc != nil {
+		if acc.Extra != nil {
+			out["ai_rate_multiplier"] = acc.Extra[service.ExtraAIRateMultiplier]
+			out["ai_rate_source"] = acc.Extra[service.ExtraAIRateSource]
+			out["ai_balance_status"] = acc.Extra[service.ExtraAIBalanceStatus]
+			out["ai_balance_usd"] = acc.Extra[service.ExtraAIBalanceUSD]
+			out["ai_money_error"] = acc.Extra[service.ExtraAIMoneyError]
+			out["ai_money_probed_at"] = acc.Extra[service.ExtraAIMoneyProbedAt]
+			out["recharge_multiplier"] = acc.Extra[service.ExtraRechargeMultiplier]
+		}
+	}
+	response.Success(c, out)
 }
 
 func (h *AccountHandler) ProbeUpstreamBillingBatch(c *gin.Context) {

@@ -1127,6 +1127,12 @@ export interface Account {
 
   // Rate limit & scheduling fields
   schedulable: boolean
+  // AI autopilot control surface
+  ai_disabled?: boolean
+  ai_managed?: boolean
+  ai_watched?: boolean
+  schedule_weight?: number
+  manual_touched_at?: string | null
   rate_limited_at: string | null
   rate_limit_reset_at: string | null
   overload_until: string | null

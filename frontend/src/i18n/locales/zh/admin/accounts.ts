@@ -106,6 +106,7 @@ export default {
         priority: '优先级',
         billingRateMultiplier: '账号倍率',
         upstreamBillingRate: '上游声明倍率',
+        upstreamBalance: '上游余额',
         weight: '权重',
         schedulerScore: '调度权值',
         status: '状态',
@@ -175,6 +176,31 @@ export default {
           OLLAMA_CLOUD_USAGE_REFRESH_RATE_LIMITED: '刷新过于频繁，请在 {retry_after_seconds} 秒后重试。'
         }
       },
+      upstreamBalance: {
+        depleted: '耗尽',
+        error: '查询失败',
+        unlimited: '不限',
+        unknown: '未探测'
+      },
+      autopilotMoney: {
+        title: '自动驾驶 · 上游管理令牌（可选）',
+        hint: '仅 new-api/one-api 需要：用管理令牌自动拉分组倍率与余额。纯手动成本请改上面的「充值倍率」。',
+        rechargeMultiplier: '充值倍率（真实成本）',
+        rechargeMultiplierHint:
+          '供应商标价倍率常是 1，但充值 1:10（如 maok）时这里填 10。自动驾驶按「综合倍率 = 计费倍率 ÷ 充值倍率」比价，例 1÷10=0.1。',
+        compositePreview: '综合成本倍率 ≈ {composite}（计费 {rate} ÷ 充值 {recharge}）',
+        upstreamKind: '上游类型',
+        upstreamKindManual: '手动 / 不自动拉',
+        upstreamKindHint: 'new-api/one-api 需管理令牌；sub2api 可走上游 billing 探测。',
+        mgmtToken: '管理访问令牌',
+        mgmtTokenHint: 'new-api 个人中心「系统访问令牌」。留空保存 = 不改已有值。',
+        mgmtUserId: '上游用户 ID',
+        mgmtUserIdHint: 'new-api 请求头 New-Api-User，个人中心显示的数字 ID。',
+        statusBalance: '缓存余额：{status} · ${usd}',
+        statusBalanceOnly: '缓存余额：{status}',
+        statusRate: '缓存上游倍率：{rate}x（{source}）',
+        compositeRate: '综合成本倍率：{composite}x（计费 {rate} ÷ 充值 {recharge}）— 性价比按此比价'
+      },
       upstreamBilling: {
         trustWarning: '此倍率由上游站点针对当前 API Key 自行声明。Sub2API 无法验证该值是否与实际扣费一致；上游站点或中间代理可能返回伪造、过期或被篡改的数据。请结合账单、余额变化和实际用量自行核验。',
         autoProbe: '自动探测上游声明倍率',
@@ -188,6 +214,7 @@ export default {
         unsupported: '不支持',
         failed: '失败',
         notProbed: '未探测',
+        sub2apiProbeN_A: '（非 sub2api billing 探测；以下为自动驾驶 new-api 缓存）',
         groupRate: '分组默认：{value}x',
         userRate: '用户专属倍率：{value}x',
         peakRate: '高峰：{start}-{end}，{value}x（{timezone}）',
@@ -343,7 +370,9 @@ export default {
         creditsExhausted: '积分已用尽',
         creditsExhaustedUntil: 'AI Credits 已用尽，预计 {time} 恢复',
         overloadedUntil: '负载过重，重置时间：{time}',
-        viewTempUnschedDetails: '查看临时不可调度详情'
+        viewTempUnschedDetails: '查看临时不可调度详情',
+        aiDisabled: 'AI 停用',
+        aiUnmanaged: 'AI 不管控'
       },
       tempUnschedulable: {
         title: '临时不可调度',
@@ -429,11 +458,7 @@ export default {
         collapseExpirations: '收起重置次数到期时间',
         expirationDetails: '重置次数到期明细',
         noCreditsAvailable: '没有可用的重置次数',
-        resetSuccess: '已重置 {windows} 个窗口，次数和账号状态已更新',
-        resetCacheRefreshFailed: '窗口已重置、账号状态已恢复，但重置次数未能回读，请重新查询次数。',
-        resetAccountRecoveryFailed: '窗口已重置，但账号状态恢复失败，请手动恢复账号状态。',
-        resetAccountRefreshFailed: '窗口、账号状态和重置次数缓存已更新，但无法加载最新账号显示。',
-        refreshCachePersistFailed: '已显示实时次数，但到期明细获取失败，仍保留原有缓存明细。',
+        resetSuccess: '已重置 {windows} 个窗口',
         confirmTitle: '确认重置周限',
         confirmMessage: '将消耗 1 次重置次数立即恢复当前窗口，剩余 {count} 次。此操作不可撤销，确定继续吗？'
       },
@@ -869,6 +894,9 @@ export default {
       loadFactorHint: '提高负载因子可以提高对账号的调度频率',
       priority: '优先级',
       priorityHint: '优先级越小的账号优先使用',
+      scheduleWeight: '调度权重',
+      scheduleWeightHint:
+        'OpenAI 同优先级/Top-K 内的分流比例（默认 10）。自动驾驶 set_weight 改的就是这里，不是负载因子。0 = 同层几乎不参与加权分流。',
       billingRateMultiplier: '账号计费倍率',
       billingRateMultiplierHint: '0 表示不计费，仅影响账号计费',
       expiresAt: '过期时间',

@@ -33,7 +33,9 @@ const (
 	UpstreamBillingProbeEnabledExtraKey    = "upstream_billing_probe_enabled"
 	UpstreamBillingRateSyncEnabledExtraKey = "upstream_billing_rate_sync_enabled"
 
-	upstreamBillingProbeDefaultIntervalMinutes = 30
+	// Default probe cadence for /v1/sub2api/billing rate snapshots (and money side-effect).
+	// Operators typically want ~5m for 倍率; 金额 soft-refresh is handled separately.
+	upstreamBillingProbeDefaultIntervalMinutes = 5
 	upstreamBillingProbeMinIntervalMinutes     = 5
 	upstreamBillingProbeMaxIntervalMinutes     = 24 * 60
 	upstreamBillingProbeCycleInterval          = time.Minute
@@ -49,6 +51,11 @@ const (
 	upstreamBillingProbeAccountRateScale       = 10000.0
 	upstreamBillingProbeLeaderLockKey          = "upstream:billing:probe:leader"
 	upstreamBillingProbeLeaderLockTTL          = 2 * time.Minute
+	// Soft money refresh runs every cycle so 余额 can stay ~1m fresh even when
+	// AI pilot analyze takes several minutes per turn.
+	upstreamBillingMoneySoftLeaderLockKey = "upstream:billing:money:soft:leader"
+	upstreamBillingMoneySoftMaxPerCycle   = 40
+	upstreamBillingMoneySoftConcurrency   = 6
 )
 
 // UpstreamBillingProbeMaxBatchSize limits one manual batch and one runner cycle.
@@ -308,6 +315,11 @@ func (s *UpstreamBillingProbeService) Stop() {
 
 func (s *UpstreamBillingProbeService) runLoop() {
 	defer s.wg.Done()
+	// Money soft-refresh first so 余额/倍率 stay warm even when probe settings are off
+	// or AI pilot analyze is mid-flight for minutes.
+	if err := s.RefreshStaleAutopilotMoney(s.parentCtx); err != nil {
+		logger.LegacyPrintf("service.upstream_billing_probe", "money_soft_refresh_failed: err=%v", err)
+	}
 	_ = s.RunDue(s.parentCtx)
 	ticker := time.NewTicker(upstreamBillingProbeCycleInterval)
 	defer ticker.Stop()
@@ -316,11 +328,107 @@ func (s *UpstreamBillingProbeService) runLoop() {
 		case <-s.parentCtx.Done():
 			return
 		case <-ticker.C:
+			if err := s.RefreshStaleAutopilotMoney(s.parentCtx); err != nil {
+				logger.LegacyPrintf("service.upstream_billing_probe", "money_soft_refresh_failed: err=%v", err)
+			}
 			if err := s.RunDue(s.parentCtx); err != nil {
 				logger.LegacyPrintf("service.upstream_billing_probe", "run_due_failed: err=%v", err)
 			}
 		}
 	}
+}
+
+// RefreshStaleAutopilotMoney re-probes wallet/rate for OpenAI API-key accounts when
+// soft caches are expired (余额 ~1m, 倍率 ~5m). Independent of the /v1/sub2api/billing
+// probe enable switch so new-api 中转 still get periodic balance updates.
+func (s *UpstreamBillingProbeService) RefreshStaleAutopilotMoney(ctx context.Context) error {
+	if s == nil || s.accountRepo == nil {
+		return nil
+	}
+	release, acquired, lockErr := s.tryAcquireLeaderLock(ctx, upstreamBillingMoneySoftLeaderLockKey)
+	if lockErr != nil {
+		return fmt.Errorf("acquire money soft leader lock: %w", lockErr)
+	}
+	if !acquired {
+		return nil
+	}
+	defer release()
+
+	accounts, err := s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+	if err != nil {
+		return fmt.Errorf("list openai accounts for money soft refresh: %w", err)
+	}
+	stale := make([]*Account, 0, len(accounts))
+	for i := range accounts {
+		acc := &accounts[i]
+		if !acc.IsActive() || !acc.IsOpenAIApiKey() {
+			continue
+		}
+		needBal := !balanceCacheFresh(acc)
+		needRate := accountNeedsSoftRateRefresh(acc)
+		if !needBal && !needRate {
+			continue
+		}
+		stale = append(stale, acc)
+		if len(stale) >= upstreamBillingMoneySoftMaxPerCycle {
+			break
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+
+	sem := make(chan struct{}, upstreamBillingMoneySoftConcurrency)
+	var group errgroup.Group
+	for _, acc := range stale {
+		account := acc
+		group.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			s.softRefreshAutopilotMoney(ctx, account)
+			return nil
+		})
+	}
+	return group.Wait()
+}
+
+// accountNeedsSoftRateRefresh is true when live rate soft-cache is missing/stale
+// and we still expect a live source (mgmt/newapi/sub2api), not only billing_probe.
+func accountNeedsSoftRateRefresh(acc *Account) bool {
+	if acc == nil {
+		return false
+	}
+	if rateCacheFresh(acc) {
+		return false
+	}
+	// Has mgmt or API key path that ResolveAccountMoney can hit.
+	kind := strings.ToLower(extraString(acc.Extra, ExtraUpstreamKind))
+	mgmt := extraString(acc.Extra, ExtraUpstreamMgmtToken)
+	apiKey := strings.TrimSpace(acc.GetOpenAIApiKey())
+	if apiKey != "" && strings.Contains(apiKey, "*") {
+		apiKey = ""
+	}
+	if mgmt != "" && (kind == "newapi" || kind == "oneapi" || kind == "" || kind == "manual") {
+		return true
+	}
+	if apiKey != "" {
+		// sub2api /v1/usage or usage/token style balance/rate
+		return true
+	}
+	return false
+}
+
+// softRefreshAutopilotMoney respects soft caches (1m balance / 5m rate).
+// Unlike refreshAutopilotMoney (manual button), it does not force-clear timestamps.
+func (s *UpstreamBillingProbeService) softRefreshAutopilotMoney(ctx context.Context, account *Account) {
+	if s == nil || account == nil || !account.IsOpenAIApiKey() {
+		return
+	}
+	pilot := &AIPilotService{
+		Accounts: s.accountRepo,
+		HTTP:     &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}},
+	}
+	_, _, _, _ = pilot.ResolveAccountMoney(ctx, account)
 }
 
 // RunDue executes at most one bounded batch of due accounts.
@@ -585,8 +693,29 @@ func (s *UpstreamBillingProbeService) SetAccountEnabled(ctx context.Context, acc
 	return s.accountRepo.UpdateExtra(ctx, accountID, updates)
 }
 
+// refreshAutopilotMoney runs new-api/one-api/sub2api money probes into ai_* extras.
+// This is what the UI "refresh" button must do for non-sub2api 中转 (转转AI class).
+// Independent of /v1/sub2api/billing snapshot success.
+func (s *UpstreamBillingProbeService) refreshAutopilotMoney(ctx context.Context, account *Account) {
+	if s == nil || account == nil || !account.IsOpenAIApiKey() {
+		return
+	}
+	// Reuse the same HTTP + extra-write path as AI autopilot (no separate wire).
+	pilot := &AIPilotService{
+		Accounts: s.accountRepo,
+		HTTP:     &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}},
+	}
+	// Force re-probe so manual clicks are never blocked by 5m soft cache.
+	_, _, _, _ = pilot.ForceResolveAccountMoney(ctx, account)
+}
+
 func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, account *Account, intervalMinutes int) (*UpstreamBillingProbeSnapshot, error) {
 	now := s.currentTime().UTC()
+	// Always refresh autopilot money for OpenAI API-key accounts first.
+	// new-api vendors (no /v1/sub2api/billing) otherwise only show "unsupported"
+	// while rate/balance stay empty until the next AI pilot cycle.
+	s.refreshAutopilotMoney(ctx, account)
+
 	if s.accountTestService == nil || s.accountTestService.httpUpstream == nil {
 		return s.persistProbeFailure(ctx, account, intervalMinutes, now, 0, "transport_unavailable", 0)
 	}

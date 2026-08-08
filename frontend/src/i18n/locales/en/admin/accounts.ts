@@ -140,7 +140,9 @@ export default {
         creditsExhausted: 'Credits Exhausted',
         creditsExhaustedUntil: 'AI Credits exhausted, expected recovery at {time}',
         overloadedUntil: 'Overloaded until {time}',
-        viewTempUnschedDetails: 'View temp unschedulable details'
+        viewTempUnschedDetails: 'View temp unschedulable details',
+        aiDisabled: 'AI disabled',
+        aiUnmanaged: 'AI unmanaged'
       },
       columns: {
         name: 'Name',
@@ -153,6 +155,7 @@ export default {
         priority: 'Priority',
         billingRateMultiplier: 'Billing Rate',
         upstreamBillingRate: 'Upstream Declared Rate',
+        upstreamBalance: 'Upstream Balance',
         weight: 'Weight',
         schedulerScore: 'Scheduler Score',
         status: 'Status',
@@ -222,6 +225,31 @@ export default {
           OLLAMA_CLOUD_USAGE_REFRESH_RATE_LIMITED: 'Refresh is limited. Try again in {retry_after_seconds} seconds.'
         }
       },
+      upstreamBalance: {
+        depleted: 'Depleted',
+        error: 'Error',
+        unlimited: 'Unlimited',
+        unknown: 'Not probed'
+      },
+      autopilotMoney: {
+        title: 'Autopilot · upstream management token (optional)',
+        hint: 'For new-api/one-api only: auto-fetch group rate and balance. For manual cost (e.g. 1:10 top-up), set Recharge multiplier above.',
+        rechargeMultiplier: 'Recharge multiplier (true cost)',
+        rechargeMultiplierHint:
+          'Vendor list rate is often 1, but 1:10 top-up (e.g. maok) means enter 10. Autopilot ranks by composite = billing rate ÷ recharge (1÷10 = 0.1).',
+        compositePreview: 'Composite cost rate ≈ {composite} (billing {rate} ÷ recharge {recharge})',
+        upstreamKind: 'Upstream kind',
+        upstreamKindManual: 'Manual / no auto fetch',
+        upstreamKindHint: 'new-api/one-api needs a management token; sub2api can use billing probe.',
+        mgmtToken: 'Management access token',
+        mgmtTokenHint: 'new-api system access token from profile. Leave blank on save to keep existing.',
+        mgmtUserId: 'Upstream user ID',
+        mgmtUserIdHint: 'New-Api-User header — numeric ID from the upstream profile page.',
+        statusBalance: 'Cached balance: {status} · ${usd}',
+        statusBalanceOnly: 'Cached balance: {status}',
+        statusRate: 'Cached upstream rate: {rate}x ({source})',
+        compositeRate: 'Composite cost rate: {composite}x (billing {rate} ÷ recharge {recharge}) — used for cost ranking'
+      },
       upstreamBilling: {
         trustWarning: 'This rate is declared by the upstream site for the current API key. Sub2API cannot verify that it matches actual charges. The upstream site or an intermediary may return forged, stale, or modified data. Verify it against bills, balance changes, and actual usage.',
         autoProbe: 'Automatically probe upstream declared rate',
@@ -235,6 +263,7 @@ export default {
         unsupported: 'Unsupported',
         failed: 'Failed',
         notProbed: 'Not probed',
+        sub2apiProbeN_A: '(Not sub2api billing probe; showing autopilot new-api cache)',
         groupRate: 'Group default: {value}x',
         userRate: 'User rate: {value}x',
         peakRate: 'Peak: {start}-{end}, {value}x ({timezone})',
@@ -808,6 +837,9 @@ export default {
       concurrency: 'Concurrency',
       loadFactor: 'Load Factor',
       loadFactorHint: 'Higher load factor increases scheduling frequency',
+      scheduleWeight: 'Schedule weight',
+      scheduleWeightHint:
+        'OpenAI same-priority / Top-K traffic share (default 10). Autopilot set_weight writes this field, not load factor. 0 ≈ skip weighted share.',
       priority: 'Priority',
       priorityHint: 'Lower value accounts are used first',
       billingRateMultiplier: 'Billing Rate Multiplier',
@@ -1374,11 +1406,7 @@ export default {
         collapseExpirations: 'Collapse reset credit expirations',
         expirationDetails: 'Reset credit expiration details',
         noCreditsAvailable: 'No reset credits available',
-        resetSuccess: 'Reset {windows} window(s); credits and account state updated',
-        resetCacheRefreshFailed: 'The window was reset and account state recovered, but the reset-credit count could not be read back. Query it again.',
-        resetAccountRecoveryFailed: 'The window was reset, but account state recovery failed. Recover the account state manually.',
-        resetAccountRefreshFailed: 'The window, account state, and reset-credit cache were updated, but the latest account display could not be loaded.',
-        refreshCachePersistFailed: 'Showing the live count, but its expiration details were unavailable, so the cached details were kept.',
+        resetSuccess: 'Reset {windows} window(s)',
         confirmTitle: 'Confirm Weekly Limit Reset',
         confirmMessage: 'This will consume 1 reset credit to immediately restore the current window ({count} remaining). This action cannot be undone. Continue?'
       },

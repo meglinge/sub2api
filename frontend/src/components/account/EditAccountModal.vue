@@ -1415,7 +1415,7 @@
         <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
       </div>
 
-      <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div class="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-5">
         <div>
           <label class="input-label">{{ t('admin.accounts.concurrency') }}</label>
           <input v-model.number="form.concurrency" type="number" min="1" class="input"
@@ -1438,6 +1438,18 @@
             data-tour="account-form-priority"
           />
           <p class="input-hint">{{ t('admin.accounts.priorityHint') }}</p>
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.accounts.scheduleWeight') }}</label>
+          <input
+            v-model.number="form.schedule_weight"
+            type="number"
+            min="0"
+            class="input"
+            data-testid="account-form-schedule-weight"
+            @input="form.schedule_weight = Math.max(0, Number.isFinite(form.schedule_weight) ? form.schedule_weight : 10)"
+          />
+          <p class="input-hint">{{ t('admin.accounts.scheduleWeightHint') }}</p>
         </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.billingRateMultiplier') }}</label>
@@ -1479,7 +1491,91 @@
             />
           </div>
         </div>
+        <!-- 充值倍率：与计费倍率并排。maok 1:10 → 填 10，综合成本 = rate/10 -->
+        <div v-if="account?.type === 'apikey'">
+          <label class="input-label">{{ t('admin.accounts.autopilotMoney.rechargeMultiplier') }}</label>
+          <input
+            v-model.number="rechargeMultiplier"
+            type="number"
+            min="0.001"
+            step="0.001"
+            class="input"
+            data-testid="account-recharge-multiplier"
+            @input="rechargeMultiplier = Math.max(0.001, Number(rechargeMultiplier) || 1)"
+          />
+          <p class="input-hint">{{ t('admin.accounts.autopilotMoney.rechargeMultiplierHint') }}</p>
+          <p
+            class="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300"
+            data-testid="account-composite-rate-preview"
+          >
+            {{
+              t('admin.accounts.autopilotMoney.compositePreview', {
+                rate: Number(form.rate_multiplier) || 0,
+                recharge: Number(rechargeMultiplier) || 1,
+                composite: compositeCostPreview
+              })
+            }}
+          </p>
+        </div>
       </div>
+
+      <!-- new-api/one-api 管理令牌（可选，自动拉分组倍率与余额） -->
+      <div
+        v-if="account?.type === 'apikey'"
+        class="mt-4 space-y-3 rounded-lg border border-dashed border-gray-300 p-4 dark:border-dark-500"
+        data-testid="autopilot-money-settings"
+      >
+        <div>
+          <p class="text-sm font-medium text-gray-800 dark:text-gray-100">
+            {{ t('admin.accounts.autopilotMoney.title') }}
+          </p>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.autopilotMoney.hint') }}
+          </p>
+        </div>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.autopilotMoney.upstreamKind') }}</label>
+            <select v-model="upstreamKind" class="input" data-testid="account-upstream-kind">
+              <option value="">{{ t('admin.accounts.autopilotMoney.upstreamKindManual') }}</option>
+              <option value="newapi">new-api / one-api</option>
+              <option value="sub2api">sub2api billing</option>
+            </select>
+            <p class="input-hint">{{ t('admin.accounts.autopilotMoney.upstreamKindHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.autopilotMoney.mgmtToken') }}</label>
+            <input
+              v-model="upstreamMgmtToken"
+              type="password"
+              autocomplete="off"
+              class="input"
+              data-testid="account-upstream-mgmt-token"
+              :placeholder="upstreamMgmtTokenSet ? '********' : ''"
+            />
+            <p class="input-hint">{{ t('admin.accounts.autopilotMoney.mgmtTokenHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.autopilotMoney.mgmtUserId') }}</label>
+            <input
+              v-model="upstreamMgmtUserId"
+              type="text"
+              class="input"
+              data-testid="account-upstream-mgmt-user-id"
+              placeholder="New-Api-User"
+            />
+            <p class="input-hint">{{ t('admin.accounts.autopilotMoney.mgmtUserIdHint') }}</p>
+          </div>
+        </div>
+        <p
+          v-if="autopilotMoneyStatusLine"
+          class="text-xs text-gray-500 dark:text-gray-400"
+          data-testid="autopilot-money-status"
+        >
+          {{ autopilotMoneyStatusLine }}
+        </p>
+      </div>
+
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <label class="input-label">{{ t('admin.accounts.expiresAt') }}</label>
         <input v-model="expiresAtInput" type="datetime-local" class="input" />
@@ -2859,6 +2955,24 @@ const autoPause5hDisabled = ref(false)
 const autoPause7dDisabled = ref(false)
 const upstreamBillingAutoProbeEnabled = ref(false)
 const upstreamBillingRateSyncEnabled = ref(false)
+// Autopilot cost/balance (accounts.extra) — recharge + optional new-api mgmt
+const rechargeMultiplier = ref(1)
+const upstreamKind = ref('') // '' | newapi | sub2api
+const upstreamMgmtToken = ref('')
+const upstreamMgmtTokenSet = ref(false) // already has a stored token (masked)
+const upstreamMgmtUserId = ref('')
+const autopilotMoneyStatusLine = ref('')
+
+/** rate / recharge for display (maok: 1/10 = 0.1) */
+const compositeCostPreview = computed(() => {
+  const rate = Number(form.rate_multiplier)
+  const re = Number(rechargeMultiplier.value)
+  const r = Number.isFinite(rate) && rate >= 0 ? rate : 1
+  const m = Number.isFinite(re) && re > 0 ? re : 1
+  const c = r / m
+  // trim trailing zeros for readability
+  return Number(c.toPrecision(6)).toString()
+})
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
 const antigravityProjectId = ref('')
@@ -3222,6 +3336,8 @@ const form = reactive({
   concurrency: 1,
   load_factor: null as number | null,
   priority: 1,
+  // OpenAI Top-K / same-priority share (autopilot set_weight writes this).
+  schedule_weight: 10,
   rate_multiplier: 1,
   status: 'active' as 'active' | 'inactive' | 'error',
   group_ids: [] as number[],
@@ -3325,6 +3441,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.concurrency = newAccount.concurrency
   form.load_factor = newAccount.load_factor ?? null
   form.priority = newAccount.priority
+  form.schedule_weight =
+    typeof newAccount.schedule_weight === 'number' && newAccount.schedule_weight >= 0
+      ? newAccount.schedule_weight
+      : 10
   form.rate_multiplier = newAccount.rate_multiplier ?? 1
   form.status = (newAccount.status === 'active' || newAccount.status === 'inactive' || newAccount.status === 'error')
     ? newAccount.status
@@ -3359,6 +3479,43 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
   upstreamBillingRateSyncEnabled.value =
     upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
+  // Autopilot money extras (recharge + new-api mgmt)
+  {
+    const rm = Number(extra?.recharge_multiplier)
+    rechargeMultiplier.value = Number.isFinite(rm) && rm > 0 ? rm : 1
+    const kind = typeof extra?.upstream_kind === 'string' ? extra.upstream_kind.trim() : ''
+    upstreamKind.value = kind === 'oneapi' ? 'newapi' : kind
+    const mt = typeof extra?.upstream_mgmt_token === 'string' ? extra.upstream_mgmt_token : ''
+    upstreamMgmtTokenSet.value = Boolean(mt && mt.length > 0)
+    upstreamMgmtToken.value = ''
+    upstreamMgmtUserId.value =
+      typeof extra?.upstream_mgmt_user_id === 'string'
+        ? extra.upstream_mgmt_user_id
+        : extra?.upstream_mgmt_user_id != null
+          ? String(extra.upstream_mgmt_user_id)
+          : ''
+    const balSt = typeof extra?.ai_balance_status === 'string' ? extra.ai_balance_status : ''
+    const balUsd = Number(extra?.ai_balance_usd)
+    const rateCached = Number(extra?.ai_rate_multiplier)
+    const rateSrc = typeof extra?.ai_rate_source === 'string' ? extra.ai_rate_source : ''
+    const parts: string[] = []
+    if (balSt) {
+      parts.push(
+        Number.isFinite(balUsd)
+          ? t('admin.accounts.autopilotMoney.statusBalance', { status: balSt, usd: balUsd.toFixed(4) })
+          : t('admin.accounts.autopilotMoney.statusBalanceOnly', { status: balSt })
+      )
+    }
+    if (Number.isFinite(rateCached) && rateCached > 0) {
+      parts.push(
+        t('admin.accounts.autopilotMoney.statusRate', {
+          rate: rateCached,
+          source: rateSrc || '—'
+        })
+      )
+    }
+    autopilotMoneyStatusLine.value = parts.join(' · ')
+  }
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
   openaiPassthroughEnabled.value = false
@@ -4094,7 +4251,17 @@ const handleClose = () => {
 const submitUpdateAccount = async (accountID: number, updatePayload: Record<string, unknown>) => {
   submitting.value = true
   try {
-    const updatedAccount = await adminAPI.accounts.update(accountID, withAntigravityConfirmFlag(updatePayload))
+    let updatedAccount = await adminAPI.accounts.update(accountID, withAntigravityConfirmFlag(updatePayload))
+    // Auto-refresh new-api/sub2api money after save so rate/balance appear immediately
+    // (no need to wait for autopilot cycle or manual list refresh).
+    if (props.account?.type === 'apikey') {
+      try {
+        await adminAPI.accounts.probeUpstreamBilling(accountID)
+        updatedAccount = await adminAPI.accounts.getById(accountID)
+      } catch (probeErr) {
+        console.warn('post-save money probe failed', probeErr)
+      }
+    }
     appStore.showSuccess(t('admin.accounts.accountUpdated'))
     emit('updated', updatedAccount)
     handleClose()
@@ -4138,6 +4305,10 @@ const handleSubmit = async () => {
     if (lf == null || Number.isNaN(lf) || lf <= 0) {
       updatePayload.load_factor = 0
     }
+    // schedule_weight: always send explicit non-negative int (default 10)
+    const sw = form.schedule_weight
+    updatePayload.schedule_weight =
+      sw == null || Number.isNaN(sw) || sw < 0 ? 10 : Math.floor(sw)
     updatePayload.auto_pause_on_expired = autoPauseOnExpired.value
     if (props.account.type === 'apikey') {
       updatePayload.upstream_billing_probe_enabled = upstreamBillingAutoProbeEnabled.value
@@ -4713,6 +4884,35 @@ const handleSubmit = async () => {
       if (props.account.type === 'apikey') {
         delete newExtra.upstream_billing_probe_enabled
         delete newExtra.upstream_billing_rate_sync_enabled
+        // Autopilot money / new-api mgmt (persisted under accounts.extra)
+        const rm = Number(rechargeMultiplier.value)
+        if (Number.isFinite(rm) && rm > 0 && rm !== 1) {
+          newExtra.recharge_multiplier = rm
+        } else if (rm === 1) {
+          // keep explicit 1 so composite math is clear; empty = default 1 on backend
+          newExtra.recharge_multiplier = 1
+        } else {
+          delete newExtra.recharge_multiplier
+        }
+        const kind = (upstreamKind.value || '').trim()
+        if (kind) {
+          newExtra.upstream_kind = kind
+        } else {
+          delete newExtra.upstream_kind
+        }
+        const uid = (upstreamMgmtUserId.value || '').trim()
+        if (uid) {
+          newExtra.upstream_mgmt_user_id = uid
+        } else {
+          delete newExtra.upstream_mgmt_user_id
+        }
+        const tok = (upstreamMgmtToken.value || '').trim()
+        if (tok) {
+          newExtra.upstream_mgmt_token = tok
+        } else if (!upstreamMgmtTokenSet.value) {
+          delete newExtra.upstream_mgmt_token
+        }
+        // if token field blank but was set, leave existing extra token untouched (spread above)
       }
       // Total quota
       if (editQuotaLimit.value != null && editQuotaLimit.value > 0) {
