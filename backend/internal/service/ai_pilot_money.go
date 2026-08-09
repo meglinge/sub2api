@@ -315,19 +315,62 @@ func recentWindowHardFail(st AccountTrafficStats) bool {
 	return sr < 0.85
 }
 
-// softUnburyEligible gates automatic 150→100 lift.
-// Requires real long-window sample health; refuses when recent is hard-failing
-// (just-demoted accounts must cool down instead of thrash).
+// softUnburyEligible gates automatic 150→100 lift for the classic path.
+// Requires real long-window sample health; refuses when recent is hard-failing.
+//
+// Empty long window (ln<10) is intentionally NOT enough here: just-demoted
+// accounts often have empty recent+long under strict layering and would thrash
+// 100↔150 every cycle. Cheap accounts with known low composite use
+// softUnburyCheapSpareRescue instead (Sy-class sticky-spare bug).
 func softUnburyEligible(long, recent AccountTrafficStats) bool {
+	if recentWindowHardFail(recent) {
+		return false
+	}
 	ln := long.Requests + long.Errors
 	if ln < 10 {
-		return false // no evidence → leave in spare tier
+		return false // no evidence → leave in spare tier (unless cheap-rescue path)
 	}
-	if !longWindowHealthyEnough(long) {
+	return longWindowHealthyEnough(long)
+}
+
+// isCheapOrNearCheapest is true when account has a known trusted composite within
+// 25% of the cheapest other known peer (includes "次便宜" like Sy at 0.05 vs 0.04).
+func isCheapOrNearCheapest(acc *Account, accounts []Account) bool {
+	if acc == nil {
+		return false
+	}
+	sig := accountCostSignalOf(acc)
+	if !sig.Known || sig.Composite <= 0 {
+		return false
+	}
+	minC, ok := cheapestKnownComposite(accounts, acc.ID)
+	if !ok || minC <= 0 {
+		// Sole known-rate account in pool — treat as eligible for rescue.
+		return true
+	}
+	return sig.Composite <= minC*1.25+1e-12
+}
+
+// softUnburyCheapSpareRescue breaks the sticky-spare death spiral for known-cheap
+// accounts: p≥150 gets zero traffic under strict layering → long window stays empty
+// → classic softUnburyEligible never fires → model only bumps weight at p150 (no
+// traffic). High 性价比 weight makes this especially wrong.
+//
+// Requires known near-cheapest composite; unknown-rate accounts stay on classic path
+// (avoids auto-lifting mystery Pro tiers). Fresh probe fail still blocks.
+func softUnburyCheapSpareRescue(acc *Account, accounts []Account, long, recent AccountTrafficStats, probes map[int64]activationResult) bool {
+	if acc == nil || !isCheapOrNearCheapest(acc, accounts) {
 		return false
 	}
 	if recentWindowHardFail(recent) {
 		return false
+	}
+	if pr, ok := probes[acc.ID]; ok && pr.Fresh && pr.Verdict == "fail" {
+		return false
+	}
+	ln := long.Requests + long.Errors
+	if ln >= 10 && !longWindowHealthyEnough(long) {
+		return false // real long-window failure still blocks
 	}
 	return true
 }

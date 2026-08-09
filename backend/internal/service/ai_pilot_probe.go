@@ -642,8 +642,11 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 				injected++
 				continue
 			}
-			// Sticky spare tier (150–200): only when long window has real healthy samples
-			// AND recent window is not hard-failing (else wait for demotion cooldown).
+			// Sticky spare tier (150–200):
+			// 1) classic: long window has real healthy samples + no recent hard fail
+			// 2) cheap-rescue: known near-cheapest composite stuck at p≥150 with empty
+			//    long window (strict layering → 0 traffic → classic never fires; model
+			//    only bumps weight → Sy-class bug). Expensive still blocked below.
 			// Under high 性价比 weight, do NOT soft-unbury expensive accounts — that is how
 			// Wawapi(Pro) kept re-entering main tier and burning money despite demotions.
 			if !havePri[acc.ID] && ShouldSoftUnburySpareTier(acc.Priority) && cfg.OpAllowed(AIOpSetPriority) {
@@ -658,18 +661,30 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 				if costBlocksMainPromotion(acc, accounts, cfg) {
 					continue
 				}
-				if softUnburyEligible(st, rst) && balanceGateReason(AIOpEnable, acc) == "" &&
+				classic := softUnburyEligible(st, rst)
+				cheapRescue := softUnburyCheapSpareRescue(acc, accounts, st, rst, probes)
+				if (classic || cheapRescue) && balanceGateReason(AIOpEnable, acc) == "" &&
 					acc.Status == StatusActive && acc.Schedulable {
 					obs := AIObservationPriority
+					reason := fmt.Sprintf(
+						"自动解埋备援死循环: priority=%d∈[%d,%d] 长窗有充足健康样本且近窗无硬失败,回观察层 %d",
+						acc.Priority, AIPriorityBuriedThreshold, AIMaxPriority, obs,
+					)
+					conf := 0.88
+					if cheapRescue && !classic {
+						sig := accountCostSignalOf(acc)
+						reason = fmt.Sprintf(
+							"性价比/分层修复: 已知便宜号(composite=%.3f)卡在备援 priority=%d,严格分层下近窗0请求≠故障;模型勿用「主层已满」只调 weight;抬回主层 %d",
+							sig.Composite, acc.Priority, obs,
+						)
+						conf = 0.92
+					}
 					decision.Actions = append(decision.Actions, decisionAction{
-						AccountID: acc.ID,
-						Op:        AIOpSetPriority,
-						Value:     strconv.Itoa(obs),
-						Reason: fmt.Sprintf(
-							"自动解埋备援死循环: priority=%d∈[%d,%d] 长窗有充足健康样本且近窗无硬失败,回观察层 %d",
-							acc.Priority, AIPriorityBuriedThreshold, AIMaxPriority, obs,
-						),
-						Confidence: 0.88,
+						AccountID:  acc.ID,
+						Op:         AIOpSetPriority,
+						Value:      strconv.Itoa(obs),
+						Reason:     reason,
+						Confidence: conf,
 					})
 					havePri[acc.ID] = true
 					injected++

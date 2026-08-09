@@ -1361,10 +1361,13 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 
 【禁止备援死循环 / 解埋再沉震荡】
 - priority≥150 在严格分层下几乎接不到请求 → 近窗必然空白 → **禁止**再据此 set_priority 更深
-- 近窗 0 请求且长窗成功率仍高 → 不是故障,是分层后果;只能 set_weight,禁止下沉
+- 近窗 0 请求且长窗成功率仍高 → 不是故障,是分层后果
+- **禁止**对 p≥150 的可用号只 set_weight 不抬 priority:同层 weight 再大也吃不到主层流量
+- **禁止**用「主层已有 2–4 个/满池」拒绝把**已知便宜且健康**的号从 ≥150 抬回 100
+  (2–4 是多样性目标,不是容量上限;便宜稳号卡在 150=性价比设置失效)
 - 慢(TTFB 高)但成功率高 → 同层降 weight(且勿压到 0/1),不要 priority 沉到 150+
 - 只有近窗/长窗**硬失败**(成功率明显崩、错误成片)才允许沉到 ≥150 或 disable
-- 后端会:拒绝无硬故障的备援下沉;长窗健康的 150–200 自动拉回 100;下沉类动作有最短冷静期
+- 后端会:拒绝无硬故障的备援下沉;长窗健康或已知便宜号 150–200 自动拉回 100;下沉类动作有最短冷静期
 - 健康池保持 2–4 个号同在 priority≈100,用 weight 分流,不要每轮把人踢进 150 再解埋
 
 原则:
@@ -1376,6 +1379,7 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
    - activation.verdict=fail|unknown → 保持停用
 5) 性价比/cost 必须看 money.rateConfidence.trustedComposite 与 groups[].peers 比价
    - compositeRate = rateMultiplier/rechargeMultiplier
+   - **池内最便宜/次便宜且 probe pass** 若仍在 p≥150 → 应 set_priority 100,不要只 +weight
 6) money.balanceStatus=depleted 时不要 enable/恢复流量;并优先处理低余额号的分流
 7) 所有**可用**渠道都健康且没有待恢复号时,actions 才应为空
 8) reason 写具体指标数值(含 balanceUsd / composite 时更好);confidence 反映把握

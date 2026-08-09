@@ -269,6 +269,95 @@ func TestParseLLMChatCompletionsBody(t *testing.T) {
 	}
 }
 
+func TestSoftUnburyCheapSpareRescue_EmptyLongWindow(t *testing.T) {
+	t.Parallel()
+	// Sy-class bug: known-cheap at p=150, zero long samples under strict layering.
+	// Classic softUnburyEligible requires ln≥10 and would leave them forever at p150.
+	rateSy := 0.05
+	ratePeer := 0.10
+	sy := Account{
+		ID: 6399, Name: "Sy", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true, AIManaged: true,
+		Priority: 150, ScheduleWeight: 2940, RateMultiplier: &rateSy,
+		Extra: map[string]any{
+			ExtraAIRateMultiplier: 0.05,
+			ExtraAIRateSource:     "newapi",
+			ExtraRechargeMultiplier: 1.0,
+		},
+	}
+	main := Account{
+		ID: 1, Name: "main", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true, AIManaged: true,
+		Priority: 100, ScheduleWeight: 100, RateMultiplier: &ratePeer,
+		Extra: map[string]any{
+			ExtraAIRateMultiplier: 0.10,
+			ExtraAIRateSource:     "newapi",
+		},
+	}
+	// expensive spare — must NOT be rescued by cheap path
+	ratePro := 1.0
+	pro := Account{
+		ID: 2, Name: "Pro", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true, AIManaged: true,
+		Priority: 150, ScheduleWeight: 10, RateMultiplier: &ratePro,
+		Extra: map[string]any{
+			ExtraAIRateMultiplier: 1.0,
+			ExtraAIRateSource:     "newapi",
+		},
+	}
+	accounts := []Account{sy, main, pro}
+	empty := map[int64]AccountTrafficStats{
+		6399: {}, // 0 samples — the death spiral
+		2:    {},
+	}
+	// classic path rejects empty long
+	if softUnburyEligible(empty[6399], empty[6399]) {
+		t.Fatal("classic softUnburyEligible must reject empty long window")
+	}
+	if !softUnburyCheapSpareRescue(&sy, accounts, empty[6399], empty[6399], nil) {
+		t.Fatal("cheap rescue must allow Sy with empty long + known cheap composite")
+	}
+	if softUnburyCheapSpareRescue(&pro, accounts, empty[2], empty[2], nil) {
+		t.Fatal("expensive Pro must not use cheap rescue")
+	}
+
+	cfg := DefaultAIAutopilotSettings()
+	// high 性价比 so cost pressure is on (still unburies cheap, blocks expensive)
+	cfg.ScoreWeightCost = 40
+	cfg.ScoreWeightStability = 25
+	cfg.ScoreWeightLatency = 20
+	cfg.ScoreWeightThroughput = 15
+	d := decision{}
+	// model only bumps weight at p150 (the wrong action user saw)
+	d.Actions = []decisionAction{{
+		AccountID: 6399, Op: AIOpSetWeight, Value: "2960",
+		Reason: "同层+20(勿抬p100主层已3满池)", Confidence: 0.7,
+	}}
+	n := injectRecoveryEnables(&d, accounts, nil, empty, empty, cfg)
+	if n < 1 {
+		t.Fatalf("expected cheap spare unbury inject, n=%d acts=%+v", n, d.Actions)
+	}
+	wantPri := strconv.Itoa(AIObservationPriority)
+	var sawSyPri, sawProPri bool
+	for _, a := range d.Actions {
+		if a.AccountID == 6399 && a.Op == AIOpSetPriority && a.Value == wantPri {
+			sawSyPri = true
+			if !strings.Contains(a.Reason, "便宜") && !strings.Contains(a.Reason, "分层") {
+				t.Fatalf("reason should mention cheap/layering fix: %s", a.Reason)
+			}
+		}
+		if a.AccountID == 2 && a.Op == AIOpSetPriority {
+			sawProPri = true
+		}
+	}
+	if !sawSyPri {
+		t.Fatalf("Sy must be lifted to p%d, acts=%+v", AIObservationPriority, d.Actions)
+	}
+	if sawProPri {
+		t.Fatalf("expensive Pro must not be auto-lifted, acts=%+v", d.Actions)
+	}
+}
+
 func TestInjectRecovery_UnburiesPriority(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultAIAutopilotSettings()
