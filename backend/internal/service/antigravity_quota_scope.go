@@ -38,7 +38,9 @@ func (a *Account) IsSchedulableForModelWithContext(ctx context.Context, requeste
 	if a == nil {
 		return false
 	}
-	if !a.IsSchedulable() {
+	// Respect control-plane allow (X-Sub2API-Client: ai-autopilot) so
+	// exclude_from_schedule accounts remain usable by AI pilot LLM only.
+	if !a.IsSchedulableForRequest(AllowControlPlaneSchedule(ctx)) {
 		return false
 	}
 	if a.isModelRateLimitedWithContext(ctx, requestedModel) {
