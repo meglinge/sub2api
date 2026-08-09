@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCompositeRateMultiplier_Recharge10(t *testing.T) {
@@ -428,6 +429,44 @@ func TestWeightCrushAndDisableGates(t *testing.T) {
 	recentBad := AccountTrafficStats{Requests: 10, Successes: 2, Errors: 10}
 	if reason := disableHealthyGateReason(acc, long, recentBad); reason != "" {
 		t.Fatalf("hard fail should allow disable: %s", reason)
+	}
+	// Depleted must allow disable even with healthy long/recent windows.
+	accDep := &Account{
+		ID: 2, Priority: 150, ScheduleWeight: 10, Status: StatusActive, Schedulable: true,
+		Extra: map[string]any{ExtraAIBalanceStatus: "depleted", ExtraAIBalanceUSD: 0.0},
+	}
+	if reason := disableHealthyGateReason(accDep, long, recent); reason != "" {
+		t.Fatalf("depleted should allow disable: %s", reason)
+	}
+	// Fresh activation fail should allow disable.
+	failProbe := activationResult{AccountID: 1, Verdict: "fail", Fresh: true, Error: "deadline exceeded"}
+	if reason := disableHealthyGateReasonEx(acc, long, recent, &failProbe); reason != "" {
+		t.Fatalf("activation fail should allow disable: %s", reason)
+	}
+}
+
+func TestCooldownZeroHonorsNoFloor(t *testing.T) {
+	t.Parallel()
+	// With channel_cooldown_minutes=0, demotion-like ops must not get the 15m floor.
+	cfg := DefaultAIAutopilotSettings()
+	cfg.ChannelCooldownMinutes = 0
+	cool := time.Duration(cfg.ChannelCooldownMinutes) * time.Minute
+	acc := &Account{Priority: 100, ScheduleWeight: 100}
+	act := decisionAction{Op: AIOpSetWeight, Value: "80"}
+	if isDemotionLike(act, acc) && cfg.ChannelCooldownMinutes > 0 && cool < AIDemotionMinCooldown {
+		cool = AIDemotionMinCooldown
+	}
+	if cool != 0 {
+		t.Fatalf("explicit cooldown 0 must stay 0, got %v", cool)
+	}
+	// When cooldown>0 but tiny, floor applies for demotion-like.
+	cfg.ChannelCooldownMinutes = 1
+	cool = time.Duration(cfg.ChannelCooldownMinutes) * time.Minute
+	if isDemotionLike(act, acc) && cfg.ChannelCooldownMinutes > 0 && cool < AIDemotionMinCooldown {
+		cool = AIDemotionMinCooldown
+	}
+	if cool != AIDemotionMinCooldown {
+		t.Fatalf("tiny positive cooldown should floor to %v, got %v", AIDemotionMinCooldown, cool)
 	}
 }
 

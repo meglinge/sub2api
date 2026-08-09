@@ -615,7 +615,14 @@ func (p *AIPilotService) applyDecisionActions(
 			}
 		}
 		if act.Op == AIOpDisable {
-			if reason := disableHealthyGateReason(acc, longSt, recentSt); reason != "" {
+			var pr *activationResult
+			if probes != nil {
+				if v, ok := probes[act.AccountID]; ok {
+					cp := v
+					pr = &cp
+				}
+			}
+			if reason := disableHealthyGateReasonEx(acc, longSt, recentSt, pr); reason != "" {
 				a.State = AIActionRejected
 				a.RejectReason = reason
 				_, _ = p.Repo.CreateAction(ctx, a)
@@ -653,6 +660,10 @@ func (p *AIPilotService) applyDecisionActions(
 			// otherwise soft-unbury or p=1→100 is blocked for 15m after any prior
 			// touch and summaries loop "紧急修复" forever (observed in prod).
 			bypassCool := act.Op == AIOpEnable || act.Op == AIOpRelease || act.Op == AIOpUnlock
+			// Depleted wallet: allow disable immediately (health SR is irrelevant).
+			if !bypassCool && act.Op == AIOpDisable && isBalanceDepleted(acc) {
+				bypassCool = true
+			}
 			if !bypassCool && act.Op == AIOpSetPriority {
 				if next, err := parseIntValue(act.Value); err == nil && isPrioritySafetyBypass(acc.Priority, next) {
 					bypassCool = true
@@ -660,9 +671,10 @@ func (p *AIPilotService) applyDecisionActions(
 			}
 			if !bypassCool {
 				cool := time.Duration(cfg.ChannelCooldownMinutes) * time.Minute
-				// Demotions/disable always get a floor cooldown — prod had cooldown=0 and
-				// re-sank the same account every 1-minute schedule tick.
-				if isDemotionLike(act, acc) && cool < AIDemotionMinCooldown {
+				// Explicit 0 = operator wants no cooldown. Only when cooldown>0 but
+				// very small, raise demotion/disable floor to AIDemotionMinCooldown so
+				// 1-minute ticks cannot thrash the same account every run.
+				if cfg.ChannelCooldownMinutes > 0 && isDemotionLike(act, acc) && cool < AIDemotionMinCooldown {
 					cool = AIDemotionMinCooldown
 				}
 				if cool > 0 && now.Sub(*last) < cool {
@@ -1360,8 +1372,8 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 
 【余额参与调度 —— 原版对齐】
 - money.balanceStatus / money.balanceUsd 已写入快照(与 UpstreamRouter 一样给模型用,不是内核硬切流量)
-- depleted → 禁止 enable/恢复;应 disable 或沉到深层,避免继续撞「余额不足」
-- balanceUsd 偏低(约 <$5,见 policy.balanceGuide.lowHintUSD)且仍有流量 → 同层降 weight,把量让给余额更充裕的 peer
+- depleted → 禁止 enable/恢复;应 **disable**(余额耗尽硬门禁,后端会放行 disable 即使长窗 SR 仍高)
+- balanceUsd 偏低(约 <$5,见 policy.balanceGuide.lowHintUSD)且仍有流量 → 同层降 weight,把量让给余额更充裕的 peer;低余额≠depleted,不要 disable
 - balance 充裕 + 便宜(composite 低) → 同层应拿更高 weight
 - unlimited 视为余额不约束
 

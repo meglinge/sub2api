@@ -26,7 +26,8 @@ const (
 	AIPriorityDeltaSafety = 50
 	// AIWeightHealthyFloor: do not crush healthy accounts to weight 0/1 (soft-disable ratchet).
 	AIWeightHealthyFloor = 3
-	// AIDemotionMinCooldown always applies to demotions/disable even if channel_cooldown=0.
+	// AIDemotionMinCooldown is a thrash floor when channel_cooldown_minutes > 0 but very low.
+	// Explicit channel_cooldown_minutes=0 means "no cooldown" and this floor is skipped.
 	AIDemotionMinCooldown = 15 * time.Minute
 	// AIBalanceCacheMaxAge: soft cache for wallet/余额 soft-refresh in pilot + moneyView.
 	// Operators want ~1m freshness so depleted/low-balance shows up quickly.
@@ -578,17 +579,41 @@ func weightCrushGateReasonEx(acc *Account, next int, long, recent AccountTraffic
 }
 
 // disableHealthyGateReason rejects disable without hard failure (disable/enable thrash).
+// Allowed even when long-window looks healthy when:
+//   - wallet is depleted (balance hard gate — no reason to keep serving)
+//   - recent traffic hard-fails
+//   - fresh activation probe is fail (cannot recover traffic path)
 func disableHealthyGateReason(acc *Account, long, recent AccountTrafficStats) string {
+	return disableHealthyGateReasonEx(acc, long, recent, nil)
+}
+
+func disableHealthyGateReasonEx(acc *Account, long, recent AccountTrafficStats, probe *activationResult) string {
 	if acc == nil {
 		return ""
 	}
+	// Depleted accounts must be disableable regardless of historical SR.
+	if st, _, _ := balanceViewFromAccount(acc); strings.EqualFold(st, "depleted") {
+		return ""
+	}
 	if recentWindowHardFail(recent) {
+		return ""
+	}
+	if probe != nil && probe.Fresh && strings.EqualFold(probe.Verdict, "fail") {
 		return ""
 	}
 	if longWindowHealthyEnough(long) {
 		return "长窗健康且近窗无硬失败,禁止 disable;请 set_weight/set_priority"
 	}
 	return ""
+}
+
+// isBalanceDepleted is a convenience for cooldown / apply bypasses.
+func isBalanceDepleted(acc *Account) bool {
+	if acc == nil {
+		return false
+	}
+	st, _, _ := balanceViewFromAccount(acc)
+	return strings.EqualFold(st, "depleted")
 }
 
 // isPriorityDemotion reports next > current (deeper tier).
