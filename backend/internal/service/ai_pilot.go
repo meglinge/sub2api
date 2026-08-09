@@ -788,12 +788,18 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 	// Autopilot is account-layer pool routing: only OpenAI API-key relay accounts.
 	// Prod has thousands of oauth sticks; dumping them into the LLM snapshot made
 	// every CCH chat/completions request multi-minute (and abort-499).
+	// Also skip control-plane LLM accounts (exclude_from_schedule, e.g. GPTX): they
+	// power the pilot itself and must not be rebalanced as pool channels.
 	{
 		filtered := accounts[:0]
 		for i := range accounts {
-			if accounts[i].IsOpenAIApiKey() {
-				filtered = append(filtered, accounts[i])
+			if !accounts[i].IsOpenAIApiKey() {
+				continue
 			}
+			if accounts[i].IsExcludedFromSchedule() {
+				continue
+			}
+			filtered = append(filtered, accounts[i])
 		}
 		accounts = filtered
 	}

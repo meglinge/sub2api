@@ -58,6 +58,10 @@ const (
 	ExtraAIRateMultiplier   = "ai_rate_multiplier" // last resolved group rate
 	ExtraAIRateSource       = "ai_rate_source"
 	ExtraAIRateCheckedAt    = "ai_rate_checked_at"
+	// ExtraExcludeFromSchedule marks control-plane / LLM-only accounts (e.g. GPTX for
+	// AI autopilot). They never enter normal gateway traffic scheduling; only
+	// requests tagged with X-Sub2API-Client: ai-autopilot may select them.
+	ExtraExcludeFromSchedule = "exclude_from_schedule"
 )
 
 // CompositeRateMultiplier returns rate/recharge when recharge>0, else rate.

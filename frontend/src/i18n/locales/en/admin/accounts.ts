@@ -838,6 +838,9 @@ export default {
       loadFactor: 'Load Factor',
       loadFactorHint: 'Higher load factor increases scheduling frequency',
       scheduleWeight: 'Schedule weight',
+      excludeFromSchedule: 'Exclude from traffic scheduling',
+      excludeFromScheduleHint:
+        'When enabled, this account is never selected for normal user traffic. Only control-plane clients (AI autopilot with X-Sub2API-Client: ai-autopilot) may use it.',
       scheduleWeightHint:
         'OpenAI same-priority / Top-K traffic share (default 10). Autopilot set_weight writes this field, not load factor. 0 ≈ skip weighted share.',
       priority: 'Priority',

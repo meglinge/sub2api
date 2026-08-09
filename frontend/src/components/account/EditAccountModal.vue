@@ -1450,6 +1450,20 @@
             @input="form.schedule_weight = Math.max(0, Number.isFinite(form.schedule_weight) ? form.schedule_weight : 10)"
           />
           <p class="input-hint">{{ t('admin.accounts.scheduleWeightHint') }}</p>
+          <label class="mt-3 flex items-start gap-2 text-xs text-gray-700 dark:text-gray-200">
+            <input
+              v-model="excludeFromSchedule"
+              type="checkbox"
+              class="mt-0.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              data-testid="account-exclude-from-schedule"
+            />
+            <span>
+              <span class="font-medium">{{ t('admin.accounts.excludeFromSchedule') }}</span>
+              <span class="mt-0.5 block text-gray-500 dark:text-gray-400">{{
+                t('admin.accounts.excludeFromScheduleHint')
+              }}</span>
+            </span>
+          </label>
         </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.billingRateMultiplier') }}</label>
@@ -2957,6 +2971,8 @@ const upstreamBillingAutoProbeEnabled = ref(false)
 const upstreamBillingRateSyncEnabled = ref(false)
 // Autopilot cost/balance (accounts.extra) — recharge + optional new-api mgmt
 const rechargeMultiplier = ref(1)
+/** Control-plane / LLM-only: never enter normal traffic scheduling. */
+const excludeFromSchedule = ref(false)
 const upstreamKind = ref('') // '' | newapi | sub2api
 const upstreamMgmtToken = ref('')
 const upstreamMgmtTokenSet = ref(false) // already has a stored token (masked)
@@ -3445,6 +3461,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     typeof newAccount.schedule_weight === 'number' && newAccount.schedule_weight >= 0
       ? newAccount.schedule_weight
       : 10
+  excludeFromSchedule.value = false
   form.rate_multiplier = newAccount.rate_multiplier ?? 1
   form.status = (newAccount.status === 'active' || newAccount.status === 'inactive' || newAccount.status === 'error')
     ? newAccount.status
@@ -3479,6 +3496,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
   upstreamBillingRateSyncEnabled.value =
     upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
+  excludeFromSchedule.value =
+    extra?.exclude_from_schedule === true ||
+    extra?.exclude_from_schedule === 'true' ||
+    extra?.exclude_from_schedule === 1
   // Autopilot money extras (recharge + new-api mgmt)
   {
     const rm = Number(extra?.recharge_multiplier)
@@ -4913,6 +4934,13 @@ const handleSubmit = async () => {
           delete newExtra.upstream_mgmt_token
         }
         // if token field blank but was set, leave existing extra token untouched (spread above)
+        if (excludeFromSchedule.value) {
+          newExtra.exclude_from_schedule = true
+          // Control-plane LLM accounts should not be mutated by AI autopilot pool logic.
+          newExtra.ai_managed = false
+        } else {
+          delete newExtra.exclude_from_schedule
+        }
       }
       // Total quota
       if (editQuotaLimit.value != null && editQuotaLimit.value > 0) {

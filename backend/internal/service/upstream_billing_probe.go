@@ -364,6 +364,10 @@ func (s *UpstreamBillingProbeService) RefreshStaleAutopilotMoney(ctx context.Con
 		if !acc.IsActive() || !acc.IsOpenAIApiKey() {
 			continue
 		}
+		// Control-plane LLM accounts are not pool traffic; skip money soft-refresh.
+		if acc.IsExcludedFromSchedule() {
+			continue
+		}
 		needBal := !balanceCacheFresh(acc)
 		needRate := accountNeedsSoftRateRefresh(acc)
 		if !needBal && !needRate {

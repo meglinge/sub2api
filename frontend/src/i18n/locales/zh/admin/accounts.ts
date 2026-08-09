@@ -895,6 +895,9 @@ export default {
       priority: '优先级',
       priorityHint: '优先级越小的账号优先使用',
       scheduleWeight: '调度权重',
+      excludeFromSchedule: '不参与业务调度（白名单/控制面）',
+      excludeFromScheduleHint:
+        '开启后该账号不会被用户流量调度选中，仅供 AI 自动驾驶等控制面调用（需带 X-Sub2API-Client: ai-autopilot）。',
       scheduleWeightHint:
         'OpenAI 同优先级/Top-K 内的分流比例（默认 10）。自动驾驶 set_weight 改的就是这里，不是负载因子。0 = 同层几乎不参与加权分流。',
       billingRateMultiplier: '账号计费倍率',

@@ -186,8 +186,30 @@ func (a *Account) EffectiveLoadFactor() int {
 	return 1
 }
 
-func (a *Account) IsSchedulable() bool {
-	if !a.IsActive() || !a.Schedulable || a.AIDisabled {
+// IsExcludedFromSchedule reports control-plane / LLM-only accounts that must not
+// receive normal user traffic (extra.exclude_from_schedule=true).
+func (a *Account) IsExcludedFromSchedule() bool {
+	if a == nil || a.Extra == nil {
+		return false
+	}
+	switch v := a.Extra[ExtraExcludeFromSchedule].(type) {
+	case bool:
+		return v
+	case string:
+		s := strings.TrimSpace(strings.ToLower(v))
+		return s == "true" || s == "1" || s == "yes"
+	case float64:
+		return v != 0
+	case int:
+		return v != 0
+	default:
+		return false
+	}
+}
+
+// isSchedulableCore is the health/manual gate shared by normal and control-plane paths.
+func (a *Account) isSchedulableCore() bool {
+	if a == nil || !a.IsActive() || !a.Schedulable || a.AIDisabled {
 		return false
 	}
 	now := time.Now()
@@ -207,6 +229,24 @@ func (a *Account) IsSchedulable() bool {
 		return false
 	}
 	return true
+}
+
+// IsSchedulable reports whether the account may receive normal gateway traffic.
+// Control-plane accounts (exclude_from_schedule) always return false here.
+func (a *Account) IsSchedulable() bool {
+	if a.IsExcludedFromSchedule() {
+		return false
+	}
+	return a.isSchedulableCore()
+}
+
+// IsSchedulableForRequest allows control-plane accounts only when the caller is
+// the AI autopilot client (allowControlPlane=true).
+func (a *Account) IsSchedulableForRequest(allowControlPlane bool) bool {
+	if a.IsExcludedFromSchedule() {
+		return allowControlPlane && a.isSchedulableCore()
+	}
+	return a.isSchedulableCore()
 }
 
 // EffectiveScheduleWeight returns a non-negative schedule weight.
