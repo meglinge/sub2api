@@ -35,15 +35,22 @@ const (
 	ExtraUpstreamLastGroupSwitchAt   = "upstream_last_group_switch_at"
 	ExtraUpstreamGroupCandidatesJSON = "upstream_group_candidates_json"
 	ExtraUpstreamGroupCandidatesAt   = "upstream_group_candidates_at"
+	// ExtraUpstreamGroupDenylist: JSON string array of group ids/names that failed after switch.
+	ExtraUpstreamGroupDenylist = "upstream_group_denylist"
 
 	// AIUpstreamGroupSwitchDwell blocks thrash after a successful switch.
 	AIUpstreamGroupSwitchDwell = 30 * time.Minute
+	// AIUpstreamGroupObserveWindow: if hard-fail/503 within this after switch → auto-rollback.
+	AIUpstreamGroupObserveWindow = 20 * time.Minute
 	// AIUpstreamGroupMinSaveRatio: target must be at least this cheaper (ratio lower).
 	AIUpstreamGroupMinSaveRatio = 0.15
 	// Soft-drain window before flipping production group (keeps live traffic off the key).
 	AIUpstreamGroupSoftDrain = 3 * time.Second
 	// Candidate list soft cache.
 	AIUpstreamGroupCandidatesCache = 5 * time.Minute
+	// Multi-probe counts (temp key / production verify).
+	AIUpstreamGroupTestProbes = 3
+	AIUpstreamGroupProdProbes = 2
 
 	// upstreamPanelUserAgent must be identical for login and subsequent panel calls:
 	// many sub2api hosts enable session binding (IP+UA hash).
@@ -271,12 +278,23 @@ func (p *AIPilotService) ListUpstreamGroupCandidates(ctx context.Context, acc *A
 	if err != nil {
 		return nil, err
 	}
-	// mark eligible vs current ratio
+	// mark eligible vs current ratio / denylist / risky names
 	cur := extraFloat(acc.Extra, ExtraAIRateMultiplier)
+	deny := loadUpstreamGroupDenylist(acc)
 	for i := range out {
 		if !platformMatchesAccount(wantPlat, out[i].Platform) {
 			out[i].Eligible = false
 			out[i].Note = "platform 不匹配账号(" + wantPlat + ")"
+			continue
+		}
+		if denylistHas(deny, out[i].ID, out[i].Name) {
+			out[i].Eligible = false
+			out[i].Note = "denylist:曾切后失败/503"
+			continue
+		}
+		if riskyUpstreamGroupName(out[i].Name) {
+			out[i].Eligible = false
+			out[i].Note = "组名高风险(随时拉闸/测试等),禁止自动切入"
 			continue
 		}
 		out[i].Eligible = true
@@ -292,6 +310,95 @@ func (p *AIPilotService) ListUpstreamGroupCandidates(ctx context.Context, acc *A
 	}
 	p.cacheUpstreamCandidates(ctx, acc, out)
 	return out, nil
+}
+
+func loadUpstreamGroupDenylist(acc *Account) []string {
+	if acc == nil || acc.Extra == nil {
+		return nil
+	}
+	raw, _ := acc.Extra[ExtraUpstreamGroupDenylist]
+	switch v := raw.(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil
+		}
+		var arr []string
+		if json.Unmarshal([]byte(v), &arr) == nil {
+			return arr
+		}
+		return nil
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, it := range v {
+			if s, ok := it.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []string:
+		return v
+	default:
+		// jsonb array may already be []interface via map
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return nil
+		}
+		var arr []string
+		_ = json.Unmarshal(b, &arr)
+		return arr
+	}
+}
+
+func denylistHas(deny []string, id, name string) bool {
+	for _, d := range deny {
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
+		}
+		if d == id || strings.EqualFold(d, name) || strings.HasPrefix(name, d+":") || strings.HasPrefix(d, id+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// riskyUpstreamGroupName flags marketing/unstable channels by name keywords.
+func riskyUpstreamGroupName(name string) bool {
+	low := strings.ToLower(name)
+	keys := []string{
+		"随时拉闸", "拉闸", "不稳", "测试", "test", "trial", "临时",
+		"demo", "free", "福利", "限时", "可炸",
+	}
+	for _, k := range keys {
+		if strings.Contains(low, strings.ToLower(k)) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUpstreamGroupDenylist(acc *Account, idOrName string) map[string]any {
+	if acc == nil || idOrName == "" {
+		return nil
+	}
+	deny := loadUpstreamGroupDenylist(acc)
+	if denylistHas(deny, idOrName, idOrName) {
+		return nil
+	}
+	deny = append(deny, idOrName)
+	b, _ := json.Marshal(deny)
+	if acc.Extra == nil {
+		acc.Extra = map[string]any{}
+	}
+	acc.Extra[ExtraUpstreamGroupDenylist] = string(b)
+	// also clear candidates cache
+	delete(acc.Extra, ExtraUpstreamGroupCandidatesJSON)
+	delete(acc.Extra, ExtraUpstreamGroupCandidatesAt)
+	return map[string]any{
+		ExtraUpstreamGroupDenylist:       string(b),
+		ExtraUpstreamGroupCandidatesJSON: "",
+		ExtraUpstreamGroupCandidatesAt:   "",
+	}
 }
 
 func accountUpstreamBase(acc *Account) string {
@@ -398,20 +505,32 @@ func (p *AIPilotService) SwitchUpstreamGroup(ctx context.Context, acc *Account, 
 	if err != nil {
 		return "", "", err
 	}
+	lastGood := extraString(acc.Extra, ExtraUpstreamLastGoodGroup)
+	lastGoodID := strings.Split(lastGood, ":")[0]
+	isRollback := lastGood != "" && (value == lastGood || value == lastGoodID ||
+		strings.HasPrefix(lastGood, value+":") || strings.EqualFold(value, lastGood))
 	target, ok := resolveUpstreamTarget(cands, value)
-	if !ok {
-		return "", "", fmt.Errorf("目标组 %q 不在同平台候选列表(已排除 Claude 等异平台)", value)
+	if !ok && isRollback {
+		// Emergency rollback may target a group filtered from "cheap" eligibility.
+		target = UpstreamGroupCandidate{ID: lastGoodID, Name: lastGood, Eligible: true, Source: "rollback"}
+		ok = true
 	}
-	if !target.Eligible {
+	if !ok {
+		return "", "", fmt.Errorf("目标组 %q 不在同平台候选列表(已排除 Claude/拉闸/denylist 等)", value)
+	}
+	if !target.Eligible && !isRollback {
 		return "", "", fmt.Errorf("目标组不可用: %s", target.Note)
 	}
-	// Enforce min-save when switching to cheaper (allow equal for no-op).
+	// Enforce min-save when switching to cheaper (not for emergency rollback).
 	curRatio := extraFloat(acc.Extra, ExtraAIRateMultiplier)
-	if curRatio > 0 && target.Ratio > 0 && target.Ratio < curRatio-1e-12 {
+	if !isRollback && curRatio > 0 && target.Ratio > 0 && target.Ratio < curRatio-1e-12 {
 		if target.Ratio > curRatio*(1-AIUpstreamGroupMinSaveRatio)+1e-12 {
 			return "", "", fmt.Errorf("目标组仅便宜 %.1f%%,低于最低省钱阈值 %.0f%%",
 				(1-target.Ratio/curRatio)*100, AIUpstreamGroupMinSaveRatio*100)
 		}
+	}
+	if !isRollback && riskyUpstreamGroupName(target.Name) {
+		return "", "", fmt.Errorf("目标组名高风险,禁止自动切入: %s", target.Name)
 	}
 
 	kind := strings.ToLower(extraString(acc.Extra, ExtraUpstreamKind))
@@ -483,40 +602,51 @@ func (p *AIPilotService) safeSwitchSub2API(ctx context.Context, acc *Account, ba
 		_ = p.sub2apiDeleteKey(ctx, base, jwt, testID)
 	}()
 
-	// 2) Probe temp key (prod traffic unaffected).
-	pr := p.probeViaUpstreamWithKey(ctx, acc, base, testSK, 8*time.Second, "upstream-group-test-key")
-	if pr.Verdict != "pass" && pr.Verdict != "slow" {
-		return before, "", fmt.Errorf("测试 key 探测失败(%s): %s — 生产 key 未改动", pr.Verdict, truncateStr(pr.Error, 160))
+	// 2) Multi-probe temp key (prod traffic unaffected).
+	if ok, detail := p.multiProbeUpstreamKey(ctx, acc, base, testSK, AIUpstreamGroupTestProbes, "upstream-group-test-key"); !ok {
+		if deny := appendUpstreamGroupDenylist(acc, target.ID); deny != nil && p.Accounts != nil {
+			_ = p.Accounts.UpdateExtra(ctx, acc.ID, deny)
+		}
+		return before, "", fmt.Errorf("测试 key 多次探测失败 — 生产 key 未改动: %s", detail)
 	}
 
 	// 3) Soft-drain production account then switch production key.
+	// Keep drained at spare after switch for observe window (do NOT restore main tier).
 	prevPri, drained := p.softDrainAccount(ctx, acc)
-	switched := false
-	defer func() {
-		if drained && p.Accounts != nil {
-			// reload and restore priority unless still failing
-			if a, e := p.Accounts.GetByID(ctx, acc.ID); e == nil && a != nil {
-				a.Priority = prevPri
-				_ = p.Accounts.Update(ctx, a)
-			}
-		}
-	}()
+	_ = prevPri
+	_ = drained
 
 	if err := p.sub2apiUpdateKeyGroup(ctx, base, jwt, prodKeyID, targetID); err != nil {
 		return before, "", fmt.Errorf("生产 key 改组失败(测试已通过): %w", err)
 	}
-	switched = true
 
-	// 4) Probe production sk on new group; rollback on fail.
+	// 4) Multi-probe production sk; rollback + denylist on fail.
 	if prodSK != "" {
-		pr2 := p.probeViaUpstreamWithKey(ctx, acc, base, prodSK, 8*time.Second, "upstream-group-prod-verify")
-		if pr2.Verdict != "pass" && pr2.Verdict != "slow" {
+		if ok, detail := p.multiProbeUpstreamKey(ctx, acc, base, prodSK, AIUpstreamGroupProdProbes, "upstream-group-prod-verify"); !ok {
 			_ = p.sub2apiUpdateKeyGroup(ctx, base, jwt, prodKeyID, curGID)
-			return before, "", fmt.Errorf("生产 key 切后探测失败,已回滚: %s", truncateStr(pr2.Error, 160))
+			deny := appendUpstreamGroupDenylist(acc, target.ID)
+			if deny != nil && p.Accounts != nil {
+				_ = p.Accounts.UpdateExtra(ctx, acc.ID, deny)
+			}
+			return before, "", fmt.Errorf("生产 key 切后探测失败,已回滚并拉黑目标组: %s", detail)
 		}
 	}
-	_ = switched
+	// After success stay at spare tier for observation (avoid dumping traffic into new group).
+	if p.Accounts != nil {
+		if a, e := p.Accounts.GetByID(ctx, acc.ID); e == nil && a != nil {
+			if a.Priority < AIPriorityBuriedThreshold {
+				a.Priority = AIPriorityBuriedThreshold
+				_ = p.Accounts.Update(ctx, a)
+			}
+			// Cap weight so p150 fallback cannot monopolize on a brand-new group.
+			if a.EffectiveScheduleWeight() > 500 {
+				a.ScheduleWeight = 500
+				_ = p.Accounts.Update(ctx, a)
+			}
+		}
+	}
 	after = strconv.FormatInt(targetID, 10) + ":" + target.Name
+	// last_good = previous production group (for auto-rollback)
 	p.persistUpstreamGroupSwitch(ctx, acc, before, after, target.Ratio, "sub2api")
 	if acc.Extra == nil {
 		acc.Extra = map[string]any{}
@@ -526,6 +656,38 @@ func (p *AIPilotService) safeSwitchSub2API(ctx context.Context, acc *Account, ba
 		_ = p.Accounts.UpdateExtra(ctx, acc.ID, map[string]any{ExtraUpstreamPanelKeyID: prodKeyID})
 	}
 	return before, after, nil
+}
+
+// multiProbeUpstreamKey requires a strict majority of pass/slow across n attempts.
+func (p *AIPilotService) multiProbeUpstreamKey(ctx context.Context, acc *Account, base, sk string, n int, reason string) (bool, string) {
+	if n <= 0 {
+		n = 1
+	}
+	pass, fail := 0, 0
+	var last string
+	for i := 0; i < n; i++ {
+		pr := p.probeViaUpstreamWithKey(ctx, acc, base, sk, 8*time.Second, reason)
+		if pr.Verdict == "pass" || pr.Verdict == "slow" {
+			pass++
+		} else {
+			fail++
+			last = pr.Verdict + ": " + pr.Error
+		}
+		if i+1 < n {
+			select {
+			case <-ctx.Done():
+			case <-time.After(400 * time.Millisecond):
+			}
+		}
+	}
+	need := (n + 1) / 2
+	if n >= 3 {
+		need = 2 // 2/3 for test probes
+	}
+	if pass >= need {
+		return true, fmt.Sprintf("pass=%d/%d", pass, n)
+	}
+	return false, fmt.Sprintf("pass=%d fail=%d/%d last=%s", pass, fail, n, truncateStr(last, 120))
 }
 
 func (p *AIPilotService) softDrainAccount(ctx context.Context, acc *Account) (prev int, drained bool) {
@@ -584,29 +746,37 @@ func (p *AIPilotService) safeSwitchNewAPI(ctx context.Context, acc *Account, bas
 	}
 	defer func() { _ = p.newAPIDeleteToken(ctx, base, mgmt, uid, testID) }()
 
-	pr := p.probeViaUpstreamWithKey(ctx, acc, base, testKey, 8*time.Second, "upstream-group-test-token")
-	if pr.Verdict != "pass" && pr.Verdict != "slow" {
-		return before, "", fmt.Errorf("测试 token 探测失败(%s): %s — 生产 token 未改动", pr.Verdict, truncateStr(pr.Error, 160))
+	if ok, detail := p.multiProbeUpstreamKey(ctx, acc, base, testKey, AIUpstreamGroupTestProbes, "upstream-group-test-token"); !ok {
+		if deny := appendUpstreamGroupDenylist(acc, target.Name); deny != nil && p.Accounts != nil {
+			_ = p.Accounts.UpdateExtra(ctx, acc.ID, deny)
+		}
+		return before, "", fmt.Errorf("测试 token 多次探测失败 — 生产未改动: %s", detail)
 	}
 
-	prevPri, drained := p.softDrainAccount(ctx, acc)
-	defer func() {
-		if drained && p.Accounts != nil {
-			if a, e := p.Accounts.GetByID(ctx, acc.ID); e == nil && a != nil {
-				a.Priority = prevPri
-				_ = p.Accounts.Update(ctx, a)
-			}
-		}
-	}()
+	_, _ = p.softDrainAccount(ctx, acc)
 
 	if err := p.newAPIUpdateTokenGroup(ctx, base, mgmt, uid, prodTok, target.Name); err != nil {
 		return before, "", fmt.Errorf("生产 token 改组失败: %w", err)
 	}
 	if prodSK != "" {
-		pr2 := p.probeViaUpstreamWithKey(ctx, acc, base, prodSK, 8*time.Second, "upstream-group-prod-verify")
-		if pr2.Verdict != "pass" && pr2.Verdict != "slow" {
+		if ok, detail := p.multiProbeUpstreamKey(ctx, acc, base, prodSK, AIUpstreamGroupProdProbes, "upstream-group-prod-verify"); !ok {
 			_ = p.newAPIUpdateTokenGroup(ctx, base, mgmt, uid, prodTok, before)
-			return before, "", fmt.Errorf("生产 token 切后探测失败,已回滚: %s", truncateStr(pr2.Error, 160))
+			if deny := appendUpstreamGroupDenylist(acc, target.Name); deny != nil && p.Accounts != nil {
+				_ = p.Accounts.UpdateExtra(ctx, acc.ID, deny)
+			}
+			return before, "", fmt.Errorf("生产 token 切后探测失败,已回滚并拉黑: %s", detail)
+		}
+	}
+	if p.Accounts != nil {
+		if a, e := p.Accounts.GetByID(ctx, acc.ID); e == nil && a != nil {
+			if a.Priority < AIPriorityBuriedThreshold {
+				a.Priority = AIPriorityBuriedThreshold
+				_ = p.Accounts.Update(ctx, a)
+			}
+			if a.EffectiveScheduleWeight() > 500 {
+				a.ScheduleWeight = 500
+				_ = p.Accounts.Update(ctx, a)
+			}
 		}
 	}
 	after = target.Name
@@ -724,6 +894,90 @@ func (p *AIPilotService) probeViaUpstreamWithKey(
 		res.Error = "probe failed"
 	}
 	return res
+}
+
+// injectUpstreamGroupRollbacks auto-reverts a recent switch when the new group
+// is already hard-failing (503 etc.). Uses last_good; denylists the failed group.
+func injectUpstreamGroupRollbacks(
+	decision *decision,
+	accounts []Account,
+	recentTraffic map[int64]AccountTrafficStats,
+	cfg AIAutopilotSettings,
+) int {
+	if decision == nil || !cfg.OpAllowed(AIOpSwitchUpstreamGroup) {
+		return 0
+	}
+	have := map[int64]bool{}
+	for _, a := range decision.Actions {
+		if a.Op == AIOpSwitchUpstreamGroup {
+			have[a.AccountID] = true
+		}
+	}
+	injected := 0
+	now := time.Now()
+	for i := range accounts {
+		acc := &accounts[i]
+		if !accountUpstreamGroupSwitchEnabled(acc) || !acc.AIManaged || have[acc.ID] {
+			continue
+		}
+		lastSw := extraString(acc.Extra, ExtraUpstreamLastGroupSwitchAt)
+		if lastSw == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, lastSw)
+		if err != nil || now.Sub(t) > AIUpstreamGroupObserveWindow {
+			continue
+		}
+		lastGood := extraString(acc.Extra, ExtraUpstreamLastGoodGroup)
+		cur := extraString(acc.Extra, ExtraUpstreamCurrentGroup)
+		if lastGood == "" || cur == "" {
+			continue
+		}
+		// already on last good
+		if cur == lastGood || strings.HasPrefix(cur, strings.Split(lastGood, ":")[0]+":") ||
+			strings.Split(cur, ":")[0] == strings.Split(lastGood, ":")[0] {
+			continue
+		}
+		// Need evidence of pain: recent hard fail OR high error rate with samples
+		rst := recentTraffic[acc.ID]
+		if !recentWindowHardFail(rst) {
+			// also catch mid failures: n>=5 and SR < 0.92 with errors
+			n := rst.Requests + rst.Errors
+			if n < 5 {
+				continue
+			}
+			sr := float64(rst.Successes) / float64(n)
+			if sr >= 0.92 {
+				continue
+			}
+		}
+		val := strings.Split(lastGood, ":")[0]
+		if val == "" {
+			val = lastGood
+		}
+		// denylist current bad group in-memory for this apply path (persist on execute)
+		decision.Actions = append(decision.Actions, decisionAction{
+			AccountID: acc.ID,
+			Op:        AIOpSwitchUpstreamGroup,
+			Value:     val,
+			Reason: fmt.Sprintf(
+				"切组观察窗内硬失败/503: 当前=%s 自动回滚 last_good=%s 并拉黑失败组;生产先停流血",
+				cur, lastGood,
+			),
+			Confidence: 0.95,
+		})
+		// also disable to stop traffic while rollback applies
+		decision.Actions = append(decision.Actions, decisionAction{
+			AccountID:  acc.ID,
+			Op:         AIOpDisable,
+			Value:      "true",
+			Reason:     "切组后故障自动停用,等待回滚 last_good 完成",
+			Confidence: 0.9,
+		})
+		have[acc.ID] = true
+		injected++
+	}
+	return injected
 }
 
 // injectUpstreamGroupSwitches proposes at most one safe cheaper switch per run

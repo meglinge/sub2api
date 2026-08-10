@@ -479,6 +479,10 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 	if n := injectCostSpareDemotions(&finalDecision, accounts, cfg); n > 0 && p.Log != nil {
 		p.Log.Info("ai pilot injected cost spare demotions", "count", n, "trigger", trigger)
 	}
+	// If a recent group switch is already 503/hard-failing, roll back to last_good first.
+	if n := injectUpstreamGroupRollbacks(&finalDecision, accounts, recentTraffic, cfg); n > 0 && p.Log != nil {
+		p.Log.Info("ai pilot injected upstream group rollbacks", "count", n, "trigger", trigger)
+	}
 	// Safe upstream group switch: only when cheaper same-platform candidate exists.
 	// Execution creates a temp key to probe first — never flips production cold.
 	if n := injectUpstreamGroupSwitches(p, ctx, &finalDecision, accounts, recentTraffic, cfg); n > 0 && p.Log != nil {
@@ -1441,10 +1445,10 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 
 【上游分组切换 switch_upstream_group — 可选,极保守】
 - 仅当 channels[].upstreamGroup.switchable=true 且 policy 允许该 op 时才可调用
-- value 必须是 upstreamGroup.candidates 里 **eligible=true** 的 id/name(已按账号 platform 过滤,Claude 等异平台不会出现)
-- 后端执行顺序: **新建临时 key 探测目标组 → 通过后才软摘流改生产 key → 再生产探测,失败回滚生产组 → 删除临时 key**
-- 禁止建议不在 candidates 的组;禁止为「稍便宜」频繁切(后端要求省≥15% 且 30m 驻留)
-- 近窗硬失败禁止切便宜组;坏号用 disable/set_priority 不是切组
+- value 必须是 candidates 里 eligible=true 的 id/name(已过滤 Claude/denylist/「随时拉闸」等高风险组名)
+- 后端: **临时 key 多次探测 → 软摘流 → 改生产 key → 再生产多次探测,失败回滚并拉黑 → 删临时 key;切后强制留在备援观察**
+- 若刚切组后近窗 503/硬失败: 后端会自动回滚 last_good 并 disable,勿再切更便宜组
+- 禁止建议不在 candidates 的组;省≥15% 且 30m 驻留
 
 - 近窗 0 请求且长窗成功率仍高 → 不是故障,是分层后果
 - **禁止**对 p≥150 的可用号只 set_weight 不抬 priority:同层 weight 再大也吃不到主层流量

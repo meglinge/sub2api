@@ -35,6 +35,51 @@ func TestPlatformMatchesAccount(t *testing.T) {
 	}
 }
 
+func TestRiskyUpstreamGroupName(t *testing.T) {
+	t.Parallel()
+	if !riskyUpstreamGroupName("ChatGPT-Plus【随时拉闸通道】") {
+		t.Fatal("随时拉闸 must be risky")
+	}
+	if riskyUpstreamGroupName("ChatGPT-Plus【高并发-特惠通道】") {
+		t.Fatal("特惠 should not be risky")
+	}
+}
+
+func TestInjectUpstreamGroupRollbacks(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultAIAutopilotSettings()
+	cfg.OpSwitchUpstreamGroup = boolPtr(true)
+	accs := []Account{{
+		ID: 1, Platform: PlatformOpenAI, AIManaged: true, Status: StatusActive, Schedulable: true,
+		Extra: map[string]any{
+			ExtraAIUpstreamGroupSwitch:     true,
+			ExtraUpstreamCurrentGroup:      "59:bad",
+			ExtraUpstreamLastGoodGroup:     "44",
+			ExtraUpstreamLastGroupSwitchAt: time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339),
+		},
+	}}
+	recent := map[int64]AccountTrafficStats{
+		1: {Requests: 20, Successes: 5, Errors: 20},
+	}
+	d := decision{}
+	n := injectUpstreamGroupRollbacks(&d, accs, recent, cfg)
+	if n != 1 {
+		t.Fatalf("n=%d acts=%+v", n, d.Actions)
+	}
+	sawSwitch, sawDisable := false, false
+	for _, a := range d.Actions {
+		if a.Op == AIOpSwitchUpstreamGroup && a.Value == "44" {
+			sawSwitch = true
+		}
+		if a.Op == AIOpDisable {
+			sawDisable = true
+		}
+	}
+	if !sawSwitch || !sawDisable {
+		t.Fatalf("want rollback+disable, acts=%+v", d.Actions)
+	}
+}
+
 func TestParseSub2APIAuthTokens(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{"code":0,"data":{"access_token":"tok-a","refresh_token":"tok-r","expires_in":3600}}`)
