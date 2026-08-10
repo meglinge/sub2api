@@ -716,6 +716,10 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 		if reason := balanceGateReason(AIOpEnable, acc); reason != "" {
 			continue
 		}
+		// Very expensive + cheaper peers: do not re-enable (probe pass ≠ should burn money).
+		if reason := costEnableGateReason(AIOpEnable, acc, accounts, cfg); reason != "" {
+			continue
+		}
 		conf := 0.82
 		if pr.Verdict == "slow" {
 			conf = 0.72

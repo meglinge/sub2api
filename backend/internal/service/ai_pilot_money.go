@@ -46,9 +46,11 @@ const (
 	// Cost-pressure gates (when admin raises 性价比 weight):
 	// fraction of overall that is cost — ≥ this activates hard demotion / block-promote.
 	AICostPressureFraction = 0.20
-	// composite > median * ratio → expensive (block soft-unbury / promotion to main).
+	// composite > cheapest_peer * ratio → expensive (block soft-unbury / promotion to main).
 	AICostExpensiveRatio = 1.45
-	// composite > median * ratio → very expensive (auto spare demotion allowed even if healthy).
+	// composite > cheapest_peer * ratio → very expensive (auto spare demotion + cost isolation).
+	// Soft OpenAI scoring still sends overflow/sticky traffic to p150, so spare alone
+	// does not stop burn — isolation uses ai_disabled when cheaper peers cover groups.
 	AICostVeryExpensiveRatio = 1.75
 )
 
@@ -403,9 +405,9 @@ func isCheapOrNearCheapest(acc *Account, accounts []Account) bool {
 }
 
 // softUnburyCheapSpareRescue breaks the sticky-spare death spiral for known-cheap
-// accounts: p≥150 gets zero traffic under strict layering → long window stays empty
-// → classic softUnburyEligible never fires → model only bumps weight at p150 (no
-// traffic). High 性价比 weight makes this especially wrong.
+// accounts: when main tier is healthy, soft scoring still prefers lower priority
+// but spare-only numbers can starve for samples → classic softUnburyEligible never
+// fires → model only bumps weight at p150. High 性价比 weight makes this wrong.
 //
 // Requires known near-cheapest composite; unknown-rate accounts stay on classic path
 // (avoids auto-lifting mystery Pro tiers). Fresh probe fail still blocks.
@@ -629,16 +631,26 @@ func weightCrushGateReasonEx(acc *Account, next int, long, recent AccountTraffic
 //   - wallet is depleted (balance hard gate — no reason to keep serving)
 //   - recent traffic hard-fails
 //   - fresh activation probe is fail (cannot recover traffic path)
+//   - costJustified=true (very expensive under cost pressure; soft scheduler still feeds p150)
 func disableHealthyGateReason(acc *Account, long, recent AccountTrafficStats) string {
 	return disableHealthyGateReasonEx(acc, long, recent, nil)
 }
 
 func disableHealthyGateReasonEx(acc *Account, long, recent AccountTrafficStats, probe *activationResult) string {
+	return disableHealthyGateReasonEx2(acc, long, recent, probe, false)
+}
+
+func disableHealthyGateReasonEx2(acc *Account, long, recent AccountTrafficStats, probe *activationResult, costJustified bool) string {
 	if acc == nil {
 		return ""
 	}
 	// Depleted accounts must be disableable regardless of historical SR.
 	if st, _, _ := balanceViewFromAccount(acc); strings.EqualFold(st, "depleted") {
+		return ""
+	}
+	// Soft OpenAI load-balance still routes overflow/sticky to p150; sinking alone
+	// cannot stop a very expensive account from burning money.
+	if costJustified {
 		return ""
 	}
 	if recentWindowHardFail(recent) {
@@ -745,6 +757,7 @@ func filterDeathSpiralDemotions(
 // injectCostSpareDemotions sinks very expensive main-tier accounts to spare when
 // 性价比 weight is high. Models often keep pricey-but-healthy Pro on priority=100;
 // health-only gates then refuse demotion and soft-unbury re-lifts them.
+// Note: spare is not isolation — see injectCostIsolations (ai_disabled).
 func injectCostSpareDemotions(decision *decision, accounts []Account, cfg AIAutopilotSettings) int {
 	if decision == nil || !costPressureActive(cfg) || !cfg.OpAllowed(AIOpSetPriority) {
 		return 0
@@ -787,6 +800,167 @@ func injectCostSpareDemotions(decision *decision, accounts []Account, cfg AIAuto
 			Confidence: 0.9,
 		})
 		havePri[acc.ID] = true
+		injected++
+	}
+	return injected
+}
+
+// hasAffordablePeerCoveringGroups is true when every group of acc still has another
+// active schedulable peer that is known-rate and not expensive (soft threshold).
+// Used so cost isolation never strips a group of all affordable capacity.
+func hasAffordablePeerCoveringGroups(acc *Account, accounts []Account) bool {
+	if acc == nil {
+		return false
+	}
+	groups := acc.GroupIDs
+	checkPeer := func(o *Account) bool {
+		if o == nil || o.ID == acc.ID {
+			return false
+		}
+		if o.AIDisabled || o.Status != StatusActive || !o.Schedulable {
+			return false
+		}
+		sig := accountCostSignalOf(o)
+		if !sig.Known || sig.Composite <= 0 {
+			return false
+		}
+		// Affordable = not expensive vs pool cheapest (excluding self).
+		return !isExpensiveVsPeers(o, accounts, AICostExpensiveRatio)
+	}
+	if len(groups) == 0 {
+		for i := range accounts {
+			if checkPeer(&accounts[i]) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, gid := range groups {
+		found := false
+		for i := range accounts {
+			o := &accounts[i]
+			if !checkPeer(o) {
+				continue
+			}
+			for _, g := range o.GroupIDs {
+				if g == gid {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// costJustifiedIsolation: very expensive vs peers + cheaper peers cover its groups.
+// Soft scheduler (priority is only one score factor) still feeds p150/sticky traffic,
+// so these accounts must leave the schedulable pool via ai_disabled — not merely p150.
+func costJustifiedIsolation(acc *Account, accounts []Account, cfg AIAutopilotSettings) bool {
+	if acc == nil || !costPressureActive(cfg) {
+		return false
+	}
+	if !isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio) {
+		return false
+	}
+	return hasAffordablePeerCoveringGroups(acc, accounts)
+}
+
+// costEnableGateReason blocks enable/release/unlock of very expensive accounts when
+// cheaper peers already cover their groups. Stops probe-pass thrash re-enabling Wawapi-class.
+func costEnableGateReason(op string, acc *Account, accounts []Account, cfg AIAutopilotSettings) string {
+	switch op {
+	case AIOpEnable, AIOpRelease, AIOpUnlock:
+	default:
+		return ""
+	}
+	if acc == nil || !costPressureActive(cfg) {
+		return ""
+	}
+	if !isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio) {
+		return ""
+	}
+	if !hasAffordablePeerCoveringGroups(acc, accounts) {
+		return ""
+	}
+	sig := accountCostSignalOf(acc)
+	minC, _ := cheapestKnownComposite(accounts, acc.ID)
+	return fmt.Sprintf(
+		"性价比硬门禁:贵号 composite=%.3f > 最便宜peer×%.2f(≈%.3f)且分组内有更便宜可用号;软调度下 p150/粘性仍会吃流量,禁止 enable",
+		sig.Composite, AICostVeryExpensiveRatio, minC*AICostVeryExpensiveRatio,
+	)
+}
+
+// injectCostIsolations disables very expensive accounts that still sit in the pool.
+// Spare demotion alone is insufficient: OpenAI selection is multi-factor + topK + sticky,
+// so p150 numbers (e.g. Wawapi Pro 0.11) keep receiving production traffic.
+func injectCostIsolations(decision *decision, accounts []Account, cfg AIAutopilotSettings) int {
+	if decision == nil || !costPressureActive(cfg) || !cfg.OpAllowed(AIOpDisable) {
+		return 0
+	}
+	haveDisable := map[int64]bool{}
+	for _, a := range decision.Actions {
+		if a.Op == AIOpDisable {
+			haveDisable[a.AccountID] = true
+		}
+	}
+	// Drop model enables that would undo isolation in the same run.
+	filtered := decision.Actions[:0]
+	for _, a := range decision.Actions {
+		if a.Op == AIOpEnable || a.Op == AIOpRelease || a.Op == AIOpUnlock {
+			// resolve account from pool
+			var acc *Account
+			for i := range accounts {
+				if accounts[i].ID == a.AccountID {
+					acc = &accounts[i]
+					break
+				}
+			}
+			if acc != nil && costEnableGateReason(a.Op, acc, accounts, cfg) != "" {
+				continue
+			}
+		}
+		filtered = append(filtered, a)
+		if a.Op == AIOpDisable {
+			haveDisable[a.AccountID] = true
+		}
+	}
+	decision.Actions = filtered
+
+	injected := 0
+	for i := range accounts {
+		acc := &accounts[i]
+		if acc.AIDisabled || acc.Status != StatusActive || !acc.Schedulable {
+			continue
+		}
+		if haveDisable[acc.ID] {
+			continue
+		}
+		if !costJustifiedIsolation(acc, accounts, cfg) {
+			continue
+		}
+		if reason := simulateMinAvailable(acc, accounts, cfg.MinAvailablePerGroup); reason != "" {
+			continue
+		}
+		sig := accountCostSignalOf(acc)
+		minC, _ := cheapestKnownComposite(accounts, acc.ID)
+		decision.Actions = append(decision.Actions, decisionAction{
+			AccountID: acc.ID,
+			Op:        AIOpDisable,
+			Value:     "true",
+			Reason: fmt.Sprintf(
+				"性价比隔离: composite=%.3f > 最便宜peer×%.2f(最便宜=%.3f);OpenAI 软调度(多因子+TopK+粘性)下 p150/低 weight 仍吃请求,ai_disabled 才真正停量",
+				sig.Composite, AICostVeryExpensiveRatio, minC,
+			),
+			Confidence: 0.93,
+		})
+		haveDisable[acc.ID] = true
 		injected++
 	}
 	return injected

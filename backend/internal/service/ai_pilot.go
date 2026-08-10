@@ -479,6 +479,10 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 	if n := injectCostSpareDemotions(&finalDecision, accounts, cfg); n > 0 && p.Log != nil {
 		p.Log.Info("ai pilot injected cost spare demotions", "count", n, "trigger", trigger)
 	}
+	// Soft OpenAI scoring still feeds p150/sticky — isolate very expensive via ai_disabled.
+	if n := injectCostIsolations(&finalDecision, accounts, cfg); n > 0 && p.Log != nil {
+		p.Log.Info("ai pilot injected cost isolations", "count", n, "trigger", trigger)
+	}
 	// If a recent group switch is already 503/hard-failing, roll back to last_good first.
 	if n := injectUpstreamGroupRollbacks(&finalDecision, accounts, recentTraffic, cfg); n > 0 && p.Log != nil {
 		p.Log.Info("ai pilot injected upstream group rollbacks", "count", n, "trigger", trigger)
@@ -605,6 +609,12 @@ func (p *AIPilotService) applyDecisionActions(
 			_, _ = p.Repo.CreateAction(ctx, a)
 			continue
 		}
+		if reason := costEnableGateReason(act.Op, acc, accounts, cfg); reason != "" {
+			a.State = AIActionRejected
+			a.RejectReason = reason
+			_, _ = p.Repo.CreateAction(ctx, a)
+			continue
+		}
 		var longSt, recentSt AccountTrafficStats
 		if longTraffic != nil {
 			longSt = longTraffic[act.AccountID]
@@ -664,7 +674,8 @@ func (p *AIPilotService) applyDecisionActions(
 					pr = &cp
 				}
 			}
-			if reason := disableHealthyGateReasonEx(acc, longSt, recentSt, pr); reason != "" {
+			costIso := costJustifiedIsolation(acc, accounts, cfg)
+			if reason := disableHealthyGateReasonEx2(acc, longSt, recentSt, pr, costIso); reason != "" {
 				a.State = AIActionRejected
 				a.RejectReason = reason
 				_, _ = p.Repo.CreateAction(ctx, a)
@@ -710,8 +721,8 @@ func (p *AIPilotService) applyDecisionActions(
 			// otherwise soft-unbury or p=1→100 is blocked for 15m after any prior
 			// touch and summaries loop "紧急修复" forever (observed in prod).
 			bypassCool := act.Op == AIOpEnable || act.Op == AIOpRelease || act.Op == AIOpUnlock
-			// Depleted wallet: allow disable immediately (health SR is irrelevant).
-			if !bypassCool && act.Op == AIOpDisable && isBalanceDepleted(acc) {
+			// Depleted wallet / cost isolation: allow disable immediately (health SR is irrelevant).
+			if !bypassCool && act.Op == AIOpDisable && (isBalanceDepleted(acc) || costJustifiedIsolation(acc, accounts, cfg)) {
 				bypassCool = true
 			}
 			if !bypassCool && act.Op == AIOpSetPriority {
@@ -1080,13 +1091,13 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 			"activationProbeFreshMinutes": cfg.ActivationProbeFreshMinutes,
 			"maxProbeTurns":               cfg.MaxProbeTurns,
 			"platform":                    "openai",
-			"routingModel":                "priority 越小越优先; schedule_weight 只在 Top-K/同层内调比例; disable 写 ai_disabled 不改人工 schedulable",
+			"routingModel":                "OpenAI 软调度: 多因子打分(priority+负载+错误+TTFB…)+TopK+schedule_weight+粘性/溢出; priority 不是硬分层, p150 仍会吃请求; 真停量用 disable(ai_disabled)",
 			"windowGuidance":              "长窗看稳定性; 近况窗看此刻。两者冲突时以近况为准。",
 			"activationGuide": map[string]any{
 				"what":     "channels[].activation 是拉起来之前的现场证据。没流量/被 AI 停用时统计是空白,空白不等于健康",
 				"rule":     "enable 或 weight 0→非0 之前必须看 activation.verdict; fail/unknown 不要提",
-				"recover":  "aiDisabled=true 且 activation.verdict=pass|slow → 应 enable 恢复; 探测失败才继续停用; enable 会把 priority>500 解埋到观察层 200",
-				"enforced": "护栏会拒绝无新鲜探测背书的 enable; 后端也会在探测通过且模型漏提时自动补 enable+解埋",
+				"recover":  "aiDisabled=true 且 activation.verdict=pass|slow → 可 enable; 但极贵号(相对最便宜 peer)在有更便宜可用号时后端禁止 enable",
+				"enforced": "护栏会拒绝无新鲜探测背书的 enable; 探测通过≠应接生产量; 后端会自动隔离极贵号",
 			},
 			"rateConfidenceGuide": map[string]any{
 				"level1_high":   "source=imported/newapi/sub2api/billing_probe: money.compositeRateMultiplier=rate/recharge 一级高置信,比价优先信它",
@@ -1108,7 +1119,7 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 					"costDim":        "scores[].cost 由后端按 money.rateConfidence.trustedComposite 池内比价写死,禁止模型编造 peer 倍率",
 					"unknownRate":    "无导入倍率(default_one) cost≈40 中偏低,不要当成 0.06 便宜号",
 					"pressureOn":     costPressureActive(cfg),
-					"pressureRule":   "cost 权重≥20% 时:贵号禁止抬回主层;极贵健康号可沉备援;禁止自动解埋贵号",
+					"pressureRule":   "cost 权重≥20% 时:贵号禁止抬回主层;极贵号沉备援仍不够(软调度会继续喂量)→后端 ai_disabled 隔离;禁止 probe-pass 再 enable 极贵号",
 					"expensiveRatio": AICostExpensiveRatio,
 					"veryExpensive":  AICostVeryExpensiveRatio,
 				},
@@ -1407,28 +1418,29 @@ var _ = strconv.Itoa
 const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)。目标:在保证分组可用性的前提下,把流量导向更健康的 OpenAI 账号。
 
 你操作的单位是 account(快照里 channels 数组的每一项其实是账号)。
-选路现实:
-- priority 越小越优先,且是**严格分层**:只要 priority 更小的层还有可用号,更大 priority 的号**永远接不到请求**
-- 后端会把 set_priority 钳在 [50,200](对齐原版 80–120 思路,默认层 100);若账号已是 priority=1 等小于50,应 set_priority 到 100,后端会绕过冷静期/单次 delta 完成纠正(也可由后端自动注入)
-- 因此**禁止**把某一个账号单独提到顶层而把其他可用号沉深 —— 那等于全池只跑一个供应商
+选路现实(必须按真实调度理解,不要幻想硬分层):
+- OpenAI 是**软调度**:多因子打分(priority+负载+排队+错误率+TTFB…)+Top-K+schedule_weight 加权+粘性/并发溢出
+- priority 越小越优先,但**不是**「有 p100 时 p150 永远 0 请求」;主层忙/抖/粘性时 p150 低 weight 仍会吃生产量
+- 后端会把 set_priority 钳在 [50,200];若账号已是 priority=1 等小于50,应 set_priority 到 100(可绕过冷静期)
+- **禁止**把某一个账号单独提到顶层而把其他可用号沉深 —— 那等于全池只跑一个供应商
 - 健康池:尽量 2–4 个号同在 priority≈100,用 set_weight 按**综合分**分流(不是纯按成本均分)
-- schedule_weight(字段 weight)只在**同一 priority 层**内调分流比例
-- 禁止用 weight=0 当软停,要停就用 disable
+- schedule_weight 在 Top-K 内调分流; weight=0 削弱抽选但粘性仍可能命中
+- **真要停量用 disable**(ai_disabled);不要指望「沉到 150 + weight=10」挡住贵号
 - disable/enable 只切换 aiDisabled,绝不等于人工 schedulable/status
 - state.schedulable=false 是人工/系统调度状态,你不能靠 enable 修好,只能写 observations
 - sticky/first_output 失败解绑已有系统处理;你负责结构性降权/停用/恢复,不要建议 temp_unsched 连环冷却
 - traffic 是长窗; recentTraffic 是近况窗。两者冲突时以近况为准
 - memory 是历史分析,避免来回拧同一账号
-- activation 是现场探测:停用/零流量账号没有统计时必须看它;空白流量 ≠ 仍坏
+- activation 是现场探测:停用/零流量账号没有统计时必须看它;空白流量 ≠ 仍坏;pass ≠ 应接生产量
 
-【打分与同层分流 —— 必须遵守】
+【打分与分流 —— 必须遵守】
 - scores 四维权重以 **policy.scoreGuide.weights** 为准(管理员可在设置改;默认 稳40/延迟30/吞吐20/性价比10)
   overall ≈ stab*wS + lat*wL + thr*wT + cost*wC (后端按设置重算)
-- 同层 set_weight **大致按 overall 比例分配**,不是「都 1」
+- 主层 set_weight **大致按 overall 比例分配**,不是「都 1」
   例:同层 A overall=80、B overall=40 → weight 可约 2:1
 - **cost 维由后端按 composite 池内比价写死**(模型分仅作参考会被覆盖);禁止把无倍率号编造成 peer 的 0.06
 - 无导入倍率(rateConfidence.level=3/default_one)不是便宜号
-- 性价比权重≥20% 时后端硬门禁:贵号禁止抬回主层≤100;极贵号可健康沉备援;禁止自动解埋贵号
+- 性价比权重≥20% 时后端硬门禁:贵号禁止抬回主层≤100;极贵号(相对最便宜 peer×1.75)在有更便宜可用号时 **ai_disabled 隔离**,禁止 probe-pass 再 enable
 - 稳/延迟/吞吐:看 traffic + recentTraffic(近况优先)
 
 【余额参与调度 —— 原版对齐】
@@ -1440,8 +1452,9 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 
 【禁止备援死循环 / 解埋再沉震荡】
 - 后端在「刚下沉到备援(≥150)」后有约 25 分钟备援驻留:期间自动解埋与 set_priority 拉回主层会被拒绝(防 429 pending thrash 100↔150)
-- 驻留期内请用 set_weight 调同层/备援分流,不要反复 set_priority 100↔150
-- priority≥150 在严格分层下几乎接不到请求 → 近窗必然空白 → **禁止**再据此 set_priority 更深
+- 驻留期内请用 set_weight 调分流,不要反复 set_priority 100↔150
+- p≥150 **仍可能有请求**(软调度溢出/粘性);近窗有量≠应抬回主层;近窗空白也≠一定故障
+- 极贵号不要停在 p150 幻想「接不到量」——后端会 disable 隔离
 
 【上游分组切换 switch_upstream_group — 可选,极保守】
 - 仅当 channels[].upstreamGroup.switchable=true 且 policy 允许该 op 时才可调用
@@ -1450,21 +1463,20 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 - 若刚切组后近窗 503/硬失败: 后端会自动回滚 last_good 并 disable,勿再切更便宜组
 - 禁止建议不在 candidates 的组;省≥15% 且 30m 驻留
 
-- 近窗 0 请求且长窗成功率仍高 → 不是故障,是分层后果
-- **禁止**对 p≥150 的可用号只 set_weight 不抬 priority:同层 weight 再大也吃不到主层流量
 - **禁止**用「主层已有 2–4 个/满池」拒绝把**已知便宜且健康**的号从 ≥150 抬回 100
   (2–4 是多样性目标,不是容量上限;便宜稳号卡在 150=性价比设置失效)
-- 慢(TTFB 高)但成功率高 → 同层降 weight(且勿压到 0/1),不要 priority 沉到 150+
-- 只有近窗/长窗**硬失败**(成功率明显崩、错误成片)才允许沉到 ≥150 或 disable
-- 后端会:拒绝无硬故障的备援下沉;长窗健康或已知便宜号 150–200 自动拉回 100;下沉类动作有最短冷静期
-- 健康池保持 2–4 个号同在 priority≈100,用 weight 分流,不要每轮把人踢进 150 再解埋
+- 慢(TTFB 高)但成功率高 → 降 weight,不要无脑 priority 沉到 150+
+- 近窗/长窗**硬失败** → 沉备援或 disable; **过贵**(composite 明显高于最便宜 peer) → disable 隔离,不要只微调 weight
+- 后端会:拒绝无硬故障的胡乱下沉;长窗健康或已知便宜号可解埋;极贵号隔离;下沉有冷静期
+- 健康池保持 2–4 个号同在 priority≈100,用 weight 分流,不要每轮 100↔150 thrash
 
 原则:
 1) **同层多号**:每组至少保留 2–4 个可用账号在相近 priority(建议都在 50–150 一带),用 set_weight 按 overall 分流
-2) 只有明确坏号才 set_priority 沉到更深一层;不要把「稍差但可用」沉到万级
-3) disable 是最后手段,且必须考虑 minAvailablePerGroup
+2) 坏号才深沉;过贵号 disable(有更便宜 peer 时),不要留在池里「低权备援」继续烧钱
+3) disable 必须考虑 minAvailablePerGroup;性价比隔离由后端在有替代号时自动执行
 4) **恢复与停用同等重要**:每一轮都要扫 aiDisabled=true 的账号。
-   - activation.verdict=pass|slow → 应 enable;后端会把 priority 过深解埋到观察层 100
+   - activation.verdict=pass|slow 且**非极贵隔离对象** → 应 enable
+   - 极贵且有更便宜可用号 → 保持停用(后端会拒 enable)
    - activation.verdict=fail|unknown → 保持停用
 5) 性价比/cost 必须看 money.rateConfidence.trustedComposite 与 groups[].peers 比价
    - compositeRate = rateMultiplier/rechargeMultiplier

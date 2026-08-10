@@ -592,6 +592,73 @@ func TestCostPressureDemotionAndPromotionGates(t *testing.T) {
 	}
 }
 
+func TestCostIsolationDisableAndBlockEnable(t *testing.T) {
+	t.Parallel()
+	// Wawapi-class: 0.11 vs cheapest 0.04/0.06, spare tier, still schedulable.
+	cheap := Account{
+		ID: 1, Name: "cheap", Priority: 100, Status: StatusActive, Schedulable: true,
+		GroupIDs: []int64{2},
+		Extra: map[string]any{
+			ExtraAIRateMultiplier: 0.06,
+			ExtraAIRateSource:     "sub2api",
+		},
+	}
+	pro := Account{
+		ID: 2, Name: "Wawapi (Pro)", Priority: 150, ScheduleWeight: 10,
+		Status: StatusActive, Schedulable: true, GroupIDs: []int64{2},
+		Extra: map[string]any{
+			ExtraAIRateMultiplier: 0.11,
+			ExtraAIRateSource:     "sub2api",
+		},
+	}
+	pool := []Account{cheap, pro}
+	cfg := DefaultAIAutopilotSettings()
+	cfg.ScoreWeightCost = 40
+	cfg.ScoreWeightStability = 25
+	cfg.ScoreWeightLatency = 20
+	cfg.ScoreWeightThroughput = 15
+	if !costJustifiedIsolation(&pro, pool, cfg) {
+		t.Fatal("pro should justify isolation")
+	}
+	// Healthy long window must NOT block cost isolation disable.
+	long := AccountTrafficStats{Requests: 100, Successes: 98, Errors: 2}
+	recent := AccountTrafficStats{Requests: 20, Successes: 19, Errors: 1}
+	if reason := disableHealthyGateReasonEx2(&pro, long, recent, nil, true); reason != "" {
+		t.Fatalf("cost isolation must allow disable: %s", reason)
+	}
+	if reason := disableHealthyGateReasonEx2(&pro, long, recent, nil, false); reason == "" {
+		t.Fatal("without cost flag, healthy disable still blocked")
+	}
+	// Enable blocked while cheaper peer covers group.
+	if reason := costEnableGateReason(AIOpEnable, &pro, pool, cfg); reason == "" {
+		t.Fatal("expected enable block for expensive pro")
+	}
+	// inject disables pro
+	d := decision{}
+	n := injectCostIsolations(&d, pool, cfg)
+	if n != 1 || len(d.Actions) != 1 || d.Actions[0].Op != AIOpDisable || d.Actions[0].AccountID != pro.ID {
+		t.Fatalf("inject isolation: n=%d acts=%+v", n, d.Actions)
+	}
+	// Model enable in same decision is stripped.
+	d2 := decision{Actions: []decisionAction{
+		{AccountID: pro.ID, Op: AIOpEnable, Reason: "probe pass"},
+	}}
+	n2 := injectCostIsolations(&d2, pool, cfg)
+	if n2 != 1 {
+		t.Fatalf("expected disable inject after strip, n=%d", n2)
+	}
+	for _, a := range d2.Actions {
+		if a.Op == AIOpEnable {
+			t.Fatalf("enable should be stripped, acts=%+v", d2.Actions)
+		}
+	}
+	// Sole expensive account (no affordable peer) must not isolate.
+	only := []Account{pro}
+	if costJustifiedIsolation(&pro, only, cfg) {
+		t.Fatal("sole expensive account must not self-isolate")
+	}
+}
+
 func TestBuildGroupPeers_HasComposite(t *testing.T) {
 	t.Parallel()
 	chs := []map[string]any{
