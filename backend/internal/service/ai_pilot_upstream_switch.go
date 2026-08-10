@@ -704,6 +704,10 @@ func trailingAlnum(s string, n int) string {
 	return string(r)
 }
 
+// upstreamPanelUserAgent must be identical for login and subsequent panel calls:
+// many sub2api hosts enable session binding (IP+UA hash).
+const upstreamPanelUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
 func (p *AIPilotService) sub2apiPanelDo(ctx context.Context, base, jwt, method, path string, body []byte) (int, []byte, error) {
 	client := p.HTTP
 	if client == nil {
@@ -727,7 +731,7 @@ func (p *AIPilotService) sub2apiPanelDo(ctx context.Context, base, jwt, method, 
 		req.Header.Set("Authorization", "Bearer "+jwt)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", upstreamPanelUserAgent)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, nil, err

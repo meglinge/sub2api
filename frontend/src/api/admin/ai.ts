@@ -155,6 +155,8 @@ export interface AIAutopilotSettings {
   op_set_max_concurrency?: boolean
   op_release?: boolean
   op_unlock?: boolean
+  /** Switch new-api token group / sub2api panel key group (requires per-account credentials). */
+  op_switch_upstream_group?: boolean
 }
 
 export const AI_OP_SWITCHES = [
@@ -166,6 +168,12 @@ export const AI_OP_SWITCHES = [
   { key: 'op_set_max_concurrency' as const, op: 'set_max_concurrency', label: '调并发上限', hint: '0 = 不限。' },
   { key: 'op_release' as const, op: 'release', label: '解除限流/临时不可调度', hint: '恢复被系统临时摘下的账号。' },
   { key: 'op_unlock' as const, op: 'unlock', label: '解除锁死', hint: '解锁死状态（若有）。' },
+  {
+    key: 'op_switch_upstream_group' as const,
+    op: 'switch_upstream_group',
+    label: '切换上游分组',
+    hint: '改 new-api token 组或 sub2api 面板 key 分组以调进货倍率。需账号勾选开关并填面板凭证；默认关。'
+  },
 ]
 
 export async function getAIStatus(): Promise<AIPilotStatus> {
