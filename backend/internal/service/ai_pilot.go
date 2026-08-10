@@ -464,9 +464,15 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 	// Drop death-spiral demotions so soft-unbury is not blocked by havePri on the same account.
 	// Cost-justified spare demotions (very expensive under high 性价比) are retained.
 	finalDecision.Actions = filterDeathSpiralDemotions(finalDecision.Actions, accounts, longTraffic, recentTraffic, cfg)
+	// Recent spare demotions (429 etc.): soft-unbury dwell so we do not 100↔150 thrash.
+	accountIDs := make([]int64, 0, len(accounts))
+	for i := range accounts {
+		accountIDs = append(accountIDs, accounts[i].ID)
+	}
+	lastSpareDemotion, _ := p.Repo.LastSpareDemotions(ctx, accountIDs, time.Now().Add(-AISoftUnburyDwell))
 	// Safety net: enable forgotten recovery + un-bury deep exile + break sticky spare-tier death spiral.
 	// Soft-unbury skips expensive accounts when cost pressure is on (see injectRecoveryEnables).
-	if n := injectRecoveryEnables(&finalDecision, accounts, probeMemo, longTraffic, recentTraffic, cfg); n > 0 && p.Log != nil {
+	if n := injectRecoveryEnables(&finalDecision, accounts, probeMemo, longTraffic, recentTraffic, cfg, lastSpareDemotion, time.Now()); n > 0 && p.Log != nil {
 		p.Log.Info("ai pilot injected recovery enables", "count", n, "trigger", trigger)
 	}
 	// High 性价比: sink very expensive healthy main-tier accounts the model kept at p=100.
@@ -534,6 +540,21 @@ func (p *AIPilotService) applyDecisionActions(
 	sort.SliceStable(decision.Actions, func(i, j int) bool {
 		return decision.Actions[i].Confidence > decision.Actions[j].Confidence
 	})
+	// Dwell map for soft-unbury thrash guard (LLM + inject paths share this gate).
+	var lastSpareDemotion map[int64]time.Time
+	if p.Repo != nil {
+		ids := make([]int64, 0, len(decision.Actions))
+		seen := map[int64]bool{}
+		for _, act := range decision.Actions {
+			if act.Op == AIOpSetPriority && !seen[act.AccountID] {
+				seen[act.AccountID] = true
+				ids = append(ids, act.AccountID)
+			}
+		}
+		if len(ids) > 0 {
+			lastSpareDemotion, _ = p.Repo.LastSpareDemotions(ctx, ids, now.Add(-AISoftUnburyDwell))
+		}
+	}
 	applied := 0
 	suggestOnly := cfg.ApplyMode == "suggest_only"
 	for _, act := range decision.Actions {
@@ -584,6 +605,18 @@ func (p *AIPilotService) applyDecisionActions(
 		}
 		if act.Op == AIOpSetPriority {
 			if next, err := parseIntValue(act.Value); err == nil {
+				// Soft spare unbury dwell: even safety-bypass 150→100 must wait after demotion.
+				// (Deep exile >200→100 is not gated by softUnburyDwellGateReason.)
+				var demotedAt time.Time
+				if lastSpareDemotion != nil {
+					demotedAt = lastSpareDemotion[act.AccountID]
+				}
+				if reason := softUnburyDwellGateReason(acc.Priority, next, demotedAt, now); reason != "" {
+					a.State = AIActionRejected
+					a.RejectReason = reason
+					_, _ = p.Repo.CreateAction(ctx, a)
+					continue
+				}
 				// Monopoly front (p<50 e.g. default 1) → band: never treat as gated demotion.
 				safetyClamp := isPrioritySafetyBypass(acc.Priority, next)
 				if !safetyClamp {
@@ -926,13 +959,13 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 			},
 			"traffic": map[string]any{
 				"requests": st.Requests, "errors": st.Errors,
-				"successRate": successRate,
+				"successRate":   successRate,
 				"avgDurationMs": st.AvgDuration, "avgTtfbMs": st.AvgFirstToken,
 			},
 			"recentTraffic": map[string]any{
 				"windowMinutes": cfg.RecentWindowMinutes,
 				"requests":      rst.Requests, "errors": rst.Errors,
-				"successRate": recentRate,
+				"successRate":   recentRate,
 				"avgDurationMs": rst.AvgDuration, "avgTtfbMs": rst.AvgFirstToken,
 			},
 			"errors":     map[string]any{"samples": samples},
@@ -982,7 +1015,7 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 						"accountId": a.AccountID, "accountName": a.AccountName,
 						"op": a.Op, "before": a.Before, "after": a.After,
 						"state": a.State, "confidence": a.Confidence,
-						"reason": truncateStr(a.Reason, 160),
+						"reason":       truncateStr(a.Reason, 160),
 						"rejectReason": truncateStr(a.RejectReason, 100),
 					})
 				}
@@ -1044,21 +1077,21 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 				},
 				"weightOp": "同 priority 层 set_weight 大致按 overall 比例,不是纯成本均分;性价比权重高时更偏向便宜号",
 				"costBackend": map[string]any{
-					"costDim":       "scores[].cost 由后端按 money.rateConfidence.trustedComposite 池内比价写死,禁止模型编造 peer 倍率",
-					"unknownRate":   "无导入倍率(default_one) cost≈40 中偏低,不要当成 0.06 便宜号",
-					"pressureOn":    costPressureActive(cfg),
-					"pressureRule":  "cost 权重≥20% 时:贵号禁止抬回主层;极贵健康号可沉备援;禁止自动解埋贵号",
+					"costDim":        "scores[].cost 由后端按 money.rateConfidence.trustedComposite 池内比价写死,禁止模型编造 peer 倍率",
+					"unknownRate":    "无导入倍率(default_one) cost≈40 中偏低,不要当成 0.06 便宜号",
+					"pressureOn":     costPressureActive(cfg),
+					"pressureRule":   "cost 权重≥20% 时:贵号禁止抬回主层;极贵健康号可沉备援;禁止自动解埋贵号",
 					"expensiveRatio": AICostExpensiveRatio,
 					"veryExpensive":  AICostVeryExpensiveRatio,
 				},
 			},
 			"balanceGuide": map[string]any{
-				"field":       "money.balanceStatus + money.balanceUsd",
-				"gate":        "depleted 硬门禁:禁止 enable/release/unlock",
-				"scheduling":  "原版对齐:余额进快照给模型做分流,不是内核硬编码。同层:余额低→降 weight/后置;余额充裕且便宜→抬 weight;depleted→disable 或深沉",
-				"lowHintUSD":  5,
-				"cache":       "~5m 级缓存",
-				"sources":     "sk GET /v1/usage(sub2api); dashboard billing(one-api); mgmt /api/user/self",
+				"field":      "money.balanceStatus + money.balanceUsd",
+				"gate":       "depleted 硬门禁:禁止 enable/release/unlock",
+				"scheduling": "原版对齐:余额进快照给模型做分流,不是内核硬编码。同层:余额低→降 weight/后置;余额充裕且便宜→抬 weight;depleted→disable 或深沉",
+				"lowHintUSD": 5,
+				"cache":      "~5m 级缓存",
+				"sources":    "sk GET /v1/usage(sub2api); dashboard billing(one-api); mgmt /api/user/self",
 			},
 		},
 		"memory":   memory,
@@ -1378,6 +1411,8 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 - unlimited 视为余额不约束
 
 【禁止备援死循环 / 解埋再沉震荡】
+- 后端在「刚下沉到备援(≥150)」后有约 25 分钟备援驻留:期间自动解埋与 set_priority 拉回主层会被拒绝(防 429 pending thrash 100↔150)
+- 驻留期内请用 set_weight 调同层/备援分流,不要反复 set_priority 100↔150
 - priority≥150 在严格分层下几乎接不到请求 → 近窗必然空白 → **禁止**再据此 set_priority 更深
 - 近窗 0 请求且长窗成功率仍高 → 不是故障,是分层后果
 - **禁止**对 p≥150 的可用号只 set_weight 不抬 priority:同层 weight 再大也吃不到主层流量

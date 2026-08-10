@@ -238,6 +238,53 @@ func (r *AIPilotRepository) LastAppliedAt(ctx context.Context, accountID int64) 
 	return &t, nil
 }
 
+// LastSpareDemotions returns latest applied set_priority demotion into spare tier
+// (after_val > before_val and after_val ≥ 150) per account since `since`.
+func (r *AIPilotRepository) LastSpareDemotions(ctx context.Context, accountIDs []int64, since time.Time) (map[int64]time.Time, error) {
+	out := make(map[int64]time.Time)
+	if len(accountIDs) == 0 {
+		return out, nil
+	}
+	ph := make([]string, len(accountIDs))
+	args := make([]any, 0, len(accountIDs)+3)
+	args = append(args, service.AIActionApplied, service.AIOpSetPriority, since)
+	for i, id := range accountIDs {
+		ph[i] = fmt.Sprintf("$%d", i+4)
+		args = append(args, id)
+	}
+	// before_val/after_val are text; only pure integer rows count.
+	q := fmt.Sprintf(`
+		SELECT account_id, MAX(ts) AS last_ts
+		FROM ai_actions
+		WHERE state = $1
+		  AND op = $2
+		  AND ts >= $3
+		  AND account_id IN (%s)
+		  AND before_val ~ '^[0-9]+$'
+		  AND after_val ~ '^[0-9]+$'
+		  AND after_val::int > before_val::int
+		  AND after_val::int >= %d
+		GROUP BY account_id
+	`, strings.Join(ph, ","), service.AIPriorityBuriedThreshold)
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		if strings.Contains(err.Error(), "does not exist") {
+			return out, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var ts time.Time
+		if err := rows.Scan(&id, &ts); err != nil {
+			return nil, err
+		}
+		out[id] = ts
+	}
+	return out, rows.Err()
+}
+
 // AggregateAccountTraffic loads usage_logs aggregates for openai accounts in window.
 func (r *AIPilotRepository) AggregateAccountTraffic(ctx context.Context, from, to time.Time, accountIDs []int64) (map[int64]service.AccountTrafficStats, error) {
 	out := make(map[int64]service.AccountTrafficStats)

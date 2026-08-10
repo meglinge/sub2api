@@ -29,6 +29,11 @@ const (
 	// AIDemotionMinCooldown is a thrash floor when channel_cooldown_minutes > 0 but very low.
 	// Explicit channel_cooldown_minutes=0 means "no cooldown" and this floor is skipped.
 	AIDemotionMinCooldown = 15 * time.Minute
+	// AISoftUnburyDwell blocks soft spare unbury (150→100) for this long after an
+	// applied demotion into the spare tier. Without it, channel_cooldown=0 lets
+	// soft-unbury re-lift 429-demoted accounts next cycle (100↔150 thrash).
+	// ~5 pilot ticks at 5m cadence; deep-exile unbury (>200) is unaffected.
+	AISoftUnburyDwell = 25 * time.Minute
 	// AIBalanceCacheMaxAge: soft cache for wallet/余额 soft-refresh in pilot + moneyView.
 	// Operators want ~1m freshness so depleted/low-balance shows up quickly.
 	AIBalanceCacheMaxAge = 1 * time.Minute
@@ -79,11 +84,11 @@ func CompositeRateMultiplier(rate, recharge float64) float64 {
 
 // RateConfidence describes how much to trust composite for cost ranking.
 type RateConfidence struct {
-	Level             int     `json:"level"` // 1 high, 2 medium, 3 low
-	Label             string  `json:"label"`
-	Primary           string  `json:"primary"`
-	TrustedComposite  float64 `json:"trustedComposite"`
-	Note              string  `json:"note,omitempty"`
+	Level            int     `json:"level"` // 1 high, 2 medium, 3 low
+	Label            string  `json:"label"`
+	Primary          string  `json:"primary"`
+	TrustedComposite float64 `json:"trustedComposite"`
+	Note             string  `json:"note,omitempty"`
 }
 
 // BuildRateConfidence mirrors UpstreamRouter L1–L3 semantics.
@@ -236,19 +241,19 @@ func moneyView(acc *Account) map[string]any {
 	rc := BuildRateConfidence(rate, recharge, src)
 	balStatus, balUSD, balFresh := balanceViewFromAccount(acc)
 	return map[string]any{
-		"balanceStatus":            balStatus,
-		"balanceUsd":               balUSD,
-		"balanceFresh":             balFresh,
-		"rateMultiplier":           rate,
-		"rechargeMultiplier":       recharge,
-		"compositeRateMultiplier":  composite,
-		"rateSource":               src,
+		"balanceStatus":           balStatus,
+		"balanceUsd":              balUSD,
+		"balanceFresh":            balFresh,
+		"rateMultiplier":          rate,
+		"rechargeMultiplier":      recharge,
+		"compositeRateMultiplier": composite,
+		"rateSource":              src,
 		"rateConfidence": map[string]any{
-			"level":             rc.Level,
-			"label":             rc.Label,
-			"primary":           rc.Primary,
-			"trustedComposite":  rc.TrustedComposite,
-			"note":              rc.Note,
+			"level":            rc.Level,
+			"label":            rc.Label,
+			"primary":          rc.Primary,
+			"trustedComposite": rc.TrustedComposite,
+			"note":             rc.Note,
 		},
 	}
 }
@@ -327,6 +332,9 @@ func recentWindowHardFail(st AccountTrafficStats) bool {
 // accounts often have empty recent+long under strict layering and would thrash
 // 100↔150 every cycle. Cheap accounts with known low composite use
 // softUnburyCheapSpareRescue instead (Sy-class sticky-spare bug).
+//
+// Callers must also enforce softUnburyDwell (recent spare demotion) — eligibility
+// alone is insufficient when recent window goes empty right after demotion.
 func softUnburyEligible(long, recent AccountTrafficStats) bool {
 	if recentWindowHardFail(recent) {
 		return false
@@ -336,6 +344,44 @@ func softUnburyEligible(long, recent AccountTrafficStats) bool {
 		return false // no evidence → leave in spare tier (unless cheap-rescue path)
 	}
 	return longWindowHealthyEnough(long)
+}
+
+// softUnburyInDwell is true when a spare-tier demotion was applied recently enough
+// that soft unbury (or LLM 150→100) should wait.
+func softUnburyInDwell(lastSpareDemotion time.Time, now time.Time) bool {
+	if lastSpareDemotion.IsZero() {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return now.Sub(lastSpareDemotion) < AISoftUnburyDwell
+}
+
+// softUnburyDwellGateReason rejects spare→main priority lifts during demotion dwell.
+// Deep exile unbury (priority>200) is not gated here.
+func softUnburyDwellGateReason(current, next int, lastSpareDemotion time.Time, now time.Time) string {
+	if !ShouldSoftUnburySpareTier(current) {
+		return ""
+	}
+	// Soft unbury / re-promote into main observation band only.
+	if next >= current || next > AIObservationPriority {
+		return ""
+	}
+	if !softUnburyInDwell(lastSpareDemotion, now) {
+		return ""
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	remain := AISoftUnburyDwell - now.Sub(lastSpareDemotion)
+	if remain < 0 {
+		remain = 0
+	}
+	return fmt.Sprintf(
+		"备援驻留期内(%.0fm内刚下沉过),禁止立刻解埋回主层;剩余约%.0fm(防429/硬失败 thrash)",
+		AISoftUnburyDwell.Minutes(), remain.Minutes()+0.5,
+	)
 }
 
 // isCheapOrNearCheapest is true when account has a known trusted composite within

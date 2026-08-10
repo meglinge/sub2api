@@ -96,7 +96,7 @@ func TestInjectMonopolyFrontClamp(t *testing.T) {
 		{ID: 6154, Name: "peer", Priority: 100, Status: StatusActive, Schedulable: true, ScheduleWeight: 100},
 	}
 	d := decision{}
-	n := injectRecoveryEnables(&d, accounts, nil, nil, nil, cfg)
+	n := injectRecoveryEnables(&d, accounts, nil, nil, nil, cfg, nil, time.Time{})
 	if n < 1 {
 		t.Fatalf("expected monopoly inject, n=%d acts=%+v", n, d.Actions)
 	}

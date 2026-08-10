@@ -24,6 +24,10 @@ type AIPilotStore interface {
 	// If all=true, all suggested rows are dismissed (used when switching to auto mode).
 	DismissSuggestions(ctx context.Context, all bool, olderThan *time.Time, reason string) (int64, error)
 	LastAppliedAt(ctx context.Context, accountID int64) (*time.Time, error)
+	// LastSpareDemotions returns the latest applied demotion-into-spare (set_priority
+	// with after>before and after≥150) per account since `since`. Used to enforce
+	// AISoftUnburyDwell against 100↔150 thrash.
+	LastSpareDemotions(ctx context.Context, accountIDs []int64, since time.Time) (map[int64]time.Time, error)
 	AggregateAccountTraffic(ctx context.Context, from, to time.Time, accountIDs []int64) (map[int64]AccountTrafficStats, error)
 	RecentErrorSamples(ctx context.Context, from time.Time, accountID int64, limit int) ([]string, error)
 
@@ -148,11 +152,11 @@ type AIAutopilotSettings struct {
 // pointer collapses every switch to the last JSON field decoded on Unmarshal.
 func DefaultAIAutopilotSettings() AIAutopilotSettings {
 	return AIAutopilotSettings{
-		Enabled:                       false,
-		Source:                        "external",
-		Model:                         "claude-sonnet-4-6",
-		ApplyMode:                     "suggest_only",
-		IntervalMinutes:               15,
+		Enabled:         false,
+		Source:          "external",
+		Model:           "claude-sonnet-4-6",
+		ApplyMode:       "suggest_only",
+		IntervalMinutes: 15,
 		// UpstreamRouter default floor: TimeoutSeconds < 30 → 120.
 		// Stream completions on CCH can take 2–3 min for full decision JSON.
 		TimeoutSeconds:                300,
@@ -465,15 +469,15 @@ type AIHistoryRun struct {
 
 // AIHistoryAccount is the current account state for step-series end points.
 type AIHistoryAccount struct {
-	ID         int64   `json:"id"`
-	Name       string  `json:"name"`
-	GroupIDs   []int64 `json:"group_ids"`
-	Weight     int     `json:"weight"`
-	Priority   int     `json:"priority"`
-	Schedulable bool   `json:"schedulable"`
-	AIDisabled bool    `json:"ai_disabled"`
-	AIManaged  bool    `json:"ai_managed"`
-	Status     string  `json:"status"`
+	ID          int64   `json:"id"`
+	Name        string  `json:"name"`
+	GroupIDs    []int64 `json:"group_ids"`
+	Weight      int     `json:"weight"`
+	Priority    int     `json:"priority"`
+	Schedulable bool    `json:"schedulable"`
+	AIDisabled  bool    `json:"ai_disabled"`
+	AIManaged   bool    `json:"ai_managed"`
+	Status      string  `json:"status"`
 }
 
 // AIScoreRow is latest score + live account state for the scores table.

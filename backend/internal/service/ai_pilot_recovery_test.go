@@ -61,7 +61,7 @@ func TestInjectRecoveryEnables_FillsMissingEnable(t *testing.T) {
 			{AccountID: 12, Op: AIOpEnable, Reason: "model already", Confidence: 0.9},
 		},
 	}
-	n := injectRecoveryEnables(&d, accounts, probes, nil, nil, cfg)
+	n := injectRecoveryEnables(&d, accounts, probes, nil, nil, cfg, nil, time.Time{})
 	if n < 1 {
 		t.Fatalf("expected >=1 inject, got %d actions=%+v", n, d.Actions)
 	}
@@ -88,7 +88,7 @@ func TestInjectRecoveryEnables_FillsMissingEnable(t *testing.T) {
 	off := false
 	cfg.OpEnable = &off
 	d2 := decision{}
-	if n := injectRecoveryEnables(&d2, accounts, probes, nil, nil, cfg); n != 0 {
+	if n := injectRecoveryEnables(&d2, accounts, probes, nil, nil, cfg, nil, time.Time{}); n != 0 {
 		t.Fatalf("op_enable off should inject 0, got %d", n)
 	}
 }
@@ -101,7 +101,7 @@ func TestInjectRecoveryEnables_ControlPlaneLowerConfidence(t *testing.T) {
 		7: {AccountID: 7, Verdict: "pass", Fresh: true, Source: "control_plane"},
 	}
 	d := decision{}
-	n := injectRecoveryEnables(&d, accounts, probes, nil, nil, cfg)
+	n := injectRecoveryEnables(&d, accounts, probes, nil, nil, cfg, nil, time.Time{})
 	if n != 1 {
 		t.Fatalf("n=%d", n)
 	}
@@ -369,5 +369,64 @@ func TestSoftUnburyEligible(t *testing.T) {
 	}
 	if softUnburyEligible(longTiny, AccountTrafficStats{}) {
 		t.Fatal("tiny long sample must not soft-unbury")
+	}
+}
+
+func TestSoftUnburyDwell_BlocksThrash(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	// Just demoted 5m ago → dwell active
+	if reason := softUnburyDwellGateReason(150, 100, now.Add(-5*time.Minute), now); reason == "" {
+		t.Fatal("expected dwell reject for recent spare demotion")
+	}
+	// Outside dwell → allow
+	if reason := softUnburyDwellGateReason(150, 100, now.Add(-AISoftUnburyDwell-time.Minute), now); reason != "" {
+		t.Fatalf("dwell expired should allow, got %q", reason)
+	}
+	// Deep exile unbury not gated
+	if reason := softUnburyDwellGateReason(9000, 100, now.Add(-time.Minute), now); reason != "" {
+		t.Fatalf("deep exile must not use soft dwell, got %q", reason)
+	}
+	// Demotion (not unbury) not gated
+	if reason := softUnburyDwellGateReason(100, 150, now.Add(-time.Minute), now); reason != "" {
+		t.Fatalf("demotion must not hit unbury dwell, got %q", reason)
+	}
+	// No demotion history
+	if reason := softUnburyDwellGateReason(150, 100, time.Time{}, now); reason != "" {
+		t.Fatalf("zero demotion time should allow, got %q", reason)
+	}
+}
+
+func TestInjectRecovery_SoftUnburyDwellBlocks(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultAIAutopilotSettings()
+	// Healthy long window at p150 — classic soft-unbury would fire without dwell.
+	accounts := []Account{
+		{ID: 6395, Name: "Niko", AIDisabled: false, Priority: 150, ScheduleWeight: 100,
+			Status: StatusActive, Schedulable: true},
+	}
+	long := map[int64]AccountTrafficStats{
+		6395: {Requests: 200, Successes: 190, Errors: 10},
+	}
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	// Without dwell map: inject unbury
+	d1 := decision{}
+	n1 := injectRecoveryEnables(&d1, accounts, nil, long, nil, cfg, nil, now)
+	if n1 != 1 {
+		t.Fatalf("expected soft unbury without dwell, n=%d acts=%+v", n1, d1.Actions)
+	}
+	// With recent demotion: blocked
+	d2 := decision{}
+	dem := map[int64]time.Time{6395: now.Add(-3 * time.Minute)}
+	n2 := injectRecoveryEnables(&d2, accounts, nil, long, nil, cfg, dem, now)
+	if n2 != 0 {
+		t.Fatalf("dwell must block soft unbury, n=%d acts=%+v", n2, d2.Actions)
+	}
+	// After dwell: unbury again
+	d3 := decision{}
+	demOld := map[int64]time.Time{6395: now.Add(-AISoftUnburyDwell - time.Minute)}
+	n3 := injectRecoveryEnables(&d3, accounts, nil, long, nil, cfg, demOld, now)
+	if n3 != 1 {
+		t.Fatalf("expired dwell should allow soft unbury, n=%d acts=%+v", n3, d3.Actions)
 	}
 }

@@ -129,6 +129,9 @@ func (s *aiPilotStoreMem) DismissSuggestions(context.Context, bool, *time.Time, 
 func (s *aiPilotStoreMem) LastAppliedAt(context.Context, int64) (*time.Time, error) {
 	return nil, nil
 }
+func (s *aiPilotStoreMem) LastSpareDemotions(context.Context, []int64, time.Time) (map[int64]time.Time, error) {
+	return nil, nil
+}
 func (s *aiPilotStoreMem) AggregateAccountTraffic(context.Context, time.Time, time.Time, []int64) (map[int64]AccountTrafficStats, error) {
 	return nil, nil
 }
@@ -193,7 +196,7 @@ func TestApplyDecisionActions_UnburyPriorityActuallyApplies(t *testing.T) {
 	cfg.ActivationProbeEnabled = &off
 
 	d := decision{}
-	n := injectRecoveryEnables(&d, []Account{*acc}, nil, nil, nil, cfg)
+	n := injectRecoveryEnables(&d, []Account{*acc}, nil, nil, nil, cfg, nil, time.Time{})
 	if n < 1 {
 		t.Fatalf("inject should emit set_priority, n=%d d=%+v", n, d.Actions)
 	}

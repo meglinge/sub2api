@@ -589,10 +589,14 @@ func activationGateReason(op, value string, beforeWeight int, probes map[int64]a
 // death spiral (demote → no recent traffic → demote again).
 //
 // Soft spare unbury requires: long-window sample evidence AND no recent hard fail
-// (prevents 刚沉到 150 下一轮就被自动拉回 100 的 thrash).
-func injectRecoveryEnables(decision *decision, accounts []Account, probes map[int64]activationResult, longTraffic, recentTraffic map[int64]AccountTrafficStats, cfg AIAutopilotSettings) int {
+// AND no recent spare demotion within AISoftUnburyDwell (prevents 刚因429沉到150
+// 下一轮 soft-unbury 又拉回 100 的 thrash). lastSpareDemotion may be nil (tests).
+func injectRecoveryEnables(decision *decision, accounts []Account, probes map[int64]activationResult, longTraffic, recentTraffic map[int64]AccountTrafficStats, cfg AIAutopilotSettings, lastSpareDemotion map[int64]time.Time, now time.Time) int {
 	if decision == nil {
 		return 0
+	}
+	if now.IsZero() {
+		now = time.Now()
 	}
 	haveEnable := map[int64]bool{}
 	havePri := map[int64]bool{}
@@ -650,6 +654,12 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 			// Under high 性价比 weight, do NOT soft-unbury expensive accounts — that is how
 			// Wawapi(Pro) kept re-entering main tier and burning money despite demotions.
 			if !havePri[acc.ID] && ShouldSoftUnburySpareTier(acc.Priority) && cfg.OpAllowed(AIOpSetPriority) {
+				// Just demoted into spare (e.g. 429): stay put for AISoftUnburyDwell.
+				if lastSpareDemotion != nil {
+					if reason := softUnburyDwellGateReason(acc.Priority, AIObservationPriority, lastSpareDemotion[acc.ID], now); reason != "" {
+						continue
+					}
+				}
 				st := AccountTrafficStats{}
 				if longTraffic != nil {
 					st = longTraffic[acc.ID]

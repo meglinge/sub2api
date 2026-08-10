@@ -334,7 +334,7 @@ func TestSoftUnburyCheapSpareRescue_EmptyLongWindow(t *testing.T) {
 		AccountID: 6399, Op: AIOpSetWeight, Value: "2960",
 		Reason: "同层+20(勿抬p100主层已3满池)", Confidence: 0.7,
 	}}
-	n := injectRecoveryEnables(&d, accounts, nil, empty, empty, cfg)
+	n := injectRecoveryEnables(&d, accounts, nil, empty, empty, cfg, nil, time.Time{})
 	if n < 1 {
 		t.Fatalf("expected cheap spare unbury inject, n=%d acts=%+v", n, d.Actions)
 	}
@@ -375,7 +375,7 @@ func TestInjectRecovery_UnburiesPriority(t *testing.T) {
 		3: {Requests: 100, Successes: 95, Errors: 5},
 	}
 	d := decision{}
-	n := injectRecoveryEnables(&d, accounts, probes, long, nil, cfg)
+	n := injectRecoveryEnables(&d, accounts, probes, long, nil, cfg, nil, time.Time{})
 	if n < 3 {
 		t.Fatalf("expected enable+priority, deep unbury, soft spare unbury, n=%d acts=%+v", n, d.Actions)
 	}
