@@ -32,8 +32,9 @@ const (
 	// AISoftUnburyDwell blocks soft spare unbury (150→100) for this long after an
 	// applied demotion into the spare tier. Without it, channel_cooldown=0 lets
 	// soft-unbury re-lift 429-demoted accounts next cycle (100↔150 thrash).
-	// ~5 pilot ticks at 5m cadence; deep-exile unbury (>200) is unaffected.
-	AISoftUnburyDwell = 25 * time.Minute
+	// 5m ≈ a few 1m pilot ticks — enough to confirm hard-fail, not half-hour parking.
+	// Deep-exile unbury (>200) is unaffected.
+	AISoftUnburyDwell = 5 * time.Minute
 	// AIBalanceCacheMaxAge: soft cache for wallet/余额 soft-refresh in pilot + moneyView.
 	// Operators want ~1m freshness so depleted/low-balance shows up quickly.
 	AIBalanceCacheMaxAge = 1 * time.Minute
@@ -381,7 +382,7 @@ func softUnburyDwellGateReason(current, next int, lastSpareDemotion time.Time, n
 		remain = 0
 	}
 	return fmt.Sprintf(
-		"备援驻留期内(%.0fm内刚下沉过),禁止立刻解埋回主层;剩余约%.0fm(防429/硬失败 thrash)",
+		"刚下沉到备援,%.0fm 内不立刻拉回主层(防刚因429/硬失败又拉回);剩余约%.0fm",
 		AISoftUnburyDwell.Minutes(), remain.Minutes()+0.5,
 	)
 }
@@ -616,8 +617,9 @@ func weightCrushGateReasonEx(acc *Account, next int, long, recent AccountTraffic
 	if next >= cur {
 		return ""
 	}
-	// Under cost pressure, allow expensive accounts down to healthy floor (not below).
-	if costJustified && next >= AIWeightHealthyFloor {
+	// Under cost pressure, allow expensive accounts to weight 0 (soft quarantine).
+	// Non-cost path still cannot crush healthy accounts below AIWeightHealthyFloor.
+	if costJustified {
 		return ""
 	}
 	if next < AIWeightHealthyFloor && longWindowHealthyEnough(long) && !recentWindowHardFail(recent) {
@@ -930,22 +932,24 @@ func costEnableGateReason(op string, acc *Account, accounts []Account, cfg AIAut
 	)
 }
 
-// injectCostIsolations disables very expensive accounts while healthy cheap peers exist.
-// injectCostIsolationReleases re-enables them when cheap capacity disappears (boom).
+// costSoftQuarantineWeight is the schedule_weight used for cost soft-isolation.
+// 0 drops the account from weighted draw (sticky may still rarely hit). We no longer
+// ai_disabled-nuke expensive accounts — mass disable was too harsh for operators.
+const costSoftQuarantineWeight = 0
+
+// injectCostIsolations soft-quarantines very expensive accounts: p200 + weight=0.
+// Does NOT ai_disabled — disable is reserved for hard-fail / depleted / explicit model.
+// Sticky may still rarely hit; boom recovery no longer depends on enable thrash.
 func injectCostIsolations(decision *decision, accounts []Account, cfg AIAutopilotSettings, recent map[int64]AccountTrafficStats) int {
-	if decision == nil || !costPressureActive(cfg) || !cfg.OpAllowed(AIOpDisable) {
+	if decision == nil || !costPressureActive(cfg) {
 		return 0
 	}
-	haveDisable := map[int64]bool{}
-	for _, a := range decision.Actions {
-		if a.Op == AIOpDisable {
-			haveDisable[a.AccountID] = true
-		}
-	}
-	// Drop model enables that would undo isolation while cheap peers are still healthy.
+	havePri := map[int64]bool{}
+	haveWeight := map[int64]bool{}
+	// Drop model disable that only cites cost isolation style — keep hard-fail disables.
 	filtered := decision.Actions[:0]
 	for _, a := range decision.Actions {
-		if a.Op == AIOpEnable || a.Op == AIOpRelease || a.Op == AIOpUnlock {
+		if a.Op == AIOpDisable {
 			var acc *Account
 			for i := range accounts {
 				if accounts[i].ID == a.AccountID {
@@ -953,13 +957,21 @@ func injectCostIsolations(decision *decision, accounts []Account, cfg AIAutopilo
 					break
 				}
 			}
-			if acc != nil && costEnableGateReason(a.Op, acc, accounts, cfg, recent) != "" {
-				continue
+			// Strip pure cost-isolation disables from the model; hard-fail still allowed via gate later.
+			if acc != nil && costJustifiedIsolation(acc, accounts, cfg, recent) {
+				r := strings.ToLower(a.Reason)
+				if strings.Contains(r, "性价比") || strings.Contains(r, "composite") || strings.Contains(r, "过贵") || strings.Contains(r, "极贵") {
+					// rewrite to soft quarantine instead of disable
+					continue
+				}
 			}
 		}
 		filtered = append(filtered, a)
-		if a.Op == AIOpDisable {
-			haveDisable[a.AccountID] = true
+		if a.Op == AIOpSetPriority {
+			havePri[a.AccountID] = true
+		}
+		if a.Op == AIOpSetWeight {
+			haveWeight[a.AccountID] = true
 		}
 	}
 	decision.Actions = filtered
@@ -970,43 +982,64 @@ func injectCostIsolations(decision *decision, accounts []Account, cfg AIAutopilo
 		if acc.AIDisabled || acc.Status != StatusActive || !acc.Schedulable {
 			continue
 		}
-		if haveDisable[acc.ID] {
-			continue
-		}
 		if !costJustifiedIsolation(acc, accounts, cfg, recent) {
-			continue
-		}
-		if reason := simulateMinAvailable(acc, accounts, cfg.MinAvailablePerGroup); reason != "" {
 			continue
 		}
 		sig := accountCostSignalOf(acc)
 		minC, _ := cheapestKnownComposite(accounts, acc.ID)
-		decision.Actions = append(decision.Actions, decisionAction{
-			AccountID: acc.ID,
-			Op:        AIOpDisable,
-			Value:     "true",
-			Reason: fmt.Sprintf(
-				"性价比隔离: composite=%.3f > 最便宜peer×%.2f(最便宜=%.3f);软调度下 p150 仍吃量,先 ai_disabled;若便宜号硬失败/不可调度会自动解隔离",
-				sig.Composite, AICostVeryExpensiveRatio, minC,
-			),
-			Confidence: 0.93,
-		})
-		haveDisable[acc.ID] = true
-		injected++
+		needPri := !havePri[acc.ID] && acc.Priority < AIMaxPriority && cfg.OpAllowed(AIOpSetPriority)
+		needW := !haveWeight[acc.ID] && acc.EffectiveScheduleWeight() > costSoftQuarantineWeight && cfg.OpAllowed(AIOpSetWeight)
+		if !needPri && !needW {
+			continue
+		}
+		baseReason := fmt.Sprintf(
+			"性价比软隔离: composite=%.3f > 最便宜peer×%.2f(最便宜=%.3f);不 disable,沉 p%d+weight=%d 降抽选(硬失败才 disable)",
+			sig.Composite, AICostVeryExpensiveRatio, minC, AIMaxPriority, costSoftQuarantineWeight,
+		)
+		if needPri {
+			decision.Actions = append(decision.Actions, decisionAction{
+				AccountID:  acc.ID,
+				Op:         AIOpSetPriority,
+				Value:      strconv.Itoa(AIMaxPriority),
+				Reason:     baseReason,
+				Confidence: 0.92,
+			})
+			havePri[acc.ID] = true
+			injected++
+		}
+		if needW {
+			decision.Actions = append(decision.Actions, decisionAction{
+				AccountID:  acc.ID,
+				Op:         AIOpSetWeight,
+				Value:      strconv.Itoa(costSoftQuarantineWeight),
+				Reason:     baseReason,
+				Confidence: 0.92,
+			})
+			haveWeight[acc.ID] = true
+			injected++
+		}
 	}
 	return injected
 }
 
-// injectCostIsolationReleases re-enables cost-isolated expensive accounts when every
-// group lacks a healthy affordable peer (cheap all boom / temp-unsched / hard-fail).
+// injectCostIsolationReleases re-enables accounts that were previously ai_disabled
+// for cost (or sit disabled while only "expensive", without recent hard-fail).
+// Hard-fail / depleted stays disabled.
 func injectCostIsolationReleases(decision *decision, accounts []Account, cfg AIAutopilotSettings, recent map[int64]AccountTrafficStats) int {
-	if decision == nil || !costPressureActive(cfg) || !cfg.OpAllowed(AIOpEnable) {
+	if decision == nil || !cfg.OpAllowed(AIOpEnable) {
 		return 0
 	}
 	haveEnable := map[int64]bool{}
+	havePri := map[int64]bool{}
+	haveWeight := map[int64]bool{}
 	for _, a := range decision.Actions {
-		if a.Op == AIOpEnable {
+		switch a.Op {
+		case AIOpEnable:
 			haveEnable[a.AccountID] = true
+		case AIOpSetPriority:
+			havePri[a.AccountID] = true
+		case AIOpSetWeight:
+			haveWeight[a.AccountID] = true
 		}
 	}
 	injected := 0
@@ -1018,16 +1051,32 @@ func injectCostIsolationReleases(decision *decision, accounts []Account, cfg AIA
 		if haveEnable[acc.ID] {
 			continue
 		}
-		// Only release accounts that are still "very expensive" (cost isolation victims).
-		if !isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio) {
-			continue
-		}
-		// Cheap capacity still healthy → stay isolated.
-		if hasAffordablePeerCoveringGroups(acc, accounts, recent, true) {
-			continue
-		}
 		if reason := balanceGateReason(AIOpEnable, acc); reason != "" {
 			continue
+		}
+		var rst AccountTrafficStats
+		if recent != nil {
+			rst = recent[acc.ID]
+		}
+		// Keep true hard-fail disables.
+		if recentWindowHardFail(rst) {
+			continue
+		}
+		// Only lift if this looks like cost quarantine victim OR expensive soft-isolatable,
+		// OR disabled with no recent traffic evidence of failure (mass over-disable cleanup).
+		veryExp := isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio)
+		softExp := isExpensiveVsPeers(acc, accounts, AICostExpensiveRatio)
+		noRecent := rst.Requests+rst.Errors == 0
+		if !veryExp && !softExp && !noRecent {
+			// Disabled for other reasons with some recent samples but not hard-fail:
+			// still lift if SR not terrible and samples exist — avoid leaving half the pool dead.
+			n := rst.Requests + rst.Errors
+			if n >= 5 {
+				sr := float64(rst.Successes) / float64(n)
+				if sr < 0.7 {
+					continue
+				}
+			}
 		}
 		sig := accountCostSignalOf(acc)
 		decision.Actions = append(decision.Actions, decisionAction{
@@ -1035,13 +1084,36 @@ func injectCostIsolationReleases(decision *decision, accounts []Account, cfg AIA
 			Op:        AIOpEnable,
 			Value:     "",
 			Reason: fmt.Sprintf(
-				"性价比解隔离: composite=%.3f 的贵号曾被隔离,但分组内健康便宜号已不可用(boom/硬失败/临时不可调度);重新 enable 兜底,避免无号可接",
-				sig.Composite,
+				"解除过度 disable: 近窗无硬失败(composite=%.3f);disable 仅留给硬失败/余额耗尽,贵号改用 p%d+低权软隔离",
+				sig.Composite, AIMaxPriority,
 			),
-			Confidence: 0.94,
+			Confidence: 0.91,
 		})
 		haveEnable[acc.ID] = true
 		injected++
+		// Park at deep spare + low weight after re-enable so sticky doesn't dump traffic immediately.
+		if !havePri[acc.ID] && cfg.OpAllowed(AIOpSetPriority) {
+			decision.Actions = append(decision.Actions, decisionAction{
+				AccountID:  acc.ID,
+				Op:         AIOpSetPriority,
+				Value:      strconv.Itoa(AIMaxPriority),
+				Reason:     "解除 disable 后先放 p200 观察,避免立刻回主层",
+				Confidence: 0.9,
+			})
+			havePri[acc.ID] = true
+			injected++
+		}
+		if !haveWeight[acc.ID] && cfg.OpAllowed(AIOpSetWeight) && acc.EffectiveScheduleWeight() > 10 {
+			decision.Actions = append(decision.Actions, decisionAction{
+				AccountID:  acc.ID,
+				Op:         AIOpSetWeight,
+				Value:      "10",
+				Reason:     "解除 disable 后 weight 先回到中性 10,再按分流上调",
+				Confidence: 0.88,
+			})
+			haveWeight[acc.ID] = true
+			injected++
+		}
 	}
 	return injected
 }

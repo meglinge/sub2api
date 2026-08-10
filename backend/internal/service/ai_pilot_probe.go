@@ -720,11 +720,7 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 		if reason := balanceGateReason(AIOpEnable, acc); reason != "" {
 			continue
 		}
-		// Very expensive + healthy cheaper peers: do not re-enable (probe pass ≠ should burn money).
-		// When cheap peers boom, costEnableGateReason returns "" and enable proceeds.
-		if reason := costEnableGateReason(AIOpEnable, acc, accounts, cfg, recentTraffic); reason != "" {
-			continue
-		}
+		// Cost no longer blocks enable — expensive accounts use soft quarantine instead of disable.
 		conf := 0.82
 		if pr.Verdict == "slow" {
 			conf = 0.72

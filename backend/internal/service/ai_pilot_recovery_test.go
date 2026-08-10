@@ -375,8 +375,8 @@ func TestSoftUnburyEligible(t *testing.T) {
 func TestSoftUnburyDwell_BlocksThrash(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	// Just demoted 5m ago → dwell active
-	if reason := softUnburyDwellGateReason(150, 100, now.Add(-5*time.Minute), now); reason == "" {
+	// Just demoted 1m ago → dwell active (dwell window is AISoftUnburyDwell, currently 5m)
+	if reason := softUnburyDwellGateReason(150, 100, now.Add(-1*time.Minute), now); reason == "" {
 		t.Fatal("expected dwell reject for recent spare demotion")
 	}
 	// Outside dwell → allow

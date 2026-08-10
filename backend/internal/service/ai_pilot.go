@@ -613,12 +613,8 @@ func (p *AIPilotService) applyDecisionActions(
 			_, _ = p.Repo.CreateAction(ctx, a)
 			continue
 		}
-		if reason := costEnableGateReason(act.Op, acc, accounts, cfg, recentTraffic); reason != "" {
-			a.State = AIActionRejected
-			a.RejectReason = reason
-			_, _ = p.Repo.CreateAction(ctx, a)
-			continue
-		}
+		// Note: costEnableGate no longer blocks enable of expensive accounts.
+		// Cost uses soft quarantine (p200+low weight); disable is for hard-fail only.
 		var longSt, recentSt AccountTrafficStats
 		if longTraffic != nil {
 			longSt = longTraffic[act.AccountID]
@@ -765,13 +761,26 @@ func (p *AIPilotService) applyDecisionActions(
 		}
 		if act.Op == AIOpSetWeight || act.Op == AIOpSetPriority {
 			if reason := amplitudeOK(acc, act, cfg); reason != "" {
-				// Last-resort un-burial: if model/inject asked for observation tier
-				// but amplitude still rejects (stale cfg), force via ApplyAIOp enable path
-				// is not enough for already-enabled accounts — reject only if not un-burial.
-				a.State = AIActionRejected
-				a.RejectReason = reason
-				_, _ = p.Repo.CreateAction(ctx, a)
-				continue
+				// Cost soft-quarantine may jump weight → 0/10 and priority → 200 in one step.
+				bypassAmp := false
+				if act.Op == AIOpSetWeight {
+					if next, err := parseIntValue(act.Value); err == nil && next <= 10 &&
+						costJustifiedIsolation(acc, accounts, cfg, recentTraffic) {
+						bypassAmp = true
+					}
+				}
+				if act.Op == AIOpSetPriority {
+					if next, err := parseIntValue(act.Value); err == nil && next >= AIMaxPriority &&
+						costJustifiedIsolation(acc, accounts, cfg, recentTraffic) {
+						bypassAmp = true
+					}
+				}
+				if !bypassAmp {
+					a.State = AIActionRejected
+					a.RejectReason = reason
+					_, _ = p.Repo.CreateAction(ctx, a)
+					continue
+				}
 			}
 		}
 		if suggestOnly {
@@ -1128,7 +1137,7 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 					"costDim":        "scores[].cost 由后端按 money.rateConfidence.trustedComposite 池内比价写死,禁止模型编造 peer 倍率",
 					"unknownRate":    "无导入倍率(default_one) cost≈40 中偏低,不要当成 0.06 便宜号",
 					"pressureOn":     costPressureActive(cfg),
-					"pressureRule":   "cost 权重≥20% 时:贵号禁止抬回主层;极贵号沉备援仍不够(软调度会继续喂量)→后端 ai_disabled 隔离;禁止 probe-pass 再 enable 极贵号",
+					"pressureRule":   "cost 权重≥20% 时:贵号禁止抬回主层;极贵号→p200+weight=0 软隔离(不 disable);disable 仅硬失败/余额耗尽",
 					"expensiveRatio": AICostExpensiveRatio,
 					"veryExpensive":  AICostVeryExpensiveRatio,
 				},
@@ -1460,7 +1469,7 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 - unlimited 视为余额不约束
 
 【禁止备援死循环 / 解埋再沉震荡】
-- 后端在「刚下沉到备援(≥150)」后有约 25 分钟备援驻留:期间自动解埋与 set_priority 拉回主层会被拒绝(防 429 pending thrash 100↔150)
+- 后端在「刚下沉到备援(≥150)」后约 5 分钟内禁止立刻拉回主层(防 429/硬失败 thrash);过了即可解埋
 - 驻留期内请用 set_weight 调分流,不要反复 set_priority 100↔150
 - p≥150 **仍可能有请求**(软调度溢出/粘性);近窗有量≠应抬回主层;近窗空白也≠一定故障
 - 极贵号不要停在 p150 幻想「接不到量」——后端会 disable 隔离
@@ -1475,18 +1484,17 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 - **禁止**用「主层已有 2–4 个/满池」拒绝把**已知便宜且健康**的号从 ≥150 抬回 100
   (2–4 是多样性目标,不是容量上限;便宜稳号卡在 150=性价比设置失效)
 - 慢(TTFB 高)但成功率高 → 降 weight,不要无脑 priority 沉到 150+
-- 近窗/长窗**硬失败** → 沉备援或 disable; **过贵**(composite 明显高于最便宜 peer) → disable 隔离,不要只微调 weight
-- 后端会:拒绝无硬故障的胡乱下沉;长窗健康或已知便宜号可解埋;极贵号隔离;下沉有冷静期
+- 近窗/长窗**硬失败** → 沉备援或 disable; **过贵** → p200+低 weight 软隔离,**不要**动不动 disable
+- 后端会:拒绝无硬故障的胡乱下沉;长窗健康或已知便宜号可解埋;过度 disable 会自动解开;下沉有短冷静期
 - 健康池保持 2–4 个号同在 priority≈100,用 weight 分流,不要每轮 100↔150 thrash
 
 原则:
 1) **同层多号**:每组至少保留 2–4 个可用账号在相近 priority(建议都在 50–150 一带),用 set_weight 按 overall 分流
-2) 坏号才深沉;过贵号 disable(有更便宜 peer 时),不要留在池里「低权备援」继续烧钱
-3) disable 必须考虑 minAvailablePerGroup;性价比隔离由后端在有替代号时自动执行
-4) **恢复与停用同等重要**:每一轮都要扫 aiDisabled=true 的账号。
-   - activation.verdict=pass|slow 且**非极贵隔离对象** → 应 enable
-   - 极贵且有更便宜可用号 → 保持停用(后端会拒 enable)
-   - activation.verdict=fail|unknown → 保持停用
+2) **disable 仅硬失败/余额耗尽**;过贵号用 p200+weight 压低,禁止半池 ai_disabled
+3) disable 必须考虑 minAvailablePerGroup
+4) **恢复与停用同等重要**:每一轮扫 aiDisabled=true。
+   - 近窗无硬失败 → 应 enable(后端会自动解过度 disable)
+   - 近窗硬失败 / activation fail → 可保持停用
 5) 性价比/cost 必须看 money.rateConfidence.trustedComposite 与 groups[].peers 比价
    - compositeRate = rateMultiplier/rechargeMultiplier
    - **池内最便宜/次便宜且 probe pass** 若仍在 p≥150 → 应 set_priority 100,不要只 +weight

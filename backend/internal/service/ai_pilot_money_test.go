@@ -625,36 +625,44 @@ func TestCostIsolationDisableAndBlockEnable(t *testing.T) {
 	if !costJustifiedIsolation(&pro, pool, cfg, recentOK) {
 		t.Fatal("pro should justify isolation")
 	}
-	// Healthy long window must NOT block cost isolation disable.
-	long := AccountTrafficStats{Requests: 100, Successes: 98, Errors: 2}
-	recent := AccountTrafficStats{Requests: 20, Successes: 19, Errors: 1}
-	if reason := disableHealthyGateReasonEx2(&pro, long, recent, nil, true); reason != "" {
-		t.Fatalf("cost isolation must allow disable: %s", reason)
-	}
-	if reason := disableHealthyGateReasonEx2(&pro, long, recent, nil, false); reason == "" {
-		t.Fatal("without cost flag, healthy disable still blocked")
-	}
-	// Enable blocked while cheaper peer covers group.
-	if reason := costEnableGateReason(AIOpEnable, &pro, pool, cfg, recentOK); reason == "" {
-		t.Fatal("expected enable block for expensive pro")
-	}
-	// inject disables pro
+	// Soft quarantine: p200 + weight 0, NOT disable.
 	d := decision{}
 	n := injectCostIsolations(&d, pool, cfg, recentOK)
-	if n != 1 || len(d.Actions) != 1 || d.Actions[0].Op != AIOpDisable || d.Actions[0].AccountID != pro.ID {
-		t.Fatalf("inject isolation: n=%d acts=%+v", n, d.Actions)
+	if n < 1 {
+		t.Fatalf("expected soft quarantine inject, n=%d acts=%+v", n, d.Actions)
 	}
-	// Model enable in same decision is stripped.
+	var sawPri, sawW, sawDis bool
+	for _, a := range d.Actions {
+		if a.AccountID != pro.ID {
+			continue
+		}
+		switch a.Op {
+		case AIOpDisable:
+			sawDis = true
+		case AIOpSetPriority:
+			if a.Value == strconv.Itoa(AIMaxPriority) {
+				sawPri = true
+			}
+		case AIOpSetWeight:
+			if a.Value == "0" {
+				sawW = true
+			}
+		}
+	}
+	if sawDis {
+		t.Fatalf("cost isolation must not disable, acts=%+v", d.Actions)
+	}
+	if !sawPri || !sawW {
+		t.Fatalf("expected p200+weight0 soft quarantine, acts=%+v", d.Actions)
+	}
+	// Strip model cost-disable rewrite path: disable with 性价比 reason dropped, soft inject added.
 	d2 := decision{Actions: []decisionAction{
-		{AccountID: pro.ID, Op: AIOpEnable, Reason: "probe pass"},
+		{AccountID: pro.ID, Op: AIOpDisable, Reason: "性价比过贵 composite=0.11", Confidence: 0.9},
 	}}
-	n2 := injectCostIsolations(&d2, pool, cfg, recentOK)
-	if n2 != 1 {
-		t.Fatalf("expected disable inject after strip, n=%d", n2)
-	}
+	_ = injectCostIsolations(&d2, pool, cfg, recentOK)
 	for _, a := range d2.Actions {
-		if a.Op == AIOpEnable {
-			t.Fatalf("enable should be stripped, acts=%+v", d2.Actions)
+		if a.Op == AIOpDisable {
+			t.Fatalf("model cost-disable should be stripped, acts=%+v", d2.Actions)
 		}
 	}
 	// Sole expensive account (no affordable peer) must not isolate.
@@ -663,19 +671,22 @@ func TestCostIsolationDisableAndBlockEnable(t *testing.T) {
 		t.Fatal("sole expensive account must not self-isolate")
 	}
 
-	// Boom recovery: cheap peer hard-fails → release isolation.
-	// pool holds copies — mutate pool entry, not the stack pro.
+	// Over-disable cleanup: re-enable expensive without recent hard-fail.
 	pool[1].AIDisabled = true
-	cheapBoom := map[int64]AccountTrafficStats{
-		1: {Requests: 20, Successes: 2, Errors: 20}, // hard fail
-		2: {},
-	}
-	if costEnableGateReason(AIOpEnable, &pool[1], pool, cfg, cheapBoom) != "" {
-		t.Fatal("enable must be allowed when cheap peer hard-fails")
-	}
+	pool[1].ScheduleWeight = 10
 	d3 := decision{}
-	if n := injectCostIsolationReleases(&d3, pool, cfg, cheapBoom); n != 1 || d3.Actions[0].Op != AIOpEnable {
-		t.Fatalf("expected isolation release enable, n=%d acts=%+v", n, d3.Actions)
+	n3 := injectCostIsolationReleases(&d3, pool, cfg, recentOK)
+	if n3 < 1 || d3.Actions[0].Op != AIOpEnable {
+		t.Fatalf("expected re-enable over-disable, n=%d acts=%+v", n3, d3.Actions)
+	}
+	// Hard-fail stays disabled.
+	pool[1].AIDisabled = true
+	hard := map[int64]AccountTrafficStats{
+		2: {Requests: 20, Successes: 2, Errors: 20},
+	}
+	d4 := decision{}
+	if n := injectCostIsolationReleases(&d4, pool, cfg, hard); n != 0 {
+		t.Fatalf("hard-fail must stay disabled, n=%d acts=%+v", n, d4.Actions)
 	}
 
 	// 麻豆-class 0.06 vs 0.04 should soft-unbury from p200.
