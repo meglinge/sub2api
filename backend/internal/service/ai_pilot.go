@@ -480,8 +480,12 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 		p.Log.Info("ai pilot injected cost spare demotions", "count", n, "trigger", trigger)
 	}
 	// Soft OpenAI scoring still feeds p150/sticky — isolate very expensive via ai_disabled.
-	if n := injectCostIsolations(&finalDecision, accounts, cfg); n > 0 && p.Log != nil {
+	if n := injectCostIsolations(&finalDecision, accounts, cfg, recentTraffic); n > 0 && p.Log != nil {
 		p.Log.Info("ai pilot injected cost isolations", "count", n, "trigger", trigger)
+	}
+	// Cheap peers boom/temp-unsched/hard-fail → re-enable cost-isolated expensive as fallback.
+	if n := injectCostIsolationReleases(&finalDecision, accounts, cfg, recentTraffic); n > 0 && p.Log != nil {
+		p.Log.Info("ai pilot injected cost isolation releases", "count", n, "trigger", trigger)
 	}
 	// If a recent group switch is already 503/hard-failing, roll back to last_good first.
 	if n := injectUpstreamGroupRollbacks(&finalDecision, accounts, recentTraffic, cfg); n > 0 && p.Log != nil {
@@ -609,7 +613,7 @@ func (p *AIPilotService) applyDecisionActions(
 			_, _ = p.Repo.CreateAction(ctx, a)
 			continue
 		}
-		if reason := costEnableGateReason(act.Op, acc, accounts, cfg); reason != "" {
+		if reason := costEnableGateReason(act.Op, acc, accounts, cfg, recentTraffic); reason != "" {
 			a.State = AIActionRejected
 			a.RejectReason = reason
 			_, _ = p.Repo.CreateAction(ctx, a)
@@ -674,7 +678,7 @@ func (p *AIPilotService) applyDecisionActions(
 					pr = &cp
 				}
 			}
-			costIso := costJustifiedIsolation(acc, accounts, cfg)
+			costIso := costJustifiedIsolation(acc, accounts, cfg, recentTraffic)
 			if reason := disableHealthyGateReasonEx2(acc, longSt, recentSt, pr, costIso); reason != "" {
 				a.State = AIActionRejected
 				a.RejectReason = reason
@@ -722,7 +726,12 @@ func (p *AIPilotService) applyDecisionActions(
 			// touch and summaries loop "紧急修复" forever (observed in prod).
 			bypassCool := act.Op == AIOpEnable || act.Op == AIOpRelease || act.Op == AIOpUnlock
 			// Depleted wallet / cost isolation: allow disable immediately (health SR is irrelevant).
-			if !bypassCool && act.Op == AIOpDisable && (isBalanceDepleted(acc) || costJustifiedIsolation(acc, accounts, cfg)) {
+			if !bypassCool && act.Op == AIOpDisable && (isBalanceDepleted(acc) || costJustifiedIsolation(acc, accounts, cfg, recentTraffic)) {
+				bypassCool = true
+			}
+			// Cost isolation release (cheap boom) must not wait cooldown.
+			if !bypassCool && act.Op == AIOpEnable && isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio) &&
+				!hasAffordablePeerCoveringGroups(acc, accounts, recentTraffic, true) {
 				bypassCool = true
 			}
 			if !bypassCool && act.Op == AIOpSetPriority {

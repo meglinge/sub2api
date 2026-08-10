@@ -668,12 +668,16 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 				if recentTraffic != nil {
 					rst = recentTraffic[acc.ID]
 				}
-				if costBlocksMainPromotion(acc, accounts, cfg) {
+				// Block only VERY expensive (1.75×). Soft expensive (e.g. 0.06 vs 0.04)
+				// must still unbury — otherwise 麻豆 stays p200 forever with zero traffic.
+				if costPressureActive(cfg) && isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio) {
 					continue
 				}
 				classic := softUnburyEligible(st, rst)
 				cheapRescue := softUnburyCheapSpareRescue(acc, accounts, st, rst, probes)
-				if (classic || cheapRescue) && balanceGateReason(AIOpEnable, acc) == "" &&
+				// Broader: known-rate not very-expensive (e.g. 麻豆 0.06 stuck at p200).
+				affordableRescue := softUnburyAffordableSpareRescue(acc, accounts, st, rst, probes)
+				if (classic || cheapRescue || affordableRescue) && balanceGateReason(AIOpEnable, acc) == "" &&
 					acc.Status == StatusActive && acc.Schedulable {
 					obs := AIObservationPriority
 					reason := fmt.Sprintf(
@@ -681,10 +685,10 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 						acc.Priority, AIPriorityBuriedThreshold, AIMaxPriority, obs,
 					)
 					conf := 0.88
-					if cheapRescue && !classic {
+					if (cheapRescue || affordableRescue) && !classic {
 						sig := accountCostSignalOf(acc)
 						reason = fmt.Sprintf(
-							"性价比/分层修复: 已知便宜号(composite=%.3f)卡在备援 priority=%d,严格分层下近窗0请求≠故障;模型勿用「主层已满」只调 weight;抬回主层 %d",
+							"性价比/软调度修复: 已知非极贵号(composite=%.3f)卡在 priority=%d 几乎无量;抬回主层 %d 参与分流(非仅调 weight)",
 							sig.Composite, acc.Priority, obs,
 						)
 						conf = 0.92
@@ -716,8 +720,9 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 		if reason := balanceGateReason(AIOpEnable, acc); reason != "" {
 			continue
 		}
-		// Very expensive + cheaper peers: do not re-enable (probe pass ≠ should burn money).
-		if reason := costEnableGateReason(AIOpEnable, acc, accounts, cfg); reason != "" {
+		// Very expensive + healthy cheaper peers: do not re-enable (probe pass ≠ should burn money).
+		// When cheap peers boom, costEnableGateReason returns "" and enable proceeds.
+		if reason := costEnableGateReason(AIOpEnable, acc, accounts, cfg, recentTraffic); reason != "" {
 			continue
 		}
 		conf := 0.82

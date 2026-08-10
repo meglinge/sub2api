@@ -343,8 +343,9 @@ func TestSoftUnburyCheapSpareRescue_EmptyLongWindow(t *testing.T) {
 	for _, a := range d.Actions {
 		if a.AccountID == 6399 && a.Op == AIOpSetPriority && a.Value == wantPri {
 			sawSyPri = true
-			if !strings.Contains(a.Reason, "便宜") && !strings.Contains(a.Reason, "分层") {
-				t.Fatalf("reason should mention cheap/layering fix: %s", a.Reason)
+			if !strings.Contains(a.Reason, "便宜") && !strings.Contains(a.Reason, "分层") &&
+				!strings.Contains(a.Reason, "软调度") && !strings.Contains(a.Reason, "非极贵") {
+				t.Fatalf("reason should mention cheap/layering/soft-schedule fix: %s", a.Reason)
 			}
 		}
 		if a.AccountID == 2 && a.Op == AIOpSetPriority {
@@ -617,7 +618,11 @@ func TestCostIsolationDisableAndBlockEnable(t *testing.T) {
 	cfg.ScoreWeightStability = 25
 	cfg.ScoreWeightLatency = 20
 	cfg.ScoreWeightThroughput = 15
-	if !costJustifiedIsolation(&pro, pool, cfg) {
+	recentOK := map[int64]AccountTrafficStats{
+		1: {Requests: 50, Successes: 48, Errors: 2},
+		2: {Requests: 20, Successes: 19, Errors: 1},
+	}
+	if !costJustifiedIsolation(&pro, pool, cfg, recentOK) {
 		t.Fatal("pro should justify isolation")
 	}
 	// Healthy long window must NOT block cost isolation disable.
@@ -630,12 +635,12 @@ func TestCostIsolationDisableAndBlockEnable(t *testing.T) {
 		t.Fatal("without cost flag, healthy disable still blocked")
 	}
 	// Enable blocked while cheaper peer covers group.
-	if reason := costEnableGateReason(AIOpEnable, &pro, pool, cfg); reason == "" {
+	if reason := costEnableGateReason(AIOpEnable, &pro, pool, cfg, recentOK); reason == "" {
 		t.Fatal("expected enable block for expensive pro")
 	}
 	// inject disables pro
 	d := decision{}
-	n := injectCostIsolations(&d, pool, cfg)
+	n := injectCostIsolations(&d, pool, cfg, recentOK)
 	if n != 1 || len(d.Actions) != 1 || d.Actions[0].Op != AIOpDisable || d.Actions[0].AccountID != pro.ID {
 		t.Fatalf("inject isolation: n=%d acts=%+v", n, d.Actions)
 	}
@@ -643,7 +648,7 @@ func TestCostIsolationDisableAndBlockEnable(t *testing.T) {
 	d2 := decision{Actions: []decisionAction{
 		{AccountID: pro.ID, Op: AIOpEnable, Reason: "probe pass"},
 	}}
-	n2 := injectCostIsolations(&d2, pool, cfg)
+	n2 := injectCostIsolations(&d2, pool, cfg, recentOK)
 	if n2 != 1 {
 		t.Fatalf("expected disable inject after strip, n=%d", n2)
 	}
@@ -654,8 +659,34 @@ func TestCostIsolationDisableAndBlockEnable(t *testing.T) {
 	}
 	// Sole expensive account (no affordable peer) must not isolate.
 	only := []Account{pro}
-	if costJustifiedIsolation(&pro, only, cfg) {
+	if costJustifiedIsolation(&pro, only, cfg, recentOK) {
 		t.Fatal("sole expensive account must not self-isolate")
+	}
+
+	// Boom recovery: cheap peer hard-fails → release isolation.
+	// pool holds copies — mutate pool entry, not the stack pro.
+	pool[1].AIDisabled = true
+	cheapBoom := map[int64]AccountTrafficStats{
+		1: {Requests: 20, Successes: 2, Errors: 20}, // hard fail
+		2: {},
+	}
+	if costEnableGateReason(AIOpEnable, &pool[1], pool, cfg, cheapBoom) != "" {
+		t.Fatal("enable must be allowed when cheap peer hard-fails")
+	}
+	d3 := decision{}
+	if n := injectCostIsolationReleases(&d3, pool, cfg, cheapBoom); n != 1 || d3.Actions[0].Op != AIOpEnable {
+		t.Fatalf("expected isolation release enable, n=%d acts=%+v", n, d3.Actions)
+	}
+
+	// 麻豆-class 0.06 vs 0.04 should soft-unbury from p200.
+	madou := Account{
+		ID: 3, Name: "麻豆", Priority: 200, ScheduleWeight: 5240,
+		Status: StatusActive, Schedulable: true, GroupIDs: []int64{2, 5},
+		Extra: map[string]any{ExtraAIRateMultiplier: 0.06, ExtraAIRateSource: "sub2api"},
+	}
+	pool2 := []Account{cheap, madou}
+	if !softUnburyAffordableSpareRescue(&madou, pool2, AccountTrafficStats{}, AccountTrafficStats{}, nil) {
+		t.Fatal("madou 0.06 must be affordable spare rescue eligible")
 	}
 }
 
@@ -698,3 +729,4 @@ func TestBuildGroupPeers_HasComposite(t *testing.T) {
 		t.Fatalf("peerAvg missing compositeRate: %+v", avg)
 	}
 }
+
