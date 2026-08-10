@@ -662,6 +662,14 @@ func (p *AIPilotService) applyDecisionActions(
 				continue
 			}
 		}
+		if act.Op == AIOpSwitchUpstreamGroup {
+			if reason := gateSwitchUpstreamGroupReason(acc, recentSt, cfg); reason != "" {
+				a.State = AIActionRejected
+				a.RejectReason = reason
+				_, _ = p.Repo.CreateAction(ctx, a)
+				continue
+			}
+		}
 		if act.Op == AIOpSetRPMLimit {
 			cur := accountBaseRPM(acc)
 			next, err := parseIntValue(act.Value)
@@ -968,16 +976,17 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 				"successRate":   recentRate,
 				"avgDurationMs": rst.AvgDuration, "avgTtfbMs": rst.AvgFirstToken,
 			},
-			"errors":     map[string]any{"samples": samples},
-			"activation": activationView(acc, probeMemo[acc.ID], idle, cfg),
-			"money":      money,
+			"errors":        map[string]any{"samples": samples},
+			"activation":    activationView(acc, probeMemo[acc.ID], idle, cfg),
+			"money":         money,
+			"upstreamGroup": buildUpstreamGroupView(acc),
 		})
 	}
 	// Replace groups summary with peers-enriched block (same ids).
 	groups = buildGroupPeers(chs, groupAvail)
 
 	allowed, denied := []string{}, []string{}
-	for _, op := range []string{AIOpSetPriority, AIOpSetWeight, AIOpDisable, AIOpEnable, AIOpSetRPMLimit, AIOpSetMaxConcurrency, AIOpRelease, AIOpUnlock} {
+	for _, op := range []string{AIOpSetPriority, AIOpSetWeight, AIOpDisable, AIOpEnable, AIOpSetRPMLimit, AIOpSetMaxConcurrency, AIOpRelease, AIOpUnlock, AIOpSwitchUpstreamGroup} {
 		if cfg.OpAllowed(op) {
 			allowed = append(allowed, op)
 		} else {
@@ -1414,6 +1423,14 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 - 后端在「刚下沉到备援(≥150)」后有约 25 分钟备援驻留:期间自动解埋与 set_priority 拉回主层会被拒绝(防 429 pending thrash 100↔150)
 - 驻留期内请用 set_weight 调同层/备援分流,不要反复 set_priority 100↔150
 - priority≥150 在严格分层下几乎接不到请求 → 近窗必然空白 → **禁止**再据此 set_priority 更深
+
+【上游分组切换 switch_upstream_group — 可选,极保守】
+- 仅当 channels[].upstreamGroup.switchable=true 且 policy 允许该 op 时才可调用
+- value=目标组名(new-api)或 group_id/组名(sub2api)
+- **禁止**仅因更便宜就切:近窗硬失败时禁止;应优先 set_priority/set_weight
+- 切组后约 30 分钟驻留,勿连续 switch
+- 质量优先:便宜组若可能导致模型不可用/失败,不要切;坏号用 disable 不是切组
+
 - 近窗 0 请求且长窗成功率仍高 → 不是故障,是分层后果
 - **禁止**对 p≥150 的可用号只 set_weight 不抬 priority:同层 weight 再大也吃不到主层流量
 - **禁止**用「主层已有 2–4 个/满池」拒绝把**已知便宜且健康**的号从 ≥150 抬回 100

@@ -61,14 +61,15 @@ const (
 	AIActionRolledBack = "rolled_back"
 	AIActionDismissed  = "dismissed"
 
-	AIOpDisable           = "disable"
-	AIOpEnable            = "enable"
-	AIOpSetPriority       = "set_priority"
-	AIOpSetWeight         = "set_weight"
-	AIOpRelease           = "release"
-	AIOpUnlock            = "unlock"
-	AIOpSetRPMLimit       = "set_rpm_limit"
-	AIOpSetMaxConcurrency = "set_max_concurrency"
+	AIOpDisable             = "disable"
+	AIOpEnable              = "enable"
+	AIOpSetPriority         = "set_priority"
+	AIOpSetWeight           = "set_weight"
+	AIOpRelease             = "release"
+	AIOpUnlock              = "unlock"
+	AIOpSetRPMLimit         = "set_rpm_limit"
+	AIOpSetMaxConcurrency   = "set_max_concurrency"
+	AIOpSwitchUpstreamGroup = "switch_upstream_group"
 
 	// SettingKeyAIAutopilot stores JSON AIAutopilotSettings in settings table.
 	SettingKeyAIAutopilot = "ai_autopilot"
@@ -145,6 +146,9 @@ type AIAutopilotSettings struct {
 	// OpRelease / OpUnlock map to UpstreamRouter allowRecoverBlocked / allowRecoverLockdown.
 	OpRelease *bool `json:"op_release"`
 	OpUnlock  *bool `json:"op_unlock"`
+	// OpSwitchUpstreamGroup: change new-api token.group or sub2api panel key.group_id.
+	// Default false — opt-in after operator configures panel credentials per account.
+	OpSwitchUpstreamGroup *bool `json:"op_switch_upstream_group"`
 }
 
 // DefaultAIAutopilotSettings returns factory defaults.
@@ -195,6 +199,8 @@ func DefaultAIAutopilotSettings() AIAutopilotSettings {
 		OpSetMaxConc:                  boolPtr(true),
 		OpRelease:                     boolPtr(true),
 		OpUnlock:                      boolPtr(true),
+		// Off by default: requires per-account credentials + quality gates.
+		OpSwitchUpstreamGroup: boolPtr(false),
 	}
 }
 
@@ -335,6 +341,7 @@ func (s AIAutopilotSettings) Normalize() AIAutopilotSettings {
 	s.OpSetMaxConc = boolOr(s.OpSetMaxConc, true)
 	s.OpRelease = boolOr(s.OpRelease, true)
 	s.OpUnlock = boolOr(s.OpUnlock, true)
+	s.OpSwitchUpstreamGroup = boolOr(s.OpSwitchUpstreamGroup, false)
 	return s
 }
 
@@ -373,6 +380,8 @@ func (s AIAutopilotSettings) OpAllowed(op string) bool {
 		return s.opOn(s.OpRelease)
 	case AIOpUnlock:
 		return s.opOn(s.OpUnlock)
+	case AIOpSwitchUpstreamGroup:
+		return s.opOn(s.OpSwitchUpstreamGroup)
 	default:
 		return false
 	}

@@ -114,6 +114,9 @@ func (p *AIPilotService) ApplyAIOp(ctx context.Context, accountID int64, op, val
 		after = "released"
 		return before, after, p.Accounts.Update(ctx, acc)
 
+	case AIOpSwitchUpstreamGroup:
+		return p.SwitchUpstreamGroup(ctx, acc, value)
+
 	case AIOpUnlock:
 		before = releaseStateSnapshot(acc)
 		acc.RateLimitedAt = nil

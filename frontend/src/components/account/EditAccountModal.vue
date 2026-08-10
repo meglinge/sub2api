@@ -1581,6 +1581,45 @@
             <p class="input-hint">{{ t('admin.accounts.autopilotMoney.mgmtUserIdHint') }}</p>
           </div>
         </div>
+        <div v-if="upstreamKind === 'sub2api'" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.autopilotMoney.panelEmail') }}</label>
+            <input
+              v-model="upstreamPanelEmail"
+              type="email"
+              autocomplete="off"
+              class="input"
+              data-testid="account-upstream-panel-email"
+            />
+            <p class="input-hint">{{ t('admin.accounts.autopilotMoney.panelEmailHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.autopilotMoney.panelPassword') }}</label>
+            <input
+              v-model="upstreamPanelPassword"
+              type="password"
+              autocomplete="new-password"
+              class="input"
+              data-testid="account-upstream-panel-password"
+              :placeholder="upstreamPanelPasswordSet ? '********' : ''"
+            />
+            <p class="input-hint">{{ t('admin.accounts.autopilotMoney.panelPasswordHint') }}</p>
+          </div>
+        </div>
+        <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-200">
+          <input
+            v-model="aiUpstreamGroupSwitch"
+            type="checkbox"
+            class="mt-1"
+            data-testid="account-ai-upstream-group-switch"
+          />
+          <span>
+            <span class="font-medium">{{ t('admin.accounts.autopilotMoney.groupSwitch') }}</span>
+            <span class="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.autopilotMoney.groupSwitchHint') }}
+            </span>
+          </span>
+        </label>
         <p
           v-if="autopilotMoneyStatusLine"
           class="text-xs text-gray-500 dark:text-gray-400"
@@ -2977,6 +3016,10 @@ const upstreamKind = ref('') // '' | newapi | sub2api
 const upstreamMgmtToken = ref('')
 const upstreamMgmtTokenSet = ref(false) // already has a stored token (masked)
 const upstreamMgmtUserId = ref('')
+const upstreamPanelEmail = ref('')
+const upstreamPanelPassword = ref('')
+const upstreamPanelPasswordSet = ref(false)
+const aiUpstreamGroupSwitch = ref(false)
 const autopilotMoneyStatusLine = ref('')
 
 /** rate / recharge for display (maok: 1/10 = 0.1) */
@@ -3515,6 +3558,15 @@ const syncFormFromAccount = (newAccount: Account | null) => {
         : extra?.upstream_mgmt_user_id != null
           ? String(extra.upstream_mgmt_user_id)
           : ''
+    upstreamPanelEmail.value =
+      typeof extra?.upstream_panel_email === 'string' ? extra.upstream_panel_email : ''
+    const pp = typeof extra?.upstream_panel_password === 'string' ? extra.upstream_panel_password : ''
+    upstreamPanelPasswordSet.value = Boolean(pp && pp.length > 0)
+    upstreamPanelPassword.value = ''
+    aiUpstreamGroupSwitch.value =
+      extra?.ai_upstream_group_switch === true ||
+      extra?.ai_upstream_group_switch === 'true' ||
+      extra?.ai_upstream_group_switch === 1
     const balSt = typeof extra?.ai_balance_status === 'string' ? extra.ai_balance_status : ''
     const balUsd = Number(extra?.ai_balance_usd)
     const rateCached = Number(extra?.ai_rate_multiplier)
@@ -4932,6 +4984,24 @@ const handleSubmit = async () => {
           newExtra.upstream_mgmt_token = tok
         } else if (!upstreamMgmtTokenSet.value) {
           delete newExtra.upstream_mgmt_token
+        }
+        // sub2api panel credentials for upstream group switch
+        const panelEmail = (upstreamPanelEmail.value || '').trim()
+        if (panelEmail) {
+          newExtra.upstream_panel_email = panelEmail
+        } else {
+          delete newExtra.upstream_panel_email
+        }
+        const panelPass = (upstreamPanelPassword.value || '').trim()
+        if (panelPass) {
+          newExtra.upstream_panel_password = panelPass
+        } else if (!upstreamPanelPasswordSet.value) {
+          delete newExtra.upstream_panel_password
+        }
+        if (aiUpstreamGroupSwitch.value) {
+          newExtra.ai_upstream_group_switch = true
+        } else {
+          delete newExtra.ai_upstream_group_switch
         }
         // if token field blank but was set, leave existing extra token untouched (spread above)
         if (excludeFromSchedule.value) {
