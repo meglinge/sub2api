@@ -13,7 +13,15 @@ import (
 )
 
 // Upstream group switch (new-api token.group / sub2api panel key.group_id).
-// CF/captcha login is out of scope for v1 — plain email+password only.
+//
+// Safety model (v2): NEVER probe by switching the production key first.
+//  1. Create a temporary upstream key/token on the *target* group
+//  2. Probe that temp credential (production traffic untouched)
+//  3. On pass: soft-drain production account, switch prod key group, probe prod sk
+//  4. On prod probe fail: roll production group back
+//  5. Always delete the temporary key/token
+//
+// CF/captcha login still out of scope — plain email+password + session-bound UA.
 const (
 	ExtraAIUpstreamGroupSwitch       = "ai_upstream_group_switch" // bool, default false
 	ExtraUpstreamPanelEmail          = "upstream_panel_email"
@@ -21,23 +29,36 @@ const (
 	ExtraUpstreamPanelAccessToken    = "upstream_panel_access_token"
 	ExtraUpstreamPanelRefreshToken   = "upstream_panel_refresh_token"
 	ExtraUpstreamPanelTokenExpiresAt = "upstream_panel_token_expires_at"
-	ExtraUpstreamPanelKeyID          = "upstream_panel_key_id" // cached matched key id (sub2api)
+	ExtraUpstreamPanelKeyID          = "upstream_panel_key_id" // cached matched production key id
 	ExtraUpstreamCurrentGroup        = "upstream_current_group"
 	ExtraUpstreamLastGoodGroup       = "upstream_last_good_group"
 	ExtraUpstreamLastGroupSwitchAt   = "upstream_last_group_switch_at"
+	ExtraUpstreamGroupCandidatesJSON = "upstream_group_candidates_json"
+	ExtraUpstreamGroupCandidatesAt   = "upstream_group_candidates_at"
 
 	// AIUpstreamGroupSwitchDwell blocks thrash after a successful switch.
 	AIUpstreamGroupSwitchDwell = 30 * time.Minute
 	// AIUpstreamGroupMinSaveRatio: target must be at least this cheaper (ratio lower).
 	AIUpstreamGroupMinSaveRatio = 0.15
+	// Soft-drain window before flipping production group (keeps live traffic off the key).
+	AIUpstreamGroupSoftDrain = 3 * time.Second
+	// Candidate list soft cache.
+	AIUpstreamGroupCandidatesCache = 5 * time.Minute
+
+	// upstreamPanelUserAgent must be identical for login and subsequent panel calls:
+	// many sub2api hosts enable session binding (IP+UA hash).
+	upstreamPanelUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
 // UpstreamGroupCandidate is a switchable billing group on the upstream panel.
 type UpstreamGroupCandidate struct {
-	ID     string  `json:"id,omitempty"` // sub2api numeric id as string
-	Name   string  `json:"name"`         // new-api group name or sub2api group name
-	Ratio  float64 `json:"ratio"`        // group_ratio / rate_multiplier
-	Source string  `json:"source"`       // newapi|sub2api
+	ID       string  `json:"id,omitempty"` // sub2api numeric id as string
+	Name     string  `json:"name"`
+	Ratio    float64 `json:"ratio"`
+	Platform string  `json:"platform,omitempty"`
+	Source   string  `json:"source"` // newapi|sub2api
+	Eligible bool    `json:"eligible"`
+	Note     string  `json:"note,omitempty"`
 }
 
 // UpstreamGroupView is attached to pilot channel snapshots.
@@ -47,9 +68,11 @@ type UpstreamGroupView struct {
 	Kind              string                   `json:"kind,omitempty"`
 	Current           string                   `json:"current,omitempty"`
 	CurrentRatio      float64                  `json:"currentRatio,omitempty"`
+	AccountPlatform   string                   `json:"accountPlatform,omitempty"`
 	Candidates        []UpstreamGroupCandidate `json:"candidates,omitempty"`
 	DwellRemainingSec int                      `json:"dwellRemainingSec,omitempty"`
 	Reason            string                   `json:"reason,omitempty"`
+	SafetyNote        string                   `json:"safetyNote,omitempty"`
 }
 
 func accountUpstreamGroupSwitchEnabled(acc *Account) bool {
@@ -73,7 +96,7 @@ func accountUpstreamGroupSwitchEnabled(acc *Account) bool {
 }
 
 func upstreamGroupSwitchInDwell(acc *Account, now time.Time) (bool, time.Duration) {
-	if acc == nil || now.IsZero() {
+	if now.IsZero() {
 		now = time.Now()
 	}
 	ts := extraString(acc.Extra, ExtraUpstreamLastGroupSwitchAt)
@@ -91,14 +114,49 @@ func upstreamGroupSwitchInDwell(acc *Account, now time.Time) (bool, time.Duratio
 	return true, AIUpstreamGroupSwitchDwell - elapsed
 }
 
-// buildUpstreamGroupView is a lightweight snapshot helper (no network when not switch-enabled).
+// platformMatchesAccount keeps OpenAI accounts off Claude groups etc.
+func platformMatchesAccount(accPlatform, groupPlatform string) bool {
+	accPlatform = strings.ToLower(strings.TrimSpace(accPlatform))
+	groupPlatform = strings.ToLower(strings.TrimSpace(groupPlatform))
+	if groupPlatform == "" {
+		// Unknown platform: allow only if account is openai (common default on some panels)
+		return accPlatform == "" || accPlatform == PlatformOpenAI || accPlatform == "openai"
+	}
+	if accPlatform == "" || accPlatform == "openai" {
+		accPlatform = PlatformOpenAI
+	}
+	// normalize aliases
+	if groupPlatform == "openai" || groupPlatform == "chatgpt" || groupPlatform == "codex" {
+		groupPlatform = PlatformOpenAI
+	}
+	if groupPlatform == "claude" || groupPlatform == "anthropic" {
+		groupPlatform = PlatformAnthropic
+	}
+	return accPlatform == groupPlatform
+}
+
+func accountPlatformForUpstream(acc *Account) string {
+	if acc == nil {
+		return PlatformOpenAI
+	}
+	p := strings.ToLower(strings.TrimSpace(acc.Platform))
+	if p == "" || p == "openai" {
+		return PlatformOpenAI
+	}
+	return p
+}
+
+// buildUpstreamGroupView prefers cached candidates; LiveList fills on demand when empty.
 func buildUpstreamGroupView(acc *Account) UpstreamGroupView {
-	v := UpstreamGroupView{}
+	v := UpstreamGroupView{
+		SafetyNote: "切组前会新建临时 key 探测,通过后才改生产 key;近窗硬失败/非同平台组禁止",
+	}
 	if acc == nil {
 		v.Reason = "no account"
 		return v
 	}
 	v.SwitchEnabled = accountUpstreamGroupSwitchEnabled(acc)
+	v.AccountPlatform = accountPlatformForUpstream(acc)
 	kind := strings.ToLower(extraString(acc.Extra, ExtraUpstreamKind))
 	if kind == "oneapi" {
 		kind = "newapi"
@@ -107,6 +165,12 @@ func buildUpstreamGroupView(acc *Account) UpstreamGroupView {
 	v.Current = extraString(acc.Extra, ExtraUpstreamCurrentGroup)
 	if r := extraFloat(acc.Extra, ExtraAIRateMultiplier); r > 0 {
 		v.CurrentRatio = r
+	}
+	if cands := loadCachedUpstreamCandidates(acc); len(cands) > 0 {
+		v.Candidates = cands
+	}
+	if in, rem := upstreamGroupSwitchInDwell(acc, time.Now()); in {
+		v.DwellRemainingSec = int(rem.Seconds())
 	}
 	if !v.SwitchEnabled {
 		v.Reason = "账号未开启 ai_upstream_group_switch"
@@ -117,37 +181,205 @@ func buildUpstreamGroupView(acc *Account) UpstreamGroupView {
 	pass := extraString(acc.Extra, ExtraUpstreamPanelPassword)
 	tok := extraString(acc.Extra, ExtraUpstreamPanelAccessToken)
 	switch {
-	case kind == "newapi" || kind == "":
-		if mgmt == "" && kind == "newapi" {
+	case kind == "newapi" || (kind == "" && mgmt != ""):
+		if mgmt == "" {
 			v.Reason = "newapi 缺少 upstream_mgmt_token"
 			return v
 		}
-		if mgmt != "" {
-			v.Switchable = true
-			v.Kind = "newapi"
-			return v
-		}
-	case kind == "sub2api":
+		v.Kind = "newapi"
+		v.Switchable = true
+	case kind == "sub2api" || (kind == "" && (email != "" || tok != "")):
 		if email == "" || pass == "" {
 			if tok == "" {
 				v.Reason = "sub2api 需要面板邮箱+密码（或 access_token）"
 				return v
 			}
 		}
+		v.Kind = "sub2api"
 		v.Switchable = true
-		return v
 	default:
-		v.Reason = "upstream_kind 不支持切组: " + kind
+		v.Reason = "upstream_kind 不支持切组或缺少凭证"
 		return v
-	}
-	if in, rem := upstreamGroupSwitchInDwell(acc, time.Now()); in {
-		v.DwellRemainingSec = int(rem.Seconds())
 	}
 	return v
 }
 
-// SwitchUpstreamGroup applies a group switch on the remote panel and updates local extras.
-// value: new-api group name, or sub2api group id / name.
+func loadCachedUpstreamCandidates(acc *Account) []UpstreamGroupCandidate {
+	raw := extraString(acc.Extra, ExtraUpstreamGroupCandidatesJSON)
+	if raw == "" {
+		return nil
+	}
+	at := extraString(acc.Extra, ExtraUpstreamGroupCandidatesAt)
+	if at != "" {
+		if t, err := time.Parse(time.RFC3339, at); err == nil && time.Since(t) > AIUpstreamGroupCandidatesCache {
+			return nil
+		}
+	}
+	var out []UpstreamGroupCandidate
+	if json.Unmarshal([]byte(raw), &out) != nil {
+		return nil
+	}
+	return out
+}
+
+func (p *AIPilotService) cacheUpstreamCandidates(ctx context.Context, acc *Account, cands []UpstreamGroupCandidate) {
+	if acc == nil {
+		return
+	}
+	if acc.Extra == nil {
+		acc.Extra = map[string]any{}
+	}
+	b, _ := json.Marshal(cands)
+	now := time.Now().UTC().Format(time.RFC3339)
+	acc.Extra[ExtraUpstreamGroupCandidatesJSON] = string(b)
+	acc.Extra[ExtraUpstreamGroupCandidatesAt] = now
+	if p.Accounts != nil {
+		_ = p.Accounts.UpdateExtra(ctx, acc.ID, map[string]any{
+			ExtraUpstreamGroupCandidatesJSON: string(b),
+			ExtraUpstreamGroupCandidatesAt:   now,
+		})
+	}
+}
+
+// ListUpstreamGroupCandidates fetches + filters groups for this account (network).
+func (p *AIPilotService) ListUpstreamGroupCandidates(ctx context.Context, acc *Account) ([]UpstreamGroupCandidate, error) {
+	if acc == nil {
+		return nil, fmt.Errorf("account nil")
+	}
+	if cached := loadCachedUpstreamCandidates(acc); len(cached) > 0 {
+		return cached, nil
+	}
+	kind := strings.ToLower(extraString(acc.Extra, ExtraUpstreamKind))
+	if kind == "oneapi" {
+		kind = "newapi"
+	}
+	base := accountUpstreamBase(acc)
+	if base == "" {
+		return nil, fmt.Errorf("缺少 base_url")
+	}
+	wantPlat := accountPlatformForUpstream(acc)
+	var out []UpstreamGroupCandidate
+	var err error
+	switch {
+	case kind == "newapi" || extraString(acc.Extra, ExtraUpstreamMgmtToken) != "":
+		out, err = p.listNewAPIGroupCandidates(ctx, acc, base, wantPlat)
+	case kind == "sub2api" || extraString(acc.Extra, ExtraUpstreamPanelEmail) != "":
+		out, err = p.listSub2APIGroupCandidates(ctx, acc, base, wantPlat)
+	default:
+		return nil, fmt.Errorf("不支持的 upstream_kind")
+	}
+	if err != nil {
+		return nil, err
+	}
+	// mark eligible vs current ratio
+	cur := extraFloat(acc.Extra, ExtraAIRateMultiplier)
+	for i := range out {
+		if !platformMatchesAccount(wantPlat, out[i].Platform) {
+			out[i].Eligible = false
+			out[i].Note = "platform 不匹配账号(" + wantPlat + ")"
+			continue
+		}
+		out[i].Eligible = true
+		if cur > 0 && out[i].Ratio > 0 {
+			if out[i].Ratio < cur*(1-AIUpstreamGroupMinSaveRatio)-1e-12 {
+				out[i].Note = "更便宜,可考虑"
+			} else if out[i].Ratio > cur+1e-12 {
+				out[i].Note = "更贵,仅故障回退"
+			} else {
+				out[i].Note = "与当前接近"
+			}
+		}
+	}
+	p.cacheUpstreamCandidates(ctx, acc, out)
+	return out, nil
+}
+
+func accountUpstreamBase(acc *Account) string {
+	if acc == nil {
+		return ""
+	}
+	base := strings.TrimRight(strings.TrimSpace(acc.GetOpenAIBaseURL()), "/")
+	if base == "" {
+		base = strings.TrimRight(strings.TrimSpace(acc.GetCredential("base_url")), "/")
+	}
+	return base
+}
+
+func (p *AIPilotService) listSub2APIGroupCandidates(ctx context.Context, acc *Account, base, wantPlat string) ([]UpstreamGroupCandidate, error) {
+	jwt, err := p.ensureSub2APIPanelJWT(ctx, acc, base)
+	if err != nil {
+		return nil, err
+	}
+	groups, err := p.sub2apiListAvailableGroups(ctx, base, jwt)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]UpstreamGroupCandidate, 0, len(groups))
+	for _, g := range groups {
+		if !platformMatchesAccount(wantPlat, g.Platform) {
+			continue // hard-drop other platforms from candidate list
+		}
+		out = append(out, UpstreamGroupCandidate{
+			ID:       strconv.FormatInt(g.ID, 10),
+			Name:     g.Name,
+			Ratio:    g.RateMultiplier,
+			Platform: g.Platform,
+			Source:   "sub2api",
+			Eligible: true,
+		})
+	}
+	return out, nil
+}
+
+func (p *AIPilotService) listNewAPIGroupCandidates(ctx context.Context, acc *Account, base, wantPlat string) ([]UpstreamGroupCandidate, error) {
+	mgmt := extraString(acc.Extra, ExtraUpstreamMgmtToken)
+	uid := extraString(acc.Extra, ExtraUpstreamMgmtUserID)
+	if mgmt == "" {
+		return nil, fmt.Errorf("newapi 缺少 mgmt token")
+	}
+	var groups []OneAPIGroup
+	for _, path := range []string{"/api/user/self/groups", "/api/user/groups", "/api/group/", "/api/pricing"} {
+		st, body, e := p.oneAPIDo(ctx, base, mgmt, uid, http.MethodGet, path, nil)
+		if e != nil || st != 200 {
+			continue
+		}
+		groups = ParseOneAPIGroupRatioMap(body)
+		if len(groups) > 0 {
+			break
+		}
+	}
+	if len(groups) == 0 {
+		return nil, fmt.Errorf("无法拉取 newapi 分组")
+	}
+	// new-api groups rarely carry platform — treat as matching account platform
+	// but drop names that clearly look like other stacks when account is openai.
+	out := make([]UpstreamGroupCandidate, 0, len(groups))
+	for _, g := range groups {
+		plat := wantPlat
+		low := strings.ToLower(g.Name)
+		if strings.Contains(low, "claude") || strings.Contains(low, "anthropic") || strings.Contains(low, "kiro") {
+			plat = PlatformAnthropic
+		}
+		if strings.Contains(low, "gemini") || strings.Contains(low, "google") {
+			plat = PlatformGemini
+		}
+		if !platformMatchesAccount(wantPlat, plat) {
+			continue
+		}
+		out = append(out, UpstreamGroupCandidate{
+			ID:       g.Name,
+			Name:     g.Name,
+			Ratio:    g.Ratio,
+			Platform: plat,
+			Source:   "newapi",
+			Eligible: true,
+		})
+	}
+	return out, nil
+}
+
+// SwitchUpstreamGroup: safe test-key probe then production switch.
+// value: group id (sub2api) or group name (new-api).
 func (p *AIPilotService) SwitchUpstreamGroup(ctx context.Context, acc *Account, value string) (before, after string, err error) {
 	if acc == nil {
 		return "", "", fmt.Errorf("account nil")
@@ -162,217 +394,432 @@ func (p *AIPilotService) SwitchUpstreamGroup(ctx context.Context, acc *Account, 
 	if in, rem := upstreamGroupSwitchInDwell(acc, time.Now()); in {
 		return "", "", fmt.Errorf("切组驻留期内,剩余约 %.0fm", rem.Minutes()+0.5)
 	}
+	cands, err := p.ListUpstreamGroupCandidates(ctx, acc)
+	if err != nil {
+		return "", "", err
+	}
+	target, ok := resolveUpstreamTarget(cands, value)
+	if !ok {
+		return "", "", fmt.Errorf("目标组 %q 不在同平台候选列表(已排除 Claude 等异平台)", value)
+	}
+	if !target.Eligible {
+		return "", "", fmt.Errorf("目标组不可用: %s", target.Note)
+	}
+	// Enforce min-save when switching to cheaper (allow equal for no-op).
+	curRatio := extraFloat(acc.Extra, ExtraAIRateMultiplier)
+	if curRatio > 0 && target.Ratio > 0 && target.Ratio < curRatio-1e-12 {
+		if target.Ratio > curRatio*(1-AIUpstreamGroupMinSaveRatio)+1e-12 {
+			return "", "", fmt.Errorf("目标组仅便宜 %.1f%%,低于最低省钱阈值 %.0f%%",
+				(1-target.Ratio/curRatio)*100, AIUpstreamGroupMinSaveRatio*100)
+		}
+	}
+
 	kind := strings.ToLower(extraString(acc.Extra, ExtraUpstreamKind))
 	if kind == "oneapi" {
 		kind = "newapi"
 	}
-	base := strings.TrimRight(strings.TrimSpace(acc.GetOpenAIBaseURL()), "/")
-	if base == "" {
-		base = strings.TrimRight(strings.TrimSpace(acc.GetCredential("base_url")), "/")
-	}
-	if base == "" {
-		return "", "", fmt.Errorf("账号缺少 base_url")
-	}
+	base := accountUpstreamBase(acc)
 	apiKey := strings.TrimSpace(acc.GetOpenAIApiKey())
 	if apiKey != "" && strings.Contains(apiKey, "*") {
 		apiKey = ""
 	}
-
-	// Prefer explicit kind; empty + mgmt → newapi; empty + panel → sub2api.
 	if kind == "" {
 		if extraString(acc.Extra, ExtraUpstreamMgmtToken) != "" {
 			kind = "newapi"
-		} else if extraString(acc.Extra, ExtraUpstreamPanelEmail) != "" || extraString(acc.Extra, ExtraUpstreamPanelAccessToken) != "" {
+		} else {
 			kind = "sub2api"
 		}
 	}
-
 	switch kind {
-	case "newapi":
-		return p.switchNewAPITokenGroup(ctx, acc, base, apiKey, value)
 	case "sub2api":
-		return p.switchSub2APIKeyGroup(ctx, acc, base, apiKey, value)
+		return p.safeSwitchSub2API(ctx, acc, base, apiKey, target)
+	case "newapi":
+		return p.safeSwitchNewAPI(ctx, acc, base, apiKey, target)
 	default:
 		return "", "", fmt.Errorf("不支持的 upstream_kind=%s", kind)
 	}
 }
 
-func (p *AIPilotService) switchNewAPITokenGroup(ctx context.Context, acc *Account, base, apiKey, targetGroup string) (before, after string, err error) {
-	mgmt := extraString(acc.Extra, ExtraUpstreamMgmtToken)
-	uid := extraString(acc.Extra, ExtraUpstreamMgmtUserID)
-	if mgmt == "" {
-		return "", "", fmt.Errorf("newapi 缺少 upstream_mgmt_token")
-	}
-	// List groups for ratio map + validation.
-	var groups []OneAPIGroup
-	for _, path := range []string{"/api/user/self/groups", "/api/user/groups", "/api/group/", "/api/pricing"} {
-		st, body, e := p.oneAPIDo(ctx, base, mgmt, uid, http.MethodGet, path, nil)
-		if e != nil || st != 200 {
-			continue
-		}
-		groups = ParseOneAPIGroupRatioMap(body)
-		if len(groups) > 0 {
-			break
+func resolveUpstreamTarget(cands []UpstreamGroupCandidate, value string) (UpstreamGroupCandidate, bool) {
+	for _, c := range cands {
+		if c.ID == value || strings.EqualFold(c.Name, value) {
+			return c, true
 		}
 	}
-	if len(groups) == 0 {
-		return "", "", fmt.Errorf("无法拉取 newapi 分组列表")
-	}
-	var targetRatio float64
-	found := false
-	for _, g := range groups {
-		if strings.EqualFold(g.Name, targetGroup) {
-			targetGroup = g.Name
-			targetRatio = g.Ratio
-			found = true
-			break
-		}
-	}
-	if !found {
-		return "", "", fmt.Errorf("目标组 %q 不在上游可选列表", targetGroup)
-	}
-
-	// Find token matching api key.
-	var tokens []OneAPIToken
-	for _, path := range []string{
-		"/api/token/?p=0&size=100",
-		"/api/token/?p=1&size=100",
-		"/api/token/?page=1&page_size=100",
-		"/api/token/",
-	} {
-		st, body, e := p.oneAPIDo(ctx, base, mgmt, uid, http.MethodGet, path, nil)
-		if e != nil || st != 200 {
-			continue
-		}
-		tokens = ParseOneAPITokenList(body)
-		if len(tokens) > 0 {
-			break
-		}
-	}
-	if len(tokens) == 0 {
-		return "", "", fmt.Errorf("无法拉取 newapi token 列表")
-	}
-	tok, ok := matchOneAPIToken(apiKey, tokens)
-	if !ok {
-		return "", "", fmt.Errorf("token 列表中未匹配到本账号 sk")
-	}
-	before = strings.TrimSpace(tok.Group)
-	if before == "" {
-		before = extraString(acc.Extra, ExtraUpstreamCurrentGroup)
-	}
-	if strings.EqualFold(before, targetGroup) {
-		return before, targetGroup, nil
-	}
-
-	// PUT /api/token/ — send id + fields; group is the critical one.
-	payload := map[string]any{
-		"id":                   mustAtoi(tok.ID),
-		"name":                 tok.Name,
-		"group":                targetGroup,
-		"unlimited_quota":      true,
-		"remain_quota":         tok.RemainQuota,
-		"expired_time":         -1,
-		"cross_group_retry":    false,
-		"model_limits_enabled": false,
-	}
-	// Prefer numeric id when possible; some forks want string — retry with string id.
-	body, _ := json.Marshal(payload)
-	st, respBody, e := p.oneAPIDo(ctx, base, mgmt, uid, http.MethodPut, "/api/token/", body)
-	if e != nil {
-		return before, "", e
-	}
-	if st != 200 || !oneAPISuccess(respBody) {
-		// retry with string id
-		payload["id"] = tok.ID
-		body, _ = json.Marshal(payload)
-		st, respBody, e = p.oneAPIDo(ctx, base, mgmt, uid, http.MethodPut, "/api/token/", body)
-		if e != nil {
-			return before, "", e
-		}
-		if st != 200 || !oneAPISuccess(respBody) {
-			return before, "", fmt.Errorf("newapi 改组失败 HTTP %d: %s", st, truncateForErr(respBody, 200))
-		}
-	}
-	after = targetGroup
-	p.persistUpstreamGroupSwitch(ctx, acc, before, after, targetRatio, "newapi")
-	return before, after, nil
+	// numeric id without being in filtered list → reject (e.g. Claude id)
+	return UpstreamGroupCandidate{}, false
 }
 
-func (p *AIPilotService) switchSub2APIKeyGroup(ctx context.Context, acc *Account, base, apiKey, target string) (before, after string, err error) {
+// --- Safe sub2api path ---
+
+func (p *AIPilotService) safeSwitchSub2API(ctx context.Context, acc *Account, base, prodSK string, target UpstreamGroupCandidate) (before, after string, err error) {
 	jwt, err := p.ensureSub2APIPanelJWT(ctx, acc, base)
 	if err != nil {
 		return "", "", err
 	}
-	// Available groups
-	groups, err := p.sub2apiListAvailableGroups(ctx, base, jwt)
+	targetID, _ := strconv.ParseInt(target.ID, 10, 64)
+	if targetID <= 0 {
+		return "", "", fmt.Errorf("无效 group id %s", target.ID)
+	}
+	prodKeyID, curGID, err := p.sub2apiFindKey(ctx, base, jwt, prodSK, acc)
 	if err != nil {
 		return "", "", err
-	}
-	var targetID int64
-	var targetName string
-	var targetRatio float64
-	// target can be id or name
-	if id, e := strconv.ParseInt(target, 10, 64); e == nil {
-		for _, g := range groups {
-			if g.ID == id {
-				targetID, targetName, targetRatio = g.ID, g.Name, g.RateMultiplier
-				break
-			}
-		}
-	}
-	if targetID == 0 {
-		for _, g := range groups {
-			if strings.EqualFold(g.Name, target) {
-				targetID, targetName, targetRatio = g.ID, g.Name, g.RateMultiplier
-				break
-			}
-		}
-	}
-	if targetID == 0 {
-		return "", "", fmt.Errorf("目标组 %q 不在 available groups", target)
-	}
-
-	keyID, curGID, err := p.sub2apiFindKey(ctx, base, jwt, apiKey, acc)
-	if err != nil {
-		return "", "", err
-	}
-	if curGID == targetID {
-		before = strconv.FormatInt(curGID, 10)
-		return before, before, nil
 	}
 	before = strconv.FormatInt(curGID, 10)
-	if curGID == 0 {
-		before = extraString(acc.Extra, ExtraUpstreamCurrentGroup)
+	if curGID == targetID {
+		return before, before, nil
 	}
 
-	// PUT /api/v1/keys/:id
-	payload, _ := json.Marshal(map[string]any{"group_id": targetID})
-	st, body, err := p.sub2apiPanelDo(ctx, base, jwt, http.MethodPut, "/api/v1/keys/"+strconv.FormatInt(keyID, 10), payload)
+	// 1) Create temporary key on TARGET group — production key still on old group.
+	testName := fmt.Sprintf("ai-probe-%d-%d", acc.ID, targetID)
+	if len(testName) > 40 {
+		testName = testName[:40]
+	}
+	testID, testSK, err := p.sub2apiCreateKey(ctx, base, jwt, testName, targetID)
 	if err != nil {
-		return before, "", err
+		return before, "", fmt.Errorf("创建测试 key 失败: %w", err)
 	}
-	if st != 200 {
-		// try without /api/v1 prefix (some deploys mount at root)
-		st2, body2, err2 := p.sub2apiPanelDo(ctx, base, jwt, http.MethodPut, "/keys/"+strconv.FormatInt(keyID, 10), payload)
-		if err2 != nil {
-			return before, "", err2
+	defer func() {
+		_ = p.sub2apiDeleteKey(ctx, base, jwt, testID)
+	}()
+
+	// 2) Probe temp key (prod traffic unaffected).
+	pr := p.probeViaUpstreamWithKey(ctx, acc, base, testSK, 8*time.Second, "upstream-group-test-key")
+	if pr.Verdict != "pass" && pr.Verdict != "slow" {
+		return before, "", fmt.Errorf("测试 key 探测失败(%s): %s — 生产 key 未改动", pr.Verdict, truncateStr(pr.Error, 160))
+	}
+
+	// 3) Soft-drain production account then switch production key.
+	prevPri, drained := p.softDrainAccount(ctx, acc)
+	switched := false
+	defer func() {
+		if drained && p.Accounts != nil {
+			// reload and restore priority unless still failing
+			if a, e := p.Accounts.GetByID(ctx, acc.ID); e == nil && a != nil {
+				a.Priority = prevPri
+				_ = p.Accounts.Update(ctx, a)
+			}
 		}
-		if st2 != 200 {
-			return before, "", fmt.Errorf("sub2api 改组失败 HTTP %d/%d: %s", st, st2, truncateForErr(body, 160)+truncateForErr(body2, 80))
+	}()
+
+	if err := p.sub2apiUpdateKeyGroup(ctx, base, jwt, prodKeyID, targetID); err != nil {
+		return before, "", fmt.Errorf("生产 key 改组失败(测试已通过): %w", err)
+	}
+	switched = true
+
+	// 4) Probe production sk on new group; rollback on fail.
+	if prodSK != "" {
+		pr2 := p.probeViaUpstreamWithKey(ctx, acc, base, prodSK, 8*time.Second, "upstream-group-prod-verify")
+		if pr2.Verdict != "pass" && pr2.Verdict != "slow" {
+			_ = p.sub2apiUpdateKeyGroup(ctx, base, jwt, prodKeyID, curGID)
+			return before, "", fmt.Errorf("生产 key 切后探测失败,已回滚: %s", truncateStr(pr2.Error, 160))
 		}
 	}
-	after = strconv.FormatInt(targetID, 10)
-	if targetName != "" {
-		after = after + ":" + targetName
-	}
-	// cache key id
+	_ = switched
+	after = strconv.FormatInt(targetID, 10) + ":" + target.Name
+	p.persistUpstreamGroupSwitch(ctx, acc, before, after, target.Ratio, "sub2api")
 	if acc.Extra == nil {
 		acc.Extra = map[string]any{}
 	}
-	acc.Extra[ExtraUpstreamPanelKeyID] = keyID
-	p.persistUpstreamGroupSwitch(ctx, acc, before, after, targetRatio, "sub2api")
+	acc.Extra[ExtraUpstreamPanelKeyID] = prodKeyID
+	if p.Accounts != nil {
+		_ = p.Accounts.UpdateExtra(ctx, acc.ID, map[string]any{ExtraUpstreamPanelKeyID: prodKeyID})
+	}
 	return before, after, nil
 }
+
+func (p *AIPilotService) softDrainAccount(ctx context.Context, acc *Account) (prev int, drained bool) {
+	if acc == nil || p.Accounts == nil {
+		return 0, false
+	}
+	prev = acc.Priority
+	if prev > AIObservationPriority {
+		return prev, false // already spare
+	}
+	// Move to spare tier so strict layering steers traffic away before group flip.
+	a, err := p.Accounts.GetByID(ctx, acc.ID)
+	if err != nil || a == nil {
+		return prev, false
+	}
+	a.Priority = AIPriorityBuriedThreshold
+	if err := p.Accounts.Update(ctx, a); err != nil {
+		return prev, false
+	}
+	acc.Priority = AIPriorityBuriedThreshold
+	// Brief pause so in-flight selection prefers other main-tier peers.
+	select {
+	case <-ctx.Done():
+	case <-time.After(AIUpstreamGroupSoftDrain):
+	}
+	return prev, true
+}
+
+// --- Safe new-api path ---
+
+func (p *AIPilotService) safeSwitchNewAPI(ctx context.Context, acc *Account, base, prodSK string, target UpstreamGroupCandidate) (before, after string, err error) {
+	mgmt := extraString(acc.Extra, ExtraUpstreamMgmtToken)
+	uid := extraString(acc.Extra, ExtraUpstreamMgmtUserID)
+	if mgmt == "" {
+		return "", "", fmt.Errorf("newapi 缺少 mgmt token")
+	}
+	// List tokens, find production
+	tokens, err := p.newAPIListTokens(ctx, base, mgmt, uid)
+	if err != nil {
+		return "", "", err
+	}
+	prodTok, ok := matchOneAPIToken(prodSK, tokens)
+	if !ok {
+		return "", "", fmt.Errorf("token 列表未匹配本账号 sk")
+	}
+	before = strings.TrimSpace(prodTok.Group)
+	if strings.EqualFold(before, target.Name) {
+		return before, target.Name, nil
+	}
+
+	// 1) Create temp token on target group
+	testName := fmt.Sprintf("ai-probe-%d", acc.ID)
+	testID, testKey, err := p.newAPICreateToken(ctx, base, mgmt, uid, testName, target.Name)
+	if err != nil {
+		return before, "", fmt.Errorf("创建测试 token 失败: %w", err)
+	}
+	defer func() { _ = p.newAPIDeleteToken(ctx, base, mgmt, uid, testID) }()
+
+	pr := p.probeViaUpstreamWithKey(ctx, acc, base, testKey, 8*time.Second, "upstream-group-test-token")
+	if pr.Verdict != "pass" && pr.Verdict != "slow" {
+		return before, "", fmt.Errorf("测试 token 探测失败(%s): %s — 生产 token 未改动", pr.Verdict, truncateStr(pr.Error, 160))
+	}
+
+	prevPri, drained := p.softDrainAccount(ctx, acc)
+	defer func() {
+		if drained && p.Accounts != nil {
+			if a, e := p.Accounts.GetByID(ctx, acc.ID); e == nil && a != nil {
+				a.Priority = prevPri
+				_ = p.Accounts.Update(ctx, a)
+			}
+		}
+	}()
+
+	if err := p.newAPIUpdateTokenGroup(ctx, base, mgmt, uid, prodTok, target.Name); err != nil {
+		return before, "", fmt.Errorf("生产 token 改组失败: %w", err)
+	}
+	if prodSK != "" {
+		pr2 := p.probeViaUpstreamWithKey(ctx, acc, base, prodSK, 8*time.Second, "upstream-group-prod-verify")
+		if pr2.Verdict != "pass" && pr2.Verdict != "slow" {
+			_ = p.newAPIUpdateTokenGroup(ctx, base, mgmt, uid, prodTok, before)
+			return before, "", fmt.Errorf("生产 token 切后探测失败,已回滚: %s", truncateStr(pr2.Error, 160))
+		}
+	}
+	after = target.Name
+	p.persistUpstreamGroupSwitch(ctx, acc, before, after, target.Ratio, "newapi")
+	return before, after, nil
+}
+
+// probeViaUpstreamWithKey is like probeViaUpstream but uses an explicit sk
+// (test key / production key) so group tests never require flipping production first.
+func (p *AIPilotService) probeViaUpstreamWithKey(
+	ctx context.Context,
+	acc *Account,
+	base, apiKey string,
+	timeout time.Duration,
+	reason string,
+) activationResult {
+	res := activationResult{AccountID: 0, Reason: reason, Fresh: true, Source: "upstream"}
+	if acc != nil {
+		res.AccountID = acc.ID
+	}
+	if apiKey == "" || strings.Contains(apiKey, "*") {
+		res.Verdict = "fail"
+		res.Error = "empty api key"
+		return res
+	}
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	if base == "" {
+		res.Verdict = "fail"
+		res.Error = "empty base"
+		return res
+	}
+	client := p.HTTP
+	if client == nil {
+		client = http.DefaultClient
+	}
+	models := probeModelCandidates(acc)
+	if len(models) == 0 {
+		models = []string{"gpt-5", "gpt-4o-mini"}
+	}
+	if len(models) > 2 {
+		models = models[:2]
+	}
+	useResponses := true
+	if acc != nil && acc.Extra != nil {
+		if v, ok := acc.Extra["openai_responses_supported"].(bool); ok && !v {
+			useResponses = false
+		}
+	}
+	attemptTO := timeout
+	if attemptTO <= 0 || attemptTO > 8*time.Second {
+		attemptTO = 8 * time.Second
+	}
+	type pathSpec struct {
+		path string
+		body func(string) map[string]any
+	}
+	var paths []pathSpec
+	if useResponses {
+		paths = []pathSpec{{"/responses", func(m string) map[string]any {
+			return map[string]any{"model": m, "input": "ping", "max_output_tokens": 16, "stream": false}
+		}}}
+	} else {
+		paths = []pathSpec{{"/chat/completions", func(m string) map[string]any {
+			return map[string]any{
+				"model": m, "messages": []map[string]string{{"role": "user", "content": "ping"}},
+				"max_tokens": 1, "temperature": 0, "stream": false,
+			}
+		}}}
+	}
+	var lastErr string
+	for _, pe := range paths {
+		url := joinOpenAIURL(base, pe.path)
+		for _, model := range models {
+			raw, _ := json.Marshal(pe.body(model))
+			reqCtx, cancel := context.WithTimeout(ctx, attemptTO)
+			httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(raw))
+			if err != nil {
+				cancel()
+				res.Verdict = "fail"
+				res.Error = err.Error()
+				return res
+			}
+			httpReq.Header.Set("Content-Type", "application/json")
+			httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+			httpReq.Header.Set("User-Agent", upstreamPanelUserAgent)
+			start := time.Now()
+			resp, err := client.Do(httpReq)
+			ttfb := time.Since(start).Milliseconds()
+			if err != nil {
+				cancel()
+				lastErr = err.Error()
+				continue
+			}
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+			resp.Body.Close()
+			cancel()
+			res.TTFBMs = ttfb
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				res.Verdict = "pass"
+				if ttfb > 5000 {
+					res.Verdict = "slow"
+				}
+				return res
+			}
+			lastErr = fmt.Sprintf("HTTP %d %s", resp.StatusCode, truncateStr(string(b), 120))
+			// model not found → try next model
+			if resp.StatusCode == 404 || strings.Contains(strings.ToLower(string(b)), "model") {
+				continue
+			}
+		}
+	}
+	res.Verdict = "fail"
+	res.Error = lastErr
+	if res.Error == "" {
+		res.Error = "probe failed"
+	}
+	return res
+}
+
+// injectUpstreamGroupSwitches proposes at most one safe cheaper switch per run
+// for healthy switch-enabled accounts (backend-driven, not LLM-only).
+func injectUpstreamGroupSwitches(
+	p *AIPilotService,
+	ctx context.Context,
+	decision *decision,
+	accounts []Account,
+	recentTraffic map[int64]AccountTrafficStats,
+	cfg AIAutopilotSettings,
+) int {
+	if decision == nil || p == nil || !cfg.OpAllowed(AIOpSwitchUpstreamGroup) {
+		return 0
+	}
+	have := map[int64]bool{}
+	for _, a := range decision.Actions {
+		if a.Op == AIOpSwitchUpstreamGroup || a.Op == AIOpSetPriority {
+			have[a.AccountID] = true
+		}
+	}
+	injected := 0
+	const maxPerRun = 1
+	for i := range accounts {
+		if injected >= maxPerRun {
+			break
+		}
+		acc := &accounts[i]
+		if !accountUpstreamGroupSwitchEnabled(acc) || !acc.AIManaged {
+			continue
+		}
+		if have[acc.ID] {
+			continue
+		}
+		if recentWindowHardFail(recentTraffic[acc.ID]) {
+			continue
+		}
+		if in, _ := upstreamGroupSwitchInDwell(acc, time.Now()); in {
+			continue
+		}
+		cands, err := p.ListUpstreamGroupCandidates(ctx, acc)
+		if err != nil || len(cands) == 0 {
+			continue
+		}
+		cur := extraFloat(acc.Extra, ExtraAIRateMultiplier)
+		if cur <= 0 {
+			// try from current group id match
+			curID := extraString(acc.Extra, ExtraUpstreamCurrentGroup)
+			for _, c := range cands {
+				if c.ID == curID || strings.HasPrefix(curID, c.ID+":") || strings.EqualFold(c.Name, curID) {
+					cur = c.Ratio
+					break
+				}
+			}
+		}
+		if cur <= 0 {
+			continue
+		}
+		// pick cheapest eligible with enough savings
+		var best *UpstreamGroupCandidate
+		for i := range cands {
+			c := &cands[i]
+			if !c.Eligible || c.Ratio <= 0 {
+				continue
+			}
+			if c.Ratio >= cur*(1-AIUpstreamGroupMinSaveRatio)-1e-12 {
+				continue
+			}
+			if best == nil || c.Ratio < best.Ratio {
+				best = c
+			}
+		}
+		if best == nil {
+			continue
+		}
+		val := best.ID
+		if val == "" {
+			val = best.Name
+		}
+		decision.Actions = append(decision.Actions, decisionAction{
+			AccountID: acc.ID,
+			Op:        AIOpSwitchUpstreamGroup,
+			Value:     val,
+			Reason: fmt.Sprintf(
+				"性价比/安全切组: 同平台候选 %s ratio=%.3f < 当前≈%.3f (省≥%.0f%%);先测临时key再改生产key",
+				best.Name, best.Ratio, cur, AIUpstreamGroupMinSaveRatio*100,
+			),
+			Confidence: 0.86,
+		})
+		have[acc.ID] = true
+		injected++
+	}
+	return injected
+}
+
+// --- sub2api panel helpers ---
 
 type sub2apiPanelGroup struct {
 	ID             int64
@@ -382,7 +829,6 @@ type sub2apiPanelGroup struct {
 }
 
 func (p *AIPilotService) ensureSub2APIPanelJWT(ctx context.Context, acc *Account, base string) (string, error) {
-	// Reuse cached access token if not expired (leave 2m skew).
 	tok := extraString(acc.Extra, ExtraUpstreamPanelAccessToken)
 	exp := extraString(acc.Extra, ExtraUpstreamPanelTokenExpiresAt)
 	if tok != "" {
@@ -393,7 +839,6 @@ func (p *AIPilotService) ensureSub2APIPanelJWT(ctx context.Context, acc *Account
 			return tok, nil
 		}
 	}
-	// Try refresh
 	refresh := extraString(acc.Extra, ExtraUpstreamPanelRefreshToken)
 	if refresh != "" {
 		if access, newRefresh, expiresAt, err := p.sub2apiPanelRefresh(ctx, base, refresh); err == nil && access != "" {
@@ -429,7 +874,6 @@ func (p *AIPilotService) cacheSub2APIPanelTokens(ctx context.Context, acc *Accou
 		acc.Extra[ExtraUpstreamPanelTokenExpiresAt] = expiresAt
 		persist[ExtraUpstreamPanelTokenExpiresAt] = expiresAt
 	} else {
-		// default 1h if unknown
 		exp := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
 		acc.Extra[ExtraUpstreamPanelTokenExpiresAt] = exp
 		persist[ExtraUpstreamPanelTokenExpiresAt] = exp
@@ -440,10 +884,7 @@ func (p *AIPilotService) cacheSub2APIPanelTokens(ctx context.Context, acc *Accou
 }
 
 func (p *AIPilotService) sub2apiPanelLogin(ctx context.Context, base, email, password string) (access, refresh, expiresAt string, err error) {
-	payload, _ := json.Marshal(map[string]string{
-		"email":    email,
-		"password": password,
-	})
+	payload, _ := json.Marshal(map[string]string{"email": email, "password": password})
 	for _, path := range []string{"/api/v1/auth/login", "/auth/login"} {
 		st, body, e := p.sub2apiPanelDo(ctx, base, "", http.MethodPost, path, payload)
 		if e != nil {
@@ -451,19 +892,18 @@ func (p *AIPilotService) sub2apiPanelLogin(ctx context.Context, base, email, pas
 			continue
 		}
 		if st != 200 {
-			err = fmt.Errorf("login HTTP %d: %s", st, truncateForErr(body, 180))
-			// captcha / 2fa hints
 			low := strings.ToLower(string(body))
 			if strings.Contains(low, "captcha") || strings.Contains(low, "turnstile") || strings.Contains(low, "2fa") || strings.Contains(low, "totp") {
 				return "", "", "", fmt.Errorf("面板登录需要验证码/2FA（暂不支持）: %s", truncateForErr(body, 160))
 			}
+			err = fmt.Errorf("login HTTP %d: %s", st, truncateForErr(body, 180))
 			continue
 		}
 		access, refresh, expiresAt = parseSub2APIAuthTokens(body)
 		if access != "" {
 			return access, refresh, expiresAt, nil
 		}
-		err = fmt.Errorf("login 响应无 access_token: %s", truncateForErr(body, 160))
+		err = fmt.Errorf("login 响应无 access_token")
 	}
 	if err == nil {
 		err = fmt.Errorf("login failed")
@@ -494,7 +934,6 @@ func parseSub2APIAuthTokens(body []byte) (access, refresh, expiresAt string) {
 	if json.Unmarshal(body, &root) != nil {
 		return "", "", ""
 	}
-	// envelope: {code, data:{access_token,refresh_token,expires_at}} or flat
 	data := root
 	if d, ok := root["data"].(map[string]any); ok {
 		data = d
@@ -506,7 +945,6 @@ func parseSub2APIAuthTokens(body []byte) (access, refresh, expiresAt string) {
 	refresh = strAny(data["refresh_token"])
 	expiresAt = strAny(data["expires_at"])
 	if expiresAt == "" {
-		// expires_in seconds
 		if sec := anyToFloat64(data["expires_in"]); sec > 0 {
 			expiresAt = time.Now().UTC().Add(time.Duration(sec) * time.Second).Format(time.RFC3339)
 		}
@@ -533,14 +971,12 @@ func parseSub2APIAvailableGroups(body []byte) []sub2apiPanelGroup {
 	if json.Unmarshal(body, &root) != nil {
 		return nil
 	}
-	// unwrap data
 	var arr []any
 	switch v := root.(type) {
 	case map[string]any:
 		if d, ok := v["data"].([]any); ok {
 			arr = d
 		} else if d, ok := v["data"].(map[string]any); ok {
-			// maybe {items:[]}
 			if items, ok := d["items"].([]any); ok {
 				arr = items
 			}
@@ -559,8 +995,7 @@ func parseSub2APIAvailableGroups(body []byte) []sub2apiPanelGroup {
 			continue
 		}
 		g := sub2apiPanelGroup{
-			ID:             id,
-			Name:           strAny(m["name"]),
+			ID: id, Name: strAny(m["name"]),
 			RateMultiplier: anyToFloat64(m["rate_multiplier"]),
 			Platform:       strAny(m["platform"]),
 		}
@@ -573,12 +1008,9 @@ func parseSub2APIAvailableGroups(body []byte) []sub2apiPanelGroup {
 }
 
 func (p *AIPilotService) sub2apiFindKey(ctx context.Context, base, jwt, apiKey string, acc *Account) (keyID int64, groupID int64, err error) {
-	// cached id
 	if cached := int64(extraFloat(acc.Extra, ExtraUpstreamPanelKeyID)); cached > 0 {
-		// still verify via list or get
 		keyID = cached
 	}
-	// list pages
 	for page := 1; page <= 5; page++ {
 		path := fmt.Sprintf("/api/v1/keys?page=%d&page_size=50", page)
 		st, body, e := p.sub2apiPanelDo(ctx, base, jwt, http.MethodGet, path, nil)
@@ -608,7 +1040,7 @@ func (p *AIPilotService) sub2apiFindKey(ctx context.Context, base, jwt, apiKey s
 	if keyID > 0 {
 		return keyID, 0, fmt.Errorf("缓存 key_id=%d 未在列表中找到", keyID)
 	}
-	return 0, 0, fmt.Errorf("面板 key 列表未匹配到本账号 sk（请确认 sk 完整且属于该面板用户）")
+	return 0, 0, fmt.Errorf("面板 key 列表未匹配到本账号 sk")
 }
 
 type sub2apiPanelKey struct {
@@ -656,14 +1088,81 @@ func parseSub2APIKeyList(body []byte) []sub2apiPanelKey {
 				gid = int64(anyToFloat64(g["id"]))
 			}
 		}
-		out = append(out, sub2apiPanelKey{
-			ID:      id,
-			Key:     strAny(m["key"]),
-			Name:    strAny(m["name"]),
-			GroupID: gid,
-		})
+		out = append(out, sub2apiPanelKey{ID: id, Key: strAny(m["key"]), Name: strAny(m["name"]), GroupID: gid})
 	}
 	return out
+}
+
+func (p *AIPilotService) sub2apiCreateKey(ctx context.Context, base, jwt, name string, groupID int64) (id int64, key string, err error) {
+	payload, _ := json.Marshal(map[string]any{"name": name, "group_id": groupID})
+	for _, path := range []string{"/api/v1/keys", "/keys"} {
+		st, body, e := p.sub2apiPanelDo(ctx, base, jwt, http.MethodPost, path, payload)
+		if e != nil {
+			err = e
+			continue
+		}
+		if st != 200 && st != 201 {
+			err = fmt.Errorf("create key HTTP %d: %s", st, truncateForErr(body, 160))
+			continue
+		}
+		id, key = parseSub2APICreatedKey(body)
+		if id > 0 && key != "" {
+			return id, key, nil
+		}
+		err = fmt.Errorf("create key 响应缺 id/key: %s", truncateForErr(body, 160))
+	}
+	if err == nil {
+		err = fmt.Errorf("create key failed")
+	}
+	return 0, "", err
+}
+
+func parseSub2APICreatedKey(body []byte) (id int64, key string) {
+	var root map[string]any
+	if json.Unmarshal(body, &root) != nil {
+		return 0, ""
+	}
+	data := root
+	if d, ok := root["data"].(map[string]any); ok {
+		data = d
+	}
+	id = int64(anyToFloat64(data["id"]))
+	key = strAny(data["key"])
+	return id, key
+}
+
+func (p *AIPilotService) sub2apiDeleteKey(ctx context.Context, base, jwt string, id int64) error {
+	if id <= 0 {
+		return nil
+	}
+	for _, path := range []string{
+		"/api/v1/keys/" + strconv.FormatInt(id, 10),
+		"/keys/" + strconv.FormatInt(id, 10),
+	} {
+		st, _, err := p.sub2apiPanelDo(ctx, base, jwt, http.MethodDelete, path, nil)
+		if err == nil && (st == 200 || st == 204) {
+			return nil
+		}
+	}
+	return fmt.Errorf("delete key %d failed", id)
+}
+
+func (p *AIPilotService) sub2apiUpdateKeyGroup(ctx context.Context, base, jwt string, keyID, groupID int64) error {
+	payload, _ := json.Marshal(map[string]any{"group_id": groupID})
+	for _, path := range []string{
+		"/api/v1/keys/" + strconv.FormatInt(keyID, 10),
+		"/keys/" + strconv.FormatInt(keyID, 10),
+	} {
+		st, body, err := p.sub2apiPanelDo(ctx, base, jwt, http.MethodPut, path, payload)
+		if err != nil {
+			continue
+		}
+		if st == 200 {
+			return nil
+		}
+		_ = body
+	}
+	return fmt.Errorf("update key group failed")
 }
 
 func keyMatchesSK(apiKey, listed string) bool {
@@ -675,7 +1174,6 @@ func keyMatchesSK(apiKey, listed string) bool {
 	if apiKey == listed {
 		return true
 	}
-	// Masked listing (sk-****abcd): compare trailing alnum of both.
 	if strings.Contains(listed, "*") {
 		want := trailingAlnum(apiKey, 6)
 		got := trailingAlnum(listed, 6)
@@ -695,32 +1193,25 @@ func trailingAlnum(s string, n int) string {
 			b.WriteByte(c)
 		}
 	}
-	rev := b.String()
-	// reverse
-	r := []byte(rev)
+	r := []byte(b.String())
 	for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
 		r[i], r[j] = r[j], r[i]
 	}
 	return string(r)
 }
 
-// upstreamPanelUserAgent must be identical for login and subsequent panel calls:
-// many sub2api hosts enable session binding (IP+UA hash).
-const upstreamPanelUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-
 func (p *AIPilotService) sub2apiPanelDo(ctx context.Context, base, jwt, method, path string, body []byte) (int, []byte, error) {
 	client := p.HTTP
 	if client == nil {
 		client = http.DefaultClient
 	}
-	ctx2, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx2, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
 	}
-	url := strings.TrimRight(base, "/") + path
-	req, err := http.NewRequestWithContext(ctx2, method, url, rdr)
+	req, err := http.NewRequestWithContext(ctx2, method, strings.TrimRight(base, "/")+path, rdr)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -741,6 +1232,174 @@ func (p *AIPilotService) sub2apiPanelDo(ctx context.Context, base, jwt, method, 
 	return resp.StatusCode, b, nil
 }
 
+// --- new-api helpers ---
+
+func (p *AIPilotService) newAPIListTokens(ctx context.Context, base, mgmt, uid string) ([]OneAPIToken, error) {
+	for _, path := range []string{
+		"/api/token/?p=0&size=100", "/api/token/?p=1&size=100",
+		"/api/token/?page=1&page_size=100", "/api/token/",
+	} {
+		st, body, err := p.oneAPIDo(ctx, base, mgmt, uid, http.MethodGet, path, nil)
+		if err != nil || st != 200 {
+			continue
+		}
+		toks := ParseOneAPITokenList(body)
+		if len(toks) > 0 {
+			return toks, nil
+		}
+	}
+	return nil, fmt.Errorf("无法拉取 token 列表")
+}
+
+func (p *AIPilotService) newAPICreateToken(ctx context.Context, base, mgmt, uid, name, group string) (id int, key string, err error) {
+	payload, _ := json.Marshal(map[string]any{
+		"name": name, "group": group, "unlimited_quota": true,
+		"expired_time": -1, "remain_quota": 0,
+	})
+	st, body, e := p.oneAPIDo(ctx, base, mgmt, uid, http.MethodPost, "/api/token/", payload)
+	if e != nil {
+		return 0, "", e
+	}
+	if st != 200 || !oneAPISuccess(body) {
+		return 0, "", fmt.Errorf("create token HTTP %d: %s", st, truncateForErr(body, 160))
+	}
+	// re-list to find by name
+	toks, err := p.newAPIListTokens(ctx, base, mgmt, uid)
+	if err != nil {
+		return 0, "", err
+	}
+	var found OneAPIToken
+	for _, t := range toks {
+		if t.Name == name {
+			found = t
+			break
+		}
+	}
+	if found.ID == "" {
+		return 0, "", fmt.Errorf("created token not found in list")
+	}
+	id = mustAtoiInt(found.ID)
+	// reveal key
+	st, body, e = p.oneAPIDo(ctx, base, mgmt, uid, http.MethodPost, "/api/token/"+found.ID+"/key", nil)
+	if e != nil || st != 200 {
+		// some forks return key in list
+		if found.Key != "" && !strings.Contains(found.Key, "*") {
+			return id, found.Key, nil
+		}
+		return 0, "", fmt.Errorf("reveal token key failed")
+	}
+	key = parseNewAPITokenKey(body)
+	if key == "" {
+		return 0, "", fmt.Errorf("empty token key")
+	}
+	return id, key, nil
+}
+
+func parseNewAPITokenKey(body []byte) string {
+	var root map[string]any
+	if json.Unmarshal(body, &root) != nil {
+		return ""
+	}
+	if d, ok := root["data"].(map[string]any); ok {
+		if k := strAny(d["key"]); k != "" {
+			return k
+		}
+	}
+	return strAny(root["key"])
+}
+
+func (p *AIPilotService) newAPIDeleteToken(ctx context.Context, base, mgmt, uid string, id int) error {
+	if id <= 0 {
+		return nil
+	}
+	st, _, err := p.oneAPIDo(ctx, base, mgmt, uid, http.MethodDelete, "/api/token/"+strconv.Itoa(id), nil)
+	if err != nil {
+		return err
+	}
+	if st != 200 {
+		return fmt.Errorf("delete token HTTP %d", st)
+	}
+	return nil
+}
+
+func (p *AIPilotService) newAPIUpdateTokenGroup(ctx context.Context, base, mgmt, uid string, tok OneAPIToken, group string) error {
+	payload := map[string]any{
+		"id": mustAtoi(tok.ID), "name": tok.Name, "group": group,
+		"unlimited_quota": true, "remain_quota": tok.RemainQuota, "expired_time": -1,
+	}
+	body, _ := json.Marshal(payload)
+	st, resp, err := p.oneAPIDo(ctx, base, mgmt, uid, http.MethodPut, "/api/token/", body)
+	if err != nil {
+		return err
+	}
+	if st == 200 && oneAPISuccess(resp) {
+		return nil
+	}
+	payload["id"] = tok.ID
+	body, _ = json.Marshal(payload)
+	st, resp, err = p.oneAPIDo(ctx, base, mgmt, uid, http.MethodPut, "/api/token/", body)
+	if err != nil {
+		return err
+	}
+	if st != 200 || !oneAPISuccess(resp) {
+		return fmt.Errorf("update token group HTTP %d: %s", st, truncateForErr(resp, 160))
+	}
+	return nil
+}
+
+func matchOneAPIToken(apiKey string, tokens []OneAPIToken) (OneAPIToken, bool) {
+	apiKey = strings.TrimSpace(apiKey)
+	for _, t := range tokens {
+		if apiKey != "" && keyMatchesSK(apiKey, t.Key) {
+			return t, true
+		}
+	}
+	if apiKey == "" && len(tokens) == 1 {
+		return tokens[0], true
+	}
+	return OneAPIToken{}, false
+}
+
+func oneAPISuccess(body []byte) bool {
+	var obj map[string]any
+	if json.Unmarshal(body, &obj) != nil {
+		return len(body) == 0
+	}
+	if v, ok := obj["success"].(bool); ok {
+		return v
+	}
+	if c, ok := obj["code"]; ok {
+		switch n := c.(type) {
+		case float64:
+			return n == 0 || n == 200
+		case string:
+			return n == "0" || n == "success"
+		}
+	}
+	return true
+}
+
+func mustAtoi(s string) any {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return s
+	}
+	return n
+}
+
+func mustAtoiInt(s string) int {
+	n, _ := strconv.Atoi(strings.TrimSpace(s))
+	return n
+}
+
+func truncateForErr(b []byte, n int) string {
+	s := strings.TrimSpace(string(b))
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
+}
+
 func (p *AIPilotService) persistUpstreamGroupSwitch(ctx context.Context, acc *Account, before, after string, newRatio float64, source string) {
 	if acc.Extra == nil {
 		acc.Extra = map[string]any{}
@@ -756,6 +1415,11 @@ func (p *AIPilotService) persistUpstreamGroupSwitch(ctx context.Context, acc *Ac
 	}
 	acc.Extra[ExtraUpstreamCurrentGroup] = after
 	acc.Extra[ExtraUpstreamLastGroupSwitchAt] = now
+	// invalidate candidates cache
+	delete(acc.Extra, ExtraUpstreamGroupCandidatesJSON)
+	delete(acc.Extra, ExtraUpstreamGroupCandidatesAt)
+	persist[ExtraUpstreamGroupCandidatesJSON] = ""
+	persist[ExtraUpstreamGroupCandidatesAt] = ""
 	if newRatio > 0 {
 		acc.Extra[ExtraAIRateMultiplier] = newRatio
 		acc.Extra[ExtraAIRateSource] = source + "_group_switch"
@@ -769,76 +1433,7 @@ func (p *AIPilotService) persistUpstreamGroupSwitch(ctx context.Context, acc *Ac
 	}
 }
 
-func matchOneAPIToken(apiKey string, tokens []OneAPIToken) (OneAPIToken, bool) {
-	apiKey = strings.TrimSpace(apiKey)
-	for _, t := range tokens {
-		if apiKey != "" && keyMatchesSK(apiKey, t.Key) {
-			return t, true
-		}
-		// also try suffix of listed key (often full or masked)
-		if apiKey != "" && t.Key != "" && (strings.HasSuffix(apiKey, t.Key) || strings.HasSuffix(t.Key, trailingAlnum(apiKey, 8))) {
-			return t, true
-		}
-	}
-	// single token account: if only one enabled token, use it when apiKey empty
-	if apiKey == "" && len(tokens) == 1 {
-		return tokens[0], true
-	}
-	enabled := 0
-	var only OneAPIToken
-	for _, t := range tokens {
-		if t.Enabled {
-			enabled++
-			only = t
-		}
-	}
-	if apiKey == "" && enabled == 1 {
-		return only, true
-	}
-	return OneAPIToken{}, false
-}
-
-func oneAPISuccess(body []byte) bool {
-	var obj map[string]any
-	if json.Unmarshal(body, &obj) != nil {
-		// empty/unknown: treat HTTP 200 as ok
-		return len(body) == 0 || strings.TrimSpace(string(body)) == "ok"
-	}
-	if v, ok := obj["success"].(bool); ok {
-		return v
-	}
-	// some return {code:0} or {data:...}
-	if c, ok := obj["code"]; ok {
-		switch n := c.(type) {
-		case float64:
-			return n == 0 || n == 200
-		case string:
-			return n == "0" || n == "success"
-		}
-	}
-	if _, ok := obj["data"]; ok {
-		return true
-	}
-	return true
-}
-
-func mustAtoi(s string) any {
-	n, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil {
-		return s
-	}
-	return n
-}
-
-func truncateForErr(b []byte, n int) string {
-	s := strings.TrimSpace(string(b))
-	if len(s) > n {
-		return s[:n] + "…"
-	}
-	return s
-}
-
-// gateSwitchUpstreamGroupReason is apply-time conservative gate (quality + dwell + enable).
+// gateSwitchUpstreamGroupReason is apply-time conservative gate.
 func gateSwitchUpstreamGroupReason(acc *Account, recent AccountTrafficStats, cfg AIAutopilotSettings) string {
 	if acc == nil {
 		return "账号不存在"
@@ -852,7 +1447,6 @@ func gateSwitchUpstreamGroupReason(acc *Account, recent AccountTrafficStats, cfg
 	if in, rem := upstreamGroupSwitchInDwell(acc, time.Now()); in {
 		return fmt.Sprintf("切组驻留期内,剩余约 %.0fm", rem.Minutes()+0.5)
 	}
-	// Conservative: refuse switch-to-cheaper when recent hard-failing.
 	if recentWindowHardFail(recent) {
 		return "近窗硬失败,禁止切更便宜组;请先 set_priority/set_weight 或 disable"
 	}

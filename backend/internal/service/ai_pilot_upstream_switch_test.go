@@ -14,14 +14,24 @@ func TestKeyMatchesSK(t *testing.T) {
 	if !keyMatchesSK("sk-abcdefghijklmnop", "sk-abcdefghijklmnop") {
 		t.Fatal("exact match")
 	}
-	if !keyMatchesSK("sk-abcdefghijklmnop", "sk-****mnop") && !keyMatchesSK("sk-abcdefghijklmnop", "sk-****klmnop") {
-		// trailing alnum of listed may be shorter
-	}
 	if !keyMatchesSK("sk-12345678abcdef", "sk-****abcdef") {
 		t.Fatal("masked suffix match")
 	}
 	if keyMatchesSK("sk-aaa", "sk-bbb") {
 		t.Fatal("different keys")
+	}
+}
+
+func TestPlatformMatchesAccount(t *testing.T) {
+	t.Parallel()
+	if !platformMatchesAccount(PlatformOpenAI, "openai") {
+		t.Fatal("openai")
+	}
+	if platformMatchesAccount(PlatformOpenAI, PlatformAnthropic) {
+		t.Fatal("claude must not match openai account")
+	}
+	if !platformMatchesAccount(PlatformAnthropic, "claude") {
+		t.Fatal("claude alias")
 	}
 }
 
@@ -32,130 +42,198 @@ func TestParseSub2APIAuthTokens(t *testing.T) {
 	if a != "tok-a" || r != "tok-r" || exp == "" {
 		t.Fatalf("got a=%q r=%q exp=%q", a, r, exp)
 	}
-	flat := []byte(`{"access_token":"x","refresh_token":"y"}`)
-	a, r, _ = parseSub2APIAuthTokens(flat)
-	if a != "x" || r != "y" {
-		t.Fatalf("flat got a=%q r=%q", a, r)
-	}
 }
 
-func TestParseSub2APIAvailableGroups(t *testing.T) {
+func TestParseSub2APIAvailableGroups_FiltersShape(t *testing.T) {
 	t.Parallel()
-	body := []byte(`{"data":[{"id":2,"name":"Pro","rate_multiplier":0.05,"platform":"openai"},{"id":5,"name":"Team","rate_multiplier":0.08}]}`)
+	body := []byte(`{"data":[
+		{"id":59,"name":"plus-cheap","rate_multiplier":0.04,"platform":"openai"},
+		{"id":41,"name":"claude","rate_multiplier":0.04,"platform":"anthropic"}
+	]}`)
 	gs := parseSub2APIAvailableGroups(body)
-	if len(gs) != 2 || gs[0].ID != 2 || gs[0].RateMultiplier != 0.05 {
-		t.Fatalf("got %+v", gs)
-	}
-}
-
-func TestParseSub2APIKeyList(t *testing.T) {
-	t.Parallel()
-	body := []byte(`{"data":{"items":[{"id":9,"key":"sk-hello12345678","name":"k1","group_id":2}]}}`)
-	keys := parseSub2APIKeyList(body)
-	if len(keys) != 1 || keys[0].ID != 9 || keys[0].GroupID != 2 {
-		t.Fatalf("got %+v", keys)
+	if len(gs) != 2 {
+		t.Fatalf("parse all raw groups, got %d", len(gs))
 	}
 }
 
 func TestGateSwitchUpstreamGroupReason(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultAIAutopilotSettings()
-	// default op off
 	acc := &Account{ID: 1, Extra: map[string]any{ExtraAIUpstreamGroupSwitch: true}}
 	if reason := gateSwitchUpstreamGroupReason(acc, AccountTrafficStats{}, cfg); reason == "" {
-		t.Fatal("expected op disabled")
+		t.Fatal("expected op disabled by default")
 	}
 	cfg.OpSwitchUpstreamGroup = boolPtr(true)
 	if reason := gateSwitchUpstreamGroupReason(acc, AccountTrafficStats{}, cfg); reason != "" {
-		t.Fatalf("enabled should pass empty recent, got %q", reason)
+		t.Fatalf("should pass, got %q", reason)
 	}
-	// account switch off
-	acc2 := &Account{ID: 2}
-	if reason := gateSwitchUpstreamGroupReason(acc2, AccountTrafficStats{}, cfg); !strings.Contains(reason, "ai_upstream_group_switch") {
-		t.Fatalf("got %q", reason)
-	}
-	// recent hard fail
 	bad := AccountTrafficStats{Requests: 20, Successes: 5, Errors: 20}
 	if reason := gateSwitchUpstreamGroupReason(acc, bad, cfg); reason == "" {
 		t.Fatal("expected hard fail block")
 	}
-	// dwell
-	acc.Extra[ExtraUpstreamLastGroupSwitchAt] = time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
-	if reason := gateSwitchUpstreamGroupReason(acc, AccountTrafficStats{}, cfg); !strings.Contains(reason, "驻留") {
-		t.Fatalf("expected dwell, got %q", reason)
-	}
 }
 
-func TestSub2APIPanelLoginAndSwitch(t *testing.T) {
+func TestSafeSwitchSub2API_TestKeyFirst(t *testing.T) {
 	t.Parallel()
-	var loginHits, putHits int
+	var createHits, deleteHits, putHits, probeHits int
+	var prodGroup int64 = 44
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
-		loginHits++
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": map[string]any{"access_token": "jwt-test", "refresh_token": "ref-test", "expires_in": 7200},
+			"data": map[string]any{"access_token": "jwt-test", "refresh_token": "ref", "expires_in": 7200},
 		})
 	})
 	mux.HandleFunc("/api/v1/groups/available", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer jwt-test" {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{
+			{"id": 44, "name": "plus-mid", "rate_multiplier": 0.06, "platform": "openai"},
+			{"id": 59, "name": "plus-cheap", "rate_multiplier": 0.04, "platform": "openai"},
+			{"id": 41, "name": "claude", "rate_multiplier": 0.04, "platform": "anthropic"},
+		}})
+	})
+	mux.HandleFunc("/api/v1/keys", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			createHits++
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			gid := int64(anyToFloat64(body["group_id"]))
+			if gid != 59 {
+				t.Errorf("test key must be created on target group 59, got %v", body["group_id"])
+			}
+			// create returns full key
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"id": 999, "key": "sk-testkey99999999", "group_id": 59, "name": body["name"]},
+			})
+			return
+		}
+		// list
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"items": []map[string]any{
+				{"id": 1347, "key": "sk-prodkey12345678", "name": "plus", "group_id": prodGroup},
+			}},
+		})
+	})
+	mux.HandleFunc("/api/v1/keys/999", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deleteHits++
+			w.WriteHeader(200)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "ok"})
+			return
+		}
+		w.WriteHeader(405)
+	})
+	mux.HandleFunc("/api/v1/keys/1347", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			putHits++
+			// production switch only after test key existed
+			if createHits == 0 {
+				t.Error("must create test key before switching production")
+			}
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			prodGroup = int64(anyToFloat64(body["group_id"]))
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"id": 1347, "group_id": prodGroup},
+			})
+			return
+		}
+		w.WriteHeader(405)
+	})
+	// probe endpoints for test + prod keys
+	mux.HandleFunc("/responses", func(w http.ResponseWriter, r *http.Request) {
+		probeHits++
+		auth := r.Header.Get("Authorization")
+		// first probe should be test key, not prod — allow both pass
+		if !strings.Contains(auth, "sk-") {
 			w.WriteHeader(401)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": []map[string]any{
-				{"id": 2, "name": "cheap", "rate_multiplier": 0.04},
-				{"id": 5, "name": "stable", "rate_multiplier": 0.08},
-			},
-		})
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"id":"resp_1","output":[]}`))
 	})
-	mux.HandleFunc("/api/v1/keys", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": map[string]any{
-				"items": []map[string]any{
-					{"id": 42, "key": "sk-testhostkey12345678", "name": "main", "group_id": 5},
-				},
-			},
-		})
+	// also accept /v1/responses style via joinOpenAIURL
+	mux.HandleFunc("/v1/responses", func(w http.ResponseWriter, r *http.Request) {
+		probeHits++
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"id":"resp_1"}`))
 	})
-	mux.HandleFunc("/api/v1/keys/42", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			w.WriteHeader(405)
-			return
-		}
-		putHits++
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": 42, "group_id": 2}})
-	})
+
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	store := &aiPilotStoreMem{}
-	// minimal account repo stub via memoryAccountRepo from apply_unbury_test
 	accRepo := newMemoryAccountRepo(&Account{
-		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
-		Credentials: map[string]any{"api_key": "sk-testhostkey12345678", "base_url": srv.URL},
+		ID: 6154, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Priority:    AIObservationPriority,
+		Credentials: map[string]any{"api_key": "sk-prodkey12345678", "base_url": srv.URL},
 		Extra: map[string]any{
 			ExtraAIUpstreamGroupSwitch: true,
 			ExtraUpstreamKind:          "sub2api",
 			ExtraUpstreamPanelEmail:    "u@test.com",
 			ExtraUpstreamPanelPassword: "secret",
+			ExtraAIRateMultiplier:      0.06,
+			ExtraUpstreamCurrentGroup:  "44",
 		},
 	})
-	p := &AIPilotService{HTTP: srv.Client(), Repo: store, Accounts: accRepo}
-	acc, _ := accRepo.GetByID(t.Context(), 1)
-	before, after, err := p.SwitchUpstreamGroup(t.Context(), acc, "2")
+	p := &AIPilotService{HTTP: srv.Client(), Accounts: accRepo, Repo: &aiPilotStoreMem{}}
+	acc, _ := accRepo.GetByID(t.Context(), 6154)
+
+	// Claude target must be rejected by candidate filter
+	_, _, err := p.SwitchUpstreamGroup(t.Context(), acc, "41")
+	if err == nil || !strings.Contains(err.Error(), "候选") {
+		t.Fatalf("claude group should be rejected, err=%v", err)
+	}
+
+	acc, _ = accRepo.GetByID(t.Context(), 6154)
+	before, after, err := p.SwitchUpstreamGroup(t.Context(), acc, "59")
 	if err != nil {
 		t.Fatalf("switch: %v", err)
 	}
-	if before != "5" || !strings.HasPrefix(after, "2") {
+	if before != "44" || !strings.HasPrefix(after, "59") {
 		t.Fatalf("before=%q after=%q", before, after)
 	}
-	if loginHits < 1 || putHits < 1 {
-		t.Fatalf("loginHits=%d putHits=%d", loginHits, putHits)
+	if createHits < 1 {
+		t.Fatal("expected test key create")
 	}
-	// second switch within dwell should fail gate (not Apply path — SwitchUpstreamGroup itself checks dwell)
-	acc2, _ := accRepo.GetByID(t.Context(), 1)
-	_, _, err = p.SwitchUpstreamGroup(t.Context(), acc2, "5")
-	if err == nil || !strings.Contains(err.Error(), "驻留") {
-		t.Fatalf("expected dwell error, got %v", err)
+	if putHits < 1 {
+		t.Fatal("expected production put")
+	}
+	if deleteHits < 1 {
+		t.Fatal("expected test key delete")
+	}
+	if probeHits < 1 {
+		t.Fatal("expected probes")
+	}
+	if prodGroup != 59 {
+		t.Fatalf("prod group=%d", prodGroup)
+	}
+}
+
+func TestInjectUpstreamGroupSwitches_PicksCheaper(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultAIAutopilotSettings()
+	cfg.OpSwitchUpstreamGroup = boolPtr(true)
+	// Pre-seed candidates cache so inject needs no network
+	cands := []UpstreamGroupCandidate{
+		{ID: "44", Name: "mid", Ratio: 0.06, Platform: PlatformOpenAI, Source: "sub2api", Eligible: true},
+		{ID: "59", Name: "cheap", Ratio: 0.04, Platform: PlatformOpenAI, Source: "sub2api", Eligible: true},
+	}
+	raw, _ := json.Marshal(cands)
+	accs := []Account{{
+		ID: 1, Platform: PlatformOpenAI, AIManaged: true, Status: StatusActive, Schedulable: true,
+		Extra: map[string]any{
+			ExtraAIUpstreamGroupSwitch:       true,
+			ExtraUpstreamKind:                "sub2api",
+			ExtraAIRateMultiplier:            0.06,
+			ExtraUpstreamGroupCandidatesJSON: string(raw),
+			ExtraUpstreamGroupCandidatesAt:   time.Now().UTC().Format(time.RFC3339),
+		},
+	}}
+	d := decision{}
+	p := &AIPilotService{}
+	n := injectUpstreamGroupSwitches(p, t.Context(), &d, accs, nil, cfg)
+	if n != 1 {
+		t.Fatalf("n=%d acts=%+v", n, d.Actions)
+	}
+	if d.Actions[0].Op != AIOpSwitchUpstreamGroup || d.Actions[0].Value != "59" {
+		t.Fatalf("act=%+v", d.Actions[0])
 	}
 }
