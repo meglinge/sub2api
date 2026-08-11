@@ -247,6 +247,30 @@ func TestOpenAIModelNotFound_DoesNotRuntimeBlockWholeAccount(t *testing.T) {
 	require.Len(t, repo.modelRateLimitCalls, 1)
 }
 
+func TestOpenAIModelNotFound_NewAPI400UnknownProviderFailsOverWithoutWholeAccountBlock(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &OpenAIGatewayService{
+		rateLimitService: &RateLimitService{accountRepo: repo},
+	}
+	account := openAIModelNotFoundTempAccount()
+
+	shouldDisable := svc.handleOpenAIAccountUpstreamError(
+		context.Background(),
+		account,
+		http.StatusBadRequest,
+		http.Header{},
+		[]byte(`{"error":{"message":"unknown provider for model gpt-5.6-sol","type":"invalid_request_error","param":"model","code":"model_not_found"}}`),
+		"gpt-5.6-sol",
+	)
+
+	require.True(t, shouldDisable, "must signal UpstreamFailoverError / switch account")
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account), "only cool the (account, model) pair")
+	require.Zero(t, repo.tempCalls)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "gpt-5.6-sol", repo.modelRateLimitCalls[0].scope)
+	require.Equal(t, upstreamModelNotFoundReason, repo.modelRateLimitCalls[0].reason)
+}
+
 func TestOpenAIModelTempUnschedulable_DoesNotRuntimeBlockWholeAccount(t *testing.T) {
 	repo := &modelNotFoundAccountRepoStub{}
 	svc := &OpenAIGatewayService{

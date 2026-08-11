@@ -525,3 +525,53 @@ func TestRateLimitService_HandleUpstreamError_ModelNotFoundImageModelStillCoolsD
 	require.Len(t, repo.modelRateLimitCalls, 1, "守卫只作用于 codex plan-gated 分支")
 	require.Equal(t, upstreamModelNotFoundReason, repo.modelRateLimitCalls[0].reason)
 }
+
+// NewAPI / OpenAI-compatible relays often return 400 + model_not_found
+// ("unknown provider for model X") instead of 404. That is still a
+// deterministic capability miss: cool (account, model) and fail over.
+func TestRateLimitService_HandleUpstreamError_NewAPIUnknownProviderForModelCoolsDown(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &RateLimitService{accountRepo: repo}
+	account := openAIModelNotFoundTempAccount()
+
+	handled := svc.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusBadRequest,
+		http.Header{},
+		[]byte(`{"error":{"message":"unknown provider for model gpt-5.6-sol","type":"invalid_request_error","param":"model","code":"model_not_found"}}`),
+		"gpt-5.6-sol",
+	)
+
+	require.True(t, handled, "400 unknown provider for model must trigger failover")
+	require.Zero(t, repo.tempCalls)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	call := repo.modelRateLimitCalls[0]
+	require.Equal(t, account.ID, call.accountID)
+	require.Equal(t, "gpt-5.6-sol", call.scope)
+	require.Equal(t, upstreamModelNotFoundReason, call.reason)
+	require.WithinDuration(t, time.Now().Add(upstreamModelNotFoundCooldown), call.resetAt, 5*time.Second)
+}
+
+func TestRateLimitService_HandleUpstreamError_Generic400DoesNotCoolDownAsModelNotFound(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &RateLimitService{accountRepo: repo}
+	account := openAIModelNotFoundTempAccount()
+
+	handled := svc.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusBadRequest,
+		http.Header{},
+		[]byte(`{"error":{"message":"Invalid schema for response_format 'agentic_plan'","type":"invalid_request_error"}}`),
+		"gpt-5.6-sol",
+	)
+
+	// Generic invalid_request may still match temp-unschedulable rules elsewhere,
+	// but must not be classified as upstream model-not-found cooldown.
+	if handled {
+		for _, call := range repo.modelRateLimitCalls {
+			require.NotEqual(t, upstreamModelNotFoundReason, call.reason)
+		}
+	}
+}

@@ -5,17 +5,51 @@ import (
 	"strings"
 )
 
+// upstreamModelNotFoundKeywords are matched against the normalized body for
+// HTTP 404 model capability rejections. The broad trailing "not found" token is
+// intentional for 404 only (many gateways return plain "not found" when the
+// path/model is missing); 400 uses the stricter list below.
 var upstreamModelNotFoundKeywords = []string{"model not found", "unknown model", "not found"}
 
+// upstreamModelNotFoundStrongKeywords are high-confidence model-capability
+// rejection phrases. Used for HTTP 400 because NewAPI / OpenAI-compatible
+// relays often return 400 + code model_not_found (or "unknown provider for
+// model X") instead of 404. Bare "not found" is deliberately omitted so
+// generic invalid_request 400s are not misclassified as model-not-found.
+//
+// Note: after normalizeModelNotFoundBody, error.code "model_not_found" becomes
+// "model not found" and matches the first phrase.
+var upstreamModelNotFoundStrongKeywords = []string{
+	"model not found",
+	"unknown model",
+	"unknown provider for model",
+	"model does not exist",
+	"no such model",
+	"unsupported model",
+	"model is not supported",
+}
+
 func isUpstreamModelNotFoundError(statusCode int, body []byte) bool {
-	if statusCode != http.StatusNotFound {
-		return false
-	}
 	normalized := normalizeModelNotFoundBody(body)
 	if normalized == "" || !strings.Contains(normalized, "model") {
 		return false
 	}
-	return containsModelNotFoundKeyword(normalized)
+	switch statusCode {
+	case http.StatusNotFound:
+		return containsAnyKeyword(normalized, upstreamModelNotFoundKeywords)
+	case http.StatusBadRequest:
+		// Deterministic "this account/upstream cannot serve this model"
+		// rejections. Callers cool the (account, model) pair and fail over.
+		// Codex plan-gated OAuth 400s are handled by a dedicated branch (and
+		// must not be classified here for API-key accounts that should ignore
+		// that phrase entirely).
+		if strings.Contains(normalized, openAICodexPlanGatedModelPhrase) {
+			return false
+		}
+		return containsAnyKeyword(normalized, upstreamModelNotFoundStrongKeywords)
+	default:
+		return false
+	}
 }
 
 func isModelNotFoundError(statusCode int, body []byte) bool {
@@ -47,11 +81,15 @@ func isOpenAICodexPlanGatedModelError(statusCode int, body []byte) bool {
 }
 
 func containsModelNotFoundKeyword(normalizedBody string) bool {
+	return containsAnyKeyword(normalizedBody, upstreamModelNotFoundKeywords)
+}
+
+func containsAnyKeyword(normalizedBody string, keywords []string) bool {
 	if normalizedBody == "" {
 		return false
 	}
-	for _, keyword := range upstreamModelNotFoundKeywords {
-		if strings.Contains(normalizedBody, keyword) {
+	for _, keyword := range keywords {
+		if keyword != "" && strings.Contains(normalizedBody, keyword) {
 			return true
 		}
 	}
