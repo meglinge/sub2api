@@ -62,13 +62,25 @@ func (p *AIPilotService) ApplyAIOp(ctx context.Context, accountID int64, op, val
 			return before, before, nil
 		}
 		acc.AIDisabled = false
-		// Un-bury: AI often set_priority to 9000+ when disabling; enable alone
-		// leaves the account permanently off traffic. Lift to observation tier.
-		if ShouldUnburyPriority(acc.Priority) {
-			acc.Priority = RecoveryObservationPriority(acc.Priority)
-		}
-		if acc.ScheduleWeight <= 0 {
-			acc.ScheduleWeight = 10
+		// Optional parking: value may be "priority=200;weight=10" (over-disable recovery).
+		// Only applied when enable succeeds — never write pri/weight when enable is rejected.
+		parkPri, parkW, hasPark := parseEnableParkValue(value)
+		if hasPark {
+			if parkPri > 0 {
+				acc.Priority = parkPri
+			}
+			if parkW >= 0 {
+				acc.ScheduleWeight = parkW
+			}
+		} else {
+			// Un-bury: AI often set_priority to 9000+ when disabling; enable alone
+			// leaves the account permanently off traffic. Lift to observation tier.
+			if ShouldUnburyPriority(acc.Priority) {
+				acc.Priority = RecoveryObservationPriority(acc.Priority)
+			}
+			if acc.ScheduleWeight <= 0 {
+				acc.ScheduleWeight = 10
+			}
 		}
 		after = fmt.Sprintf("false;priority=%d;weight=%d", acc.Priority, acc.EffectiveScheduleWeight())
 		return before, after, p.Accounts.Update(ctx, acc)
@@ -134,6 +146,31 @@ func (p *AIPilotService) ApplyAIOp(ctx context.Context, accountID int64, op, val
 	default:
 		return "", "", fmt.Errorf("未知 op %q", op)
 	}
+}
+
+// parseEnableParkValue parses optional "priority=200;weight=10" from enable value.
+func parseEnableParkValue(value string) (pri int, weight int, ok bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || !strings.Contains(value, "priority=") {
+		return 0, -1, false
+	}
+	pri, weight = 0, -1
+	for _, part := range strings.Split(value, ";") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "priority=") {
+			if n, err := strconv.Atoi(strings.TrimPrefix(part, "priority=")); err == nil {
+				pri = n
+				ok = true
+			}
+		}
+		if strings.HasPrefix(part, "weight=") {
+			if n, err := strconv.Atoi(strings.TrimPrefix(part, "weight=")); err == nil {
+				weight = n
+				ok = true
+			}
+		}
+	}
+	return pri, weight, ok
 }
 
 // RollbackAIOp restores a field if current still matches after.

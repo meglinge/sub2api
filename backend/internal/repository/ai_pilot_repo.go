@@ -47,15 +47,18 @@ func (r *AIPilotRepository) CreateAction(ctx context.Context, a service.AIAction
 	if a.TS.IsZero() {
 		a.TS = time.Now()
 	}
+	if a.BaselineJSON == "" {
+		a.BaselineJSON = "{}"
+	}
 	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO ai_actions (
 			run_id, ts, account_id, account_name, op, before_val, after_val, reason, confidence,
-			state, reject_reason, outcome, rolled_back_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			state, reject_reason, outcome, rolled_back_at, baseline_json
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		RETURNING id
 	`,
 		a.RunID, a.TS, a.AccountID, a.AccountName, a.Op, a.Before, a.After, a.Reason, a.Confidence,
-		a.State, a.RejectReason, a.Outcome, a.RolledBackAt,
+		a.State, a.RejectReason, a.Outcome, a.RolledBackAt, a.BaselineJSON,
 	).Scan(&a.ID)
 	return a, err
 }
@@ -581,4 +584,122 @@ func (r *AIPilotRepository) PruneAccountScores(ctx context.Context, keepDays int
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// AggregateAccountTrafficOne aggregates one account in [from,to).
+func (r *AIPilotRepository) AggregateAccountTrafficOne(ctx context.Context, accountID int64, from, to time.Time) (service.AccountTrafficStats, error) {
+	m, err := r.AggregateAccountTraffic(ctx, from, to, []int64{accountID})
+	if err != nil {
+		return service.AccountTrafficStats{}, err
+	}
+	s := m[accountID]
+	s.AccountID = accountID
+	return s, nil
+}
+
+// ListActionsPendingOutcome returns applied actions without outcome yet (oldest first).
+func (r *AIPilotRepository) ListActionsPendingOutcome(ctx context.Context, since time.Time, limit int) ([]service.AIAction, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, run_id, ts, account_id, account_name, op, before_val, after_val, reason, confidence,
+			state, reject_reason, outcome, COALESCE(baseline_json,'{}'), outcome_at, decayed_at, rolled_back_at
+		FROM ai_actions
+		WHERE state = $1 AND (outcome = '' OR outcome IS NULL) AND ts >= $2
+		ORDER BY ts ASC
+		LIMIT $3
+	`, service.AIActionApplied, since, limit)
+	if err != nil {
+		// Pre-migration: column may be missing.
+		if strings.Contains(err.Error(), "baseline_json") || strings.Contains(err.Error(), "does not exist") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAIActionsExtra(rows)
+}
+
+// NextActionTS returns the next applied action timestamp for the account after afterTS.
+func (r *AIPilotRepository) NextActionTS(ctx context.Context, accountID int64, afterTS time.Time) (*time.Time, error) {
+	var ts time.Time
+	err := r.db.QueryRowContext(ctx, `
+		SELECT ts FROM ai_actions
+		WHERE account_id = $1 AND state = $2 AND ts > $3
+		ORDER BY ts ASC LIMIT 1
+	`, accountID, service.AIActionApplied, afterTS).Scan(&ts)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &ts, nil
+}
+
+// SetActionOutcome writes outcome + outcome_at.
+func (r *AIPilotRepository) SetActionOutcome(ctx context.Context, id int64, outcome string, at time.Time) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE ai_actions SET outcome = $2, outcome_at = $3 WHERE id = $1
+	`, id, outcome, at)
+	return err
+}
+
+// ListActionsPendingDecay returns applied demotions not yet decay-processed.
+func (r *AIPilotRepository) ListActionsPendingDecay(ctx context.Context, since time.Time, limit int) ([]service.AIAction, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, run_id, ts, account_id, account_name, op, before_val, after_val, reason, confidence,
+			state, reject_reason, outcome, COALESCE(baseline_json,'{}'), outcome_at, decayed_at, rolled_back_at
+		FROM ai_actions
+		WHERE state = $1 AND decayed_at IS NULL AND ts >= $2
+			AND op IN ($3,$4,$5)
+		ORDER BY ts ASC
+		LIMIT $6
+	`, service.AIActionApplied, since, service.AIOpSetPriority, service.AIOpSetWeight, service.AIOpDisable, limit)
+	if err != nil {
+		if strings.Contains(err.Error(), "decayed_at") || strings.Contains(err.Error(), "does not exist") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAIActionsExtra(rows)
+}
+
+// MarkActionDecayed stamps decayed_at.
+func (r *AIPilotRepository) MarkActionDecayed(ctx context.Context, id int64, at time.Time) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE ai_actions SET decayed_at = $2 WHERE id = $1`, id, at)
+	return err
+}
+
+func scanAIActionsExtra(rows *sql.Rows) ([]service.AIAction, error) {
+	out := make([]service.AIAction, 0)
+	for rows.Next() {
+		var a service.AIAction
+		var outcomeAt, decayedAt, rolled sql.NullTime
+		if err := rows.Scan(
+			&a.ID, &a.RunID, &a.TS, &a.AccountID, &a.AccountName, &a.Op, &a.Before, &a.After, &a.Reason, &a.Confidence,
+			&a.State, &a.RejectReason, &a.Outcome, &a.BaselineJSON, &outcomeAt, &decayedAt, &rolled,
+		); err != nil {
+			return nil, err
+		}
+		if outcomeAt.Valid {
+			t := outcomeAt.Time
+			a.OutcomeAt = &t
+		}
+		if decayedAt.Valid {
+			t := decayedAt.Time
+			a.DecayedAt = &t
+		}
+		if rolled.Valid {
+			t := rolled.Time
+			a.RolledBackAt = &t
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }

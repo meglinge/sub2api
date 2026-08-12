@@ -334,6 +334,10 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 		return run, nil
 	}
 
+	// Closed-loop: settle prior action outcomes then decay bad demotions (UpstreamRouter).
+	p.backfillOutcomes(ctx, cfg)
+	p.decayStaleDemotions(ctx, cfg)
+
 	// UpstreamRouter: no wall-clock around the whole Analyze — only per-LLM-call
 	// TimeoutSeconds. Early abort of the whole cycle is what made CCH log 499 while
 	// the model was still generating (normal user gpt-5.5 traffic stayed fine).
@@ -367,14 +371,13 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 	}
 	rawReq, _ := json.Marshal(snap)
 
-	// Multi-turn: model may return probeRequests; backend probes and continues
-	// (UpstreamRouter MaxProbeTurns, default 5, hard ceiling 8).
+	// Multi-turn: each extra turn is a full gpt-5.5 call (often 2–4 min). Cap at 2.
 	maxTurns := cfg.MaxProbeTurns
 	if maxTurns <= 0 {
-		maxTurns = 5
+		maxTurns = 1
 	}
-	if maxTurns > 8 {
-		maxTurns = 8
+	if maxTurns > 2 {
+		maxTurns = 2
 	}
 
 	messages := []map[string]string{
@@ -601,6 +604,12 @@ func (p *AIPilotService) applyDecisionActions(
 			_, _ = p.Repo.CreateAction(ctx, a)
 			continue
 		}
+		if reason := rejectNoopPriority(acc, act); reason != "" {
+			a.State = AIActionRejected
+			a.RejectReason = reason
+			_, _ = p.Repo.CreateAction(ctx, a)
+			continue
+		}
 		if reason := activationGateReason(act.Op, act.Value, acc.EffectiveScheduleWeight(), probes, act.AccountID, cfg); reason != "" {
 			a.State = AIActionRejected
 			a.RejectReason = reason
@@ -790,6 +799,8 @@ func (p *AIPilotService) applyDecisionActions(
 			continue
 		}
 
+		// Baseline must be captured before mutation for outcome closed-loop.
+		a.BaselineJSON = captureActionBaseline(ctx, p.Repo, act.AccountID, now, cfg)
 		before, after, err := p.ApplyAIOp(ctx, act.AccountID, act.Op, act.Value)
 		if err != nil {
 			a.State = AIActionRejected
@@ -806,6 +817,13 @@ func (p *AIPilotService) applyDecisionActions(
 			for i := range accounts {
 				if accounts[i].ID == act.AccountID {
 					accounts[i].AIDisabled = true
+				}
+			}
+		}
+		if act.Op == AIOpEnable {
+			for i := range accounts {
+				if accounts[i].ID == act.AccountID {
+					accounts[i].AIDisabled = false
 				}
 			}
 		}
@@ -1048,10 +1066,11 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 	memory := []map[string]any{}
 	memN := cfg.MemoryRuns
 	if memN <= 0 {
-		memN = 30
+		memN = 12
 	}
-	if memN > 100 {
-		memN = 100
+	// Cap memory for latency: each run can re-inject tens of actions; 30 runs ≈ huge prompt.
+	if memN > 15 {
+		memN = 15
 	}
 	if memN > 0 && p.Repo != nil {
 		runs, _ := p.Repo.ListRuns(ctx, memN, 0)
@@ -1068,19 +1087,23 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 					case AIActionRejected:
 						rejected++
 					}
-					acts = append(acts, map[string]any{
+					item := map[string]any{
 						"accountId": a.AccountID, "accountName": a.AccountName,
 						"op": a.Op, "before": a.Before, "after": a.After,
 						"state": a.State, "confidence": a.Confidence,
-						"reason":       truncateStr(a.Reason, 160),
-						"rejectReason": truncateStr(a.RejectReason, 100),
-					})
+						"reason":       truncateStr(a.Reason, 100),
+						"rejectReason": truncateStr(a.RejectReason, 80),
+					}
+					if strings.TrimSpace(a.Outcome) != "" {
+						item["outcome"] = truncateStr(a.Outcome, 160)
+					}
+					acts = append(acts, item)
 				}
 			}
 			memory = append(memory, map[string]any{
 				"id": r.ID, "ts": r.TS.UnixMilli(), "trigger": r.Trigger, "status": r.Status,
-				"summary": truncateStr(r.Summary, 300),
-				"error":   truncateStr(r.Error, 160),
+				"summary": truncateStr(r.Summary, 160),
+				"error":   truncateStr(r.Error, 100),
 				"counts":  map[string]int{"actions": len(acts), "applied": applied, "suggested": suggested, "rejected": rejected},
 				"actions": acts,
 			})
@@ -1505,6 +1528,16 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 
 多轮:证据不足时可输出 probeRequests 让后端先探测再继续,例如
 {"summary":"","probeRequests":[{"accountId":1,"reason":"想确认是否恢复"}],"actions":[],"scores":[],"observations":[]}
+
+【速度 — 必须遵守】
+- **优先单轮出最终 JSON**,不要轻易 probeRequests。snapshot 已带 activation;后端也会自动 enable/解埋。
+- summary ≤ 120 字;reason ≤ 80 字;每轮 actions 宁缺毋滥(≤8);scores 只写本轮真有证据的账号。
+- 输出必须是紧凑 JSON,禁止长篇推理。
+
+【探测已绿的停用号 — 该放回来】
+- aiDisabled=true 且 activation.verdict=pass|slow → **应该 enable**(不是「可以考虑」)。
+- **禁止**对 aiDisabled 账号只 set_weight「做准备」—— 它吃不到流量,纯空转。
+- 若 aiHistory 里 outcome 写着「改后零流量」,不要再同方向降级。
 
 最终轮必须输出 JSON(不要 markdown):
 {"summary":"...","actions":[{"accountId":1,"op":"set_priority","value":"100","reason":"...","confidence":0.8}],"scores":[{"accountId":1,"stability":80,"latency":70,"throughput":75,"cost":85,"overall":76.5,"confidence":0.85,"note":"..."}],"observations":[{"group":"1","note":"..."}],"notices":[],"probeRequests":[]}

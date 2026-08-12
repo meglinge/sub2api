@@ -29,7 +29,14 @@ type AIPilotStore interface {
 	// AISoftUnburyDwell against 100↔150 thrash.
 	LastSpareDemotions(ctx context.Context, accountIDs []int64, since time.Time) (map[int64]time.Time, error)
 	AggregateAccountTraffic(ctx context.Context, from, to time.Time, accountIDs []int64) (map[int64]AccountTrafficStats, error)
+	AggregateAccountTrafficOne(ctx context.Context, accountID int64, from, to time.Time) (AccountTrafficStats, error)
 	RecentErrorSamples(ctx context.Context, from time.Time, accountID int64, limit int) ([]string, error)
+
+	ListActionsPendingOutcome(ctx context.Context, since time.Time, limit int) ([]AIAction, error)
+	NextActionTS(ctx context.Context, accountID int64, afterTS time.Time) (*time.Time, error)
+	SetActionOutcome(ctx context.Context, id int64, outcome string, at time.Time) error
+	ListActionsPendingDecay(ctx context.Context, since time.Time, limit int) ([]AIAction, error)
+	MarkActionDecayed(ctx context.Context, id int64, at time.Time) error
 
 	AppendAccountScores(ctx context.Context, runID int64, items []AIAccountScore) error
 	LatestAccountScores(ctx context.Context) (map[int64]AIAccountScore, error)
@@ -149,6 +156,13 @@ type AIAutopilotSettings struct {
 	// OpSwitchUpstreamGroup: change new-api token.group or sub2api panel key.group_id.
 	// Default false — opt-in after operator configures panel credentials per account.
 	OpSwitchUpstreamGroup *bool `json:"op_switch_upstream_group"`
+
+	// OutcomeMinSamples / OutcomeMaxWaitMinutes: settle applied actions after enough
+	// post-change traffic or max wait (UpstreamRouter closed-loop feedback).
+	OutcomeMinSamples     int `json:"outcome_min_samples"`
+	OutcomeMaxWaitMinutes int `json:"outcome_max_wait_minutes"`
+	// DemotionTTLMinutes: auto-revert demotions without supporting evidence (0 = off).
+	DemotionTTLMinutes int `json:"demotion_ttl_minutes"`
 }
 
 // DefaultAIAutopilotSettings returns factory defaults.
@@ -201,6 +215,9 @@ func DefaultAIAutopilotSettings() AIAutopilotSettings {
 		OpUnlock:                      boolPtr(true),
 		// Off by default: requires per-account credentials + quality gates.
 		OpSwitchUpstreamGroup: boolPtr(false),
+		OutcomeMinSamples:     20,
+		OutcomeMaxWaitMinutes: 5,
+		DemotionTTLMinutes:    25,
 	}
 }
 
@@ -226,8 +243,19 @@ func (s AIAutopilotSettings) Normalize() AIAutopilotSettings {
 	if s.MaxProbeTurns <= 0 {
 		s.MaxProbeTurns = d.MaxProbeTurns
 	}
-	if s.MaxProbeTurns > 8 {
-		s.MaxProbeTurns = 8
+	// Hard ceiling 2: each probe turn is a full LLM call (often 2–4 min on gpt-5.5).
+	// Snapshot pre-probes + injectRecovery cover most enable paths without multi-turn.
+	if s.MaxProbeTurns > 2 {
+		s.MaxProbeTurns = 2
+	}
+	if s.OutcomeMinSamples <= 0 {
+		s.OutcomeMinSamples = d.OutcomeMinSamples
+	}
+	if s.OutcomeMaxWaitMinutes <= 0 {
+		s.OutcomeMaxWaitMinutes = d.OutcomeMaxWaitMinutes
+	}
+	if s.DemotionTTLMinutes < 0 {
+		s.DemotionTTLMinutes = d.DemotionTTLMinutes
 	}
 	if s.MemoryRuns <= 0 {
 		s.MemoryRuns = d.MemoryRuns
@@ -425,6 +453,9 @@ type AIAction struct {
 	State        string     `json:"state"`
 	RejectReason string     `json:"reject_reason"`
 	Outcome      string     `json:"outcome"`
+	BaselineJSON string     `json:"baseline_json,omitempty"`
+	OutcomeAt    *time.Time `json:"outcome_at,omitempty"`
+	DecayedAt    *time.Time `json:"decayed_at,omitempty"`
 	RolledBackAt *time.Time `json:"rolled_back_at,omitempty"`
 }
 

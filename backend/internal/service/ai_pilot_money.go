@@ -1030,16 +1030,9 @@ func injectCostIsolationReleases(decision *decision, accounts []Account, cfg AIA
 		return 0
 	}
 	haveEnable := map[int64]bool{}
-	havePri := map[int64]bool{}
-	haveWeight := map[int64]bool{}
 	for _, a := range decision.Actions {
-		switch a.Op {
-		case AIOpEnable:
+		if a.Op == AIOpEnable {
 			haveEnable[a.AccountID] = true
-		case AIOpSetPriority:
-			havePri[a.AccountID] = true
-		case AIOpSetWeight:
-			haveWeight[a.AccountID] = true
 		}
 	}
 	injected := 0
@@ -1079,10 +1072,12 @@ func injectCostIsolationReleases(decision *decision, accounts []Account, cfg AIA
 			}
 		}
 		sig := accountCostSignalOf(acc)
+		// Park in enable value so priority/weight only apply if enable succeeds
+		// (avoids 200→200 spam when enable is rejected by probe gate).
 		decision.Actions = append(decision.Actions, decisionAction{
 			AccountID: acc.ID,
 			Op:        AIOpEnable,
-			Value:     "",
+			Value:     fmt.Sprintf("priority=%d;weight=10", AIMaxPriority),
 			Reason: fmt.Sprintf(
 				"解除过度 disable: 近窗无硬失败(composite=%.3f);disable 仅留给硬失败/余额耗尽,贵号改用 p%d+低权软隔离",
 				sig.Composite, AIMaxPriority,
@@ -1091,29 +1086,6 @@ func injectCostIsolationReleases(decision *decision, accounts []Account, cfg AIA
 		})
 		haveEnable[acc.ID] = true
 		injected++
-		// Park at deep spare + low weight after re-enable so sticky doesn't dump traffic immediately.
-		if !havePri[acc.ID] && cfg.OpAllowed(AIOpSetPriority) {
-			decision.Actions = append(decision.Actions, decisionAction{
-				AccountID:  acc.ID,
-				Op:         AIOpSetPriority,
-				Value:      strconv.Itoa(AIMaxPriority),
-				Reason:     "解除 disable 后先放 p200 观察,避免立刻回主层",
-				Confidence: 0.9,
-			})
-			havePri[acc.ID] = true
-			injected++
-		}
-		if !haveWeight[acc.ID] && cfg.OpAllowed(AIOpSetWeight) && acc.EffectiveScheduleWeight() > 10 {
-			decision.Actions = append(decision.Actions, decisionAction{
-				AccountID:  acc.ID,
-				Op:         AIOpSetWeight,
-				Value:      "10",
-				Reason:     "解除 disable 后 weight 先回到中性 10,再按分流上调",
-				Confidence: 0.88,
-			})
-			haveWeight[acc.ID] = true
-			injected++
-		}
 	}
 	return injected
 }

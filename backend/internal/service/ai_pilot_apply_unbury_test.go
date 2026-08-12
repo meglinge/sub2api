@@ -135,9 +135,21 @@ func (s *aiPilotStoreMem) LastSpareDemotions(context.Context, []int64, time.Time
 func (s *aiPilotStoreMem) AggregateAccountTraffic(context.Context, time.Time, time.Time, []int64) (map[int64]AccountTrafficStats, error) {
 	return nil, nil
 }
+func (s *aiPilotStoreMem) AggregateAccountTrafficOne(context.Context, int64, time.Time, time.Time) (AccountTrafficStats, error) {
+	return AccountTrafficStats{}, nil
+}
 func (s *aiPilotStoreMem) RecentErrorSamples(context.Context, time.Time, int64, int) ([]string, error) {
 	return nil, nil
 }
+func (s *aiPilotStoreMem) ListActionsPendingOutcome(context.Context, time.Time, int) ([]AIAction, error) {
+	return nil, nil
+}
+func (s *aiPilotStoreMem) NextActionTS(context.Context, int64, time.Time) (*time.Time, error) { return nil, nil }
+func (s *aiPilotStoreMem) SetActionOutcome(context.Context, int64, string, time.Time) error { return nil }
+func (s *aiPilotStoreMem) ListActionsPendingDecay(context.Context, time.Time, int) ([]AIAction, error) {
+	return nil, nil
+}
+func (s *aiPilotStoreMem) MarkActionDecayed(context.Context, int64, time.Time) error { return nil }
 func (s *aiPilotStoreMem) AppendAccountScores(context.Context, int64, []AIAccountScore) error {
 	return nil
 }

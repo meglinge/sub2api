@@ -210,7 +210,9 @@ func geminiGenerateContentURL(baseURL, model string, stream bool) string {
 // thinkingBudget=0 avoids multi-second "thinking" token burn that was emptying short maxOutputTokens.
 func messagesToGeminiBody(messages []map[string]string, maxTokens int, temperature float64) map[string]any {
 	if maxTokens <= 0 {
-		maxTokens = 4096
+		// Cap completions: pilot decisions are structured JSON; 15k–25k outs were common
+		// and dominated wall-clock on gpt-5.5 (UR still fast when single-turn + shorter out).
+		maxTokens = 2048
 	}
 	var systemParts []map[string]string
 	var contents []map[string]any
@@ -414,7 +416,7 @@ func (p *AIPilotService) callLLMMessagesOnce(ctx context.Context, cfg AIAutopilo
 	useGemini := isGeminiPilotModel(cfg.Model)
 	if useGemini {
 		url = geminiGenerateContentURL(cfg.BaseURL, cfg.Model, true)
-		body := messagesToGeminiBody(messages, 4096, 0.2)
+		body := messagesToGeminiBody(messages, 2048, 0.2)
 		raw, _ = json.Marshal(body)
 	} else {
 		url = chatCompletionsURL(cfg.BaseURL)
@@ -424,7 +426,7 @@ func (p *AIPilotService) callLLMMessagesOnce(ctx context.Context, cfg AIAutopilo
 			"temperature": 0.2,
 			"stream":      true,
 			// Cap runaway completions (prod saw 11k tokens / 3min). Full decision JSON fits.
-			"max_tokens": 4096,
+			"max_tokens": 2048,
 			// Ask providers that support it to include usage on the final SSE chunk.
 			"stream_options": map[string]any{"include_usage": true},
 		}
