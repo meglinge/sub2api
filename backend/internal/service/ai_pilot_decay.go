@@ -47,10 +47,25 @@ func (p *AIPilotService) decayStaleDemotions(ctx context.Context, cfg AIAutopilo
 			_ = p.Repo.MarkActionDecayed(ctx, a.ID, now)
 			continue
 		}
+		// Cost soft quarantine / ultimate spare must stick until pilot unburies
+		// (cheap peers boom), not until "starved" looks bad to TTL decay.
+		if isCostIsolationDemotion(a) {
+			_ = p.Repo.MarkActionDecayed(ctx, a.ID, now)
+			continue
+		}
 		// weight→0 soft quarantine: zero post-change traffic is expected.
 		if a.Op == AIOpSetWeight {
 			_, after, ok := parseIntPair(a.Before, a.After)
 			if ok && after <= 0 {
+				_ = p.Repo.MarkActionDecayed(ctx, a.ID, now)
+				continue
+			}
+		}
+		// Spare/observation demotions (p→≥150) stick; unbury is injectRecovery /
+		// soft-unbury, not decay (decay was thrashing 150↔100 under cost pressure).
+		if a.Op == AIOpSetPriority {
+			_, after, ok := parseIntPair(a.Before, a.After)
+			if ok && after >= AIObservationPriority {
 				_ = p.Repo.MarkActionDecayed(ctx, a.ID, now)
 				continue
 			}
@@ -86,6 +101,25 @@ func (p *AIPilotService) decayStaleDemotions(ctx context.Context, cfg AIAutopilo
 		p.Log.Info("ai pilot demotion decay", "reverted", reverted, "trigger", decayTrigger)
 	}
 	return reverted
+}
+
+// isCostIsolationDemotion detects pilot cost soft-quarantine demotions that
+// must never be TTL-reverted (they intentionally starve expensive accounts).
+func isCostIsolationDemotion(a AIAction) bool {
+	r := strings.ToLower(a.Reason)
+	if strings.Contains(r, "性价比") || strings.Contains(r, "软隔离") ||
+		(strings.Contains(r, "cost") && strings.Contains(r, "isolat")) ||
+		(strings.Contains(r, "composite") && (strings.Contains(r, "极贵") || strings.Contains(r, "过贵") || strings.Contains(r, "最低价"))) {
+		return true
+	}
+	// Injected soft quarantine always lands at weight 0 and/or p≥150.
+	if a.Op == AIOpSetWeight {
+		_, after, ok := parseIntPair(a.Before, a.After)
+		if ok && after <= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func isAccountNotFoundErr(err error) bool {

@@ -264,13 +264,38 @@ func (a *Account) EffectiveScheduleWeight() int {
 // IsSoftWeightStopped reports intentional soft quarantine (AI set schedule_weight=0).
 // Go zero-value test fixtures also have weight 0 but leave AIManaged=false; those
 // must remain selectable. Production pilot accounts are AIManaged and use weight 0
-// as the cost/error soft-quarantine signal (sticky + selection must honor it even
-// when the advanced scheduler is off).
+// as cost "ultimate spare": only take traffic when no non-quarantined peer can.
 func (a *Account) IsSoftWeightStopped() bool {
 	if a == nil || !a.AIManaged {
 		return false
 	}
 	return a.ScheduleWeight <= 0
+}
+
+// preferPrimaryOverSoftWeightStopped keeps soft-quarantined accounts as last resort.
+// If any non-soft-stopped account remains, only those are returned; otherwise the
+// full list is kept so expensive accounts can still cover when cheap peers are dead.
+func preferPrimaryOverSoftWeightStopped[T any](items []T, isSoft func(T) bool) []T {
+	if len(items) == 0 {
+		return items
+	}
+	primary := make([]T, 0, len(items))
+	for _, it := range items {
+		if !isSoft(it) {
+			primary = append(primary, it)
+		}
+	}
+	if len(primary) > 0 {
+		return primary
+	}
+	return items
+}
+
+// preferPrimaryAccounts is the Account slice form of preferPrimaryOverSoftWeightStopped.
+func preferPrimaryAccounts(accounts []*Account) []*Account {
+	return preferPrimaryOverSoftWeightStopped(accounts, func(a *Account) bool {
+		return a != nil && a.IsSoftWeightStopped()
+	})
 }
 
 // IsCredentialUsableForShadow 报告本账号(作为某 spark 影子的母账号)的凭据/传输是否可被影子透传使用。

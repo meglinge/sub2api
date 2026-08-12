@@ -673,6 +673,12 @@ func (p *AIPilotService) applyDecisionActions(
 					_, _ = p.Repo.CreateAction(ctx, a)
 					continue
 				}
+				if reason := weightCostLiftGateReason(acc, next, accounts, cfg, recentTraffic); reason != "" {
+					a.State = AIActionRejected
+					a.RejectReason = reason
+					_, _ = p.Repo.CreateAction(ctx, a)
+					continue
+				}
 			}
 		}
 		if act.Op == AIOpDisable {
@@ -1481,7 +1487,7 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
   例:同层 A overall=80、B overall=40 → weight 可约 2:1
 - **cost 维由后端按 composite 池内比价写死**(模型分仅作参考会被覆盖);禁止把无倍率号编造成 peer 的 0.06
 - 无导入倍率(rateConfidence.level=3/default_one)不是便宜号
-- 性价比权重≥20% 时后端硬门禁:贵号禁止抬回主层≤100;极贵号(相对最便宜 peer×1.75)在有更便宜可用号时 **ai_disabled 隔离**,禁止 probe-pass 再 enable
+- 性价比权重≥20% 时后端硬门禁:贵号禁止抬回主层≤100;极贵号(相对最便宜 peer×1.75) **p200+weight=0 软隔离=究极备用**(调度层仅当同组没有可调度的非 w0 号时才接量),禁止无故抬权/抬主层
 - 稳/延迟/吞吐:看 traffic + recentTraffic(近况优先)
 
 【余额参与调度 —— 原版对齐】
@@ -1494,8 +1500,8 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 【禁止备援死循环 / 解埋再沉震荡】
 - 后端在「刚下沉到备援(≥150)」后约 5 分钟内禁止立刻拉回主层(防 429/硬失败 thrash);过了即可解埋
 - 驻留期内请用 set_weight 调分流,不要反复 set_priority 100↔150
-- p≥150 **仍可能有请求**(软调度溢出/粘性);近窗有量≠应抬回主层;近窗空白也≠一定故障
-- 极贵号不要停在 p150 幻想「接不到量」——后端会 disable 隔离
+- p≥150 / weight=0 **默认不应有量**(究极备用);近窗有量=调度漏量或隔离被拆,应再压到 w0,不要抬回主层
+- 极贵号用 p200+weight=0,不要 disable(disable 留给硬失败/耗尽)
 
 【上游分组切换 switch_upstream_group — 可选,极保守】
 - 仅当 channels[].upstreamGroup.switchable=true 且 policy 允许该 op 时才可调用
@@ -1507,13 +1513,13 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 - **禁止**用「主层已有 2–4 个/满池」拒绝把**已知便宜且健康**的号从 ≥150 抬回 100
   (2–4 是多样性目标,不是容量上限;便宜稳号卡在 150=性价比设置失效)
 - 慢(TTFB 高)但成功率高 → 降 weight,不要无脑 priority 沉到 150+
-- 近窗/长窗**硬失败** → 沉备援或 disable; **过贵** → p200+低 weight 软隔离,**不要**动不动 disable
-- 后端会:拒绝无硬故障的胡乱下沉;长窗健康或已知便宜号可解埋;过度 disable 会自动解开;下沉有短冷静期
+- 近窗/长窗**硬失败** → 沉备援或 disable; **过贵** → p200+weight=0 究极备用,**不要**动不动 disable
+- 后端会:拒绝无硬故障的胡乱下沉;长窗健康或已知便宜号可解埋;过度 disable 会自动解开;下沉有短冷静期;成本软隔离不被 TTL 拆掉
 - 健康池保持 2–4 个号同在 priority≈100,用 weight 分流,不要每轮 100↔150 thrash
 
 原则:
 1) **同层多号**:每组至少保留 2–4 个可用账号在相近 priority(建议都在 50–150 一带),用 set_weight 按 overall 分流
-2) **disable 仅硬失败/余额耗尽**;过贵号用 p200+weight 压低,禁止半池 ai_disabled
+2) **disable 仅硬失败/余额耗尽**;过贵号 p200+weight=0 究极备用(便宜号都挂了才顶),禁止半池 ai_disabled
 3) disable 必须考虑 minAvailablePerGroup
 4) **恢复与停用同等重要**:每一轮扫 aiDisabled=true。
    - 近窗无硬失败 → 应 enable(后端会自动解过度 disable)

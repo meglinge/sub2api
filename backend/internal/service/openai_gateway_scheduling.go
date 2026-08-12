@@ -264,12 +264,8 @@ func isOpenAICompatibleAccountEligibleForRequest(ctx context.Context, account *A
 	if account == nil || account.Platform != platform || !account.IsOpenAICompatible() || !account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 		return false
 	}
-	// Soft quarantine (AI-managed weight=0) must not enter legacy/simple selection
-	// either — advanced Top-K already zeros draw weight, but sticky/LRU paths
-	// previously ignored weight entirely when advanced scheduler was off.
-	if !AllowControlPlaneSchedule(ctx) && account.IsSoftWeightStopped() {
-		return false
-	}
+	// Soft-weight (AI managed w=0) stays eligible as ultimate spare: selection
+	// paths call preferPrimaryAccounts so they only win when no primary peer exists.
 	if account.IsOpenAI() {
 		if paused, reason := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
 			// Debug level: this fires per-candidate on the scheduling hot path, so Info
@@ -803,6 +799,8 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 	if len(eligible) == 0 {
 		return nil, compactBlocked
 	}
+	// Cost soft quarantine (w=0): only as ultimate spare when no primary peer left.
+	eligible = preferPrimaryAccounts(eligible)
 	rateOrder := openAILegacyUpstreamRateOrder{}
 	if preferLowUpstreamRate {
 		rateOrder = newOpenAILegacyUpstreamRateOrder(eligible, time.Now(), s.openAIOAuthSchedulingRateMultiplier(ctx))
@@ -1016,6 +1014,8 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	if len(candidates) == 0 {
 		return nil, ErrNoAvailableAccounts
 	}
+	// Soft-weight accounts are ultimate spare only (性价比软隔离).
+	candidates = preferPrimaryAccounts(candidates)
 	rateOrder := openAILegacyUpstreamRateOrder{}
 	if preferLowUpstreamRate {
 		rateOrder = newOpenAILegacyUpstreamRateOrder(candidates, time.Now(), s.openAIOAuthSchedulingRateMultiplier(ctx))

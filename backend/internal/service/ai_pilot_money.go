@@ -555,6 +555,28 @@ func priorityCostPromotionGateReason(acc *Account, next int, accounts []Account,
 	)
 }
 
+// weightCostLiftGateReason blocks raising schedule_weight while the account is
+// still cost-justified soft quarantine (ultimate spare). Weight 0 must stick
+// until cheaper peers boom / isolation no longer applies.
+func weightCostLiftGateReason(acc *Account, next int, accounts []Account, cfg AIAutopilotSettings, recent map[int64]AccountTrafficStats) string {
+	if acc == nil || next <= costSoftQuarantineWeight {
+		return ""
+	}
+	// Only care when leaving soft stop or raising while still very expensive.
+	if acc.EffectiveScheduleWeight() > costSoftQuarantineWeight && next <= acc.EffectiveScheduleWeight() {
+		return ""
+	}
+	if !costJustifiedIsolation(acc, accounts, cfg, recent) {
+		return ""
+	}
+	sig := accountCostSignalOf(acc)
+	minC, _ := cheapestKnownComposite(accounts, acc.ID)
+	return fmt.Sprintf(
+		"性价比软隔离中:禁止抬权 weight→%d (composite=%.3f > 最便宜peer×%.2f≈%.3f);贵号保持 weight=0 作究极备用,等便宜号挂完再顶",
+		next, sig.Composite, AICostVeryExpensiveRatio, minC*AICostVeryExpensiveRatio,
+	)
+}
+
 // priorityDemotionGateReason rejects set_priority that re-creates the burial ratchet.
 // Note: smaller priority = more preferred; demotion means next > current (e.g. 100→150).
 // costJustified=true allows healthy→spare demotion when cost pressure marks the account
@@ -933,13 +955,14 @@ func costEnableGateReason(op string, acc *Account, accounts []Account, cfg AIAut
 }
 
 // costSoftQuarantineWeight is the schedule_weight used for cost soft-isolation.
-// 0 drops the account from weighted draw (sticky may still rarely hit). We no longer
-// ai_disabled-nuke expensive accounts — mass disable was too harsh for operators.
+// 0 marks ultimate spare: scheduler preferPrimaryAccounts skips it while any
+// non-soft-stopped peer remains; only when cheap peers are all dead does it serve.
 const costSoftQuarantineWeight = 0
 
 // injectCostIsolations soft-quarantines very expensive accounts: p200 + weight=0.
 // Does NOT ai_disabled — disable is reserved for hard-fail / depleted / explicit model.
-// Sticky may still rarely hit; boom recovery no longer depends on enable thrash.
+// Ultimate-spare recovery: when cheaper peers boom, pilot stops re-pinning w0 and
+// may unbury; scheduler already allows w0 only as last resort.
 func injectCostIsolations(decision *decision, accounts []Account, cfg AIAutopilotSettings, recent map[int64]AccountTrafficStats) int {
 	if decision == nil || !costPressureActive(cfg) {
 		return 0
@@ -993,7 +1016,7 @@ func injectCostIsolations(decision *decision, accounts []Account, cfg AIAutopilo
 			continue
 		}
 		baseReason := fmt.Sprintf(
-			"性价比软隔离: composite=%.3f > 最便宜peer×%.2f(最便宜=%.3f);不 disable,沉 p%d+weight=%d 降抽选(硬失败才 disable)",
+			"性价比软隔离(究极备用): composite=%.3f > 最便宜peer×%.2f(最便宜=%.3f);不 disable,沉 p%d+weight=%d — 调度仅当便宜号都不可用时才接量",
 			sig.Composite, AICostVeryExpensiveRatio, minC, AIMaxPriority, costSoftQuarantineWeight,
 		)
 		if needPri {

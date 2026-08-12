@@ -112,7 +112,9 @@ func profitControlVetoLatest(ctx context.Context, selected *Account, snapshot *S
 }
 
 // postSlotAdmissionVetoReason rejects accounts that became unusable between
-// selection and slot acquire (ai_disabled, soft quarantine weight=0, etc.).
+// selection and slot acquire (ai_disabled etc.). Soft-weight last-resort is
+// decided at selection time (preferPrimaryAccounts), not vetoed here — otherwise
+// ultimate-spare would never be able to serve when cheap peers are all dead.
 func postSlotAdmissionVetoReason(ctx context.Context, account *Account) string {
 	if account == nil {
 		return "nil_account"
@@ -122,10 +124,6 @@ func postSlotAdmissionVetoReason(ctx context.Context, account *Account) string {
 			return "ai_disabled"
 		}
 		return "not_schedulable"
-	}
-	// Soft quarantine: AI-managed weight=0 must not receive normal traffic.
-	if !AllowControlPlaneSchedule(ctx) && account.IsSoftWeightStopped() {
-		return "schedule_weight_zero"
 	}
 	return ""
 }

@@ -1372,12 +1372,6 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			}
 			continue
 		}
-		// Soft quarantine: AI-managed weight=0 stays out of advanced Top-K entirely
-		// (draw already zeros weight, but sticky overflow still needed a hard skip).
-		if !AllowControlPlaneSchedule(ctx) && account.IsSoftWeightStopped() {
-			filterStats.exclude("schedule_weight_zero")
-			continue
-		}
 		if account.Platform != normalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() {
 			filterStats.exclude("platform_mismatch")
 			continue
@@ -1407,6 +1401,21 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			ID:             account.ID,
 			MaxConcurrency: account.EffectiveLoadFactor(),
 		})
+	}
+	// Soft-weight (w=0) = ultimate spare: drop them when any primary peer remains.
+	if preferred := preferPrimaryAccounts(filtered); len(preferred) < len(filtered) {
+		dropped := len(filtered) - len(preferred)
+		for i := 0; i < dropped; i++ {
+			filterStats.exclude("schedule_weight_soft_spare")
+		}
+		filtered = preferred
+		loadReq = loadReq[:0]
+		for _, account := range filtered {
+			loadReq = append(loadReq, AccountWithConcurrency{
+				ID:             account.ID,
+				MaxConcurrency: account.EffectiveLoadFactor(),
+			})
+		}
 	}
 	if len(filtered) == 0 {
 		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, filterStats.summary(""))

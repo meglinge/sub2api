@@ -77,27 +77,56 @@ func TestDecayDoesNotRevertWeightZeroSoftQuarantine(t *testing.T) {
 	}
 }
 
-func TestPostSlotAdmissionVetoAIDisabledAndWeightZero(t *testing.T) {
+func TestPostSlotAdmissionVetoAIDisabledOnly(t *testing.T) {
 	ctx := context.Background()
 	if got := postSlotAdmissionVetoReason(ctx, &Account{
 		Status: StatusActive, Schedulable: true, AIDisabled: true, ScheduleWeight: 10,
 	}); got != "ai_disabled" {
 		t.Fatalf("want ai_disabled, got %q", got)
 	}
+	// Soft-weight is last-resort at selection, not post-slot veto (else ultimate spare dead).
 	if got := postSlotAdmissionVetoReason(ctx, &Account{
 		Status: StatusActive, Schedulable: true, AIManaged: true, ScheduleWeight: 0,
-	}); got != "schedule_weight_zero" {
-		t.Fatalf("want schedule_weight_zero, got %q", got)
-	}
-	// Unmanaged weight=0 is not soft-quarantine (test fixtures / non-pilot).
-	if got := postSlotAdmissionVetoReason(ctx, &Account{
-		Status: StatusActive, Schedulable: true, ScheduleWeight: 0,
 	}); got != "" {
-		t.Fatalf("want empty for unmanaged weight0, got %q", got)
+		t.Fatalf("want empty for soft-weight, got %q", got)
 	}
-	if got := postSlotAdmissionVetoReason(ctx, &Account{
-		Status: StatusActive, Schedulable: true, AIManaged: true, ScheduleWeight: 10,
-	}); got != "" {
-		t.Fatalf("want empty, got %q", got)
+}
+
+func TestPreferPrimaryOverSoftWeightStopped(t *testing.T) {
+	primary := &Account{ID: 1, AIManaged: true, ScheduleWeight: 10, Status: StatusActive, Schedulable: true}
+	spare := &Account{ID: 2, AIManaged: true, ScheduleWeight: 0, Status: StatusActive, Schedulable: true}
+	got := preferPrimaryAccounts([]*Account{spare, primary})
+	if len(got) != 1 || got[0].ID != 1 {
+		t.Fatalf("want only primary, got %+v", got)
+	}
+	// All soft-stopped → keep as ultimate spare.
+	got = preferPrimaryAccounts([]*Account{spare, {ID: 3, AIManaged: true, ScheduleWeight: 0}})
+	if len(got) != 2 {
+		t.Fatalf("want both spares when no primary, got %d", len(got))
+	}
+}
+
+func TestDecayNeverRevertsCostIsolationPriority(t *testing.T) {
+	acc := &Account{
+		ID: 9, Status: StatusActive, Schedulable: true, AIManaged: true,
+		AIDisabled: false, Priority: 200, ScheduleWeight: 0,
+	}
+	store := &decayAccountStore{acc: acc}
+	repo := &aiPilotStoreMem{}
+	p := &AIPilotService{Accounts: store, Repo: repo}
+	a := AIAction{
+		ID: 9, AccountID: 9, Op: AIOpSetPriority,
+		Before: "100", After: "200",
+		Reason: "性价比软隔离(究极备用): composite=0.20",
+		State:  AIActionApplied, Outcome: verdictPrefix + verdictStarved + " | x",
+		TS: time.Now().Add(-30 * time.Minute),
+	}
+	repo.pendingDecay = []AIAction{a}
+	n := p.decayStaleDemotions(context.Background(), AIAutopilotSettings{DemotionTTLMinutes: 25})
+	if n != 0 {
+		t.Fatalf("cost isolation priority must not decay-revert, got %d", n)
+	}
+	if store.acc.Priority != 200 || store.acc.ScheduleWeight != 0 {
+		t.Fatalf("account state changed: p=%d w=%d", store.acc.Priority, store.acc.ScheduleWeight)
 	}
 }

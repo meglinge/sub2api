@@ -530,7 +530,8 @@ func shouldClearStickySession(account *Account, requestedModel string) bool {
 	if !account.IsSchedulable() {
 		return true
 	}
-	// AI soft quarantine (weight=0 on managed accounts): sticky must not keep burning.
+	// Soft quarantine (AI-managed w=0) is ultimate spare only — never sticky-bind
+	// it while cheaper primary peers may exist; next request reselects.
 	if account.IsSoftWeightStopped() {
 		return true
 	}
