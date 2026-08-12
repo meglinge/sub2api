@@ -56,9 +56,16 @@ func readOnlyReason(acc *Account, cfg AIAutopilotSettings, now time.Time, manage
 		// Phase 1: OpenAI only
 		return "非 OpenAI 账号"
 	}
+	// 0 = off (no cooldown). Do not treat "until == ManualTouchedAt" with a
+	// stale Analyze-start `now`: long LLM turns freeze now, so a human edit
+	// mid-run makes ManualTouchedAt look "in the future" and falsely blocks.
+	if cfg.ManualImmunityHours <= 0 {
+		return ""
+	}
 	if acc.ManualTouchedAt != nil {
 		until := acc.ManualTouchedAt.Add(time.Duration(cfg.ManualImmunityHours) * time.Hour)
-		if now.Before(until) {
+		// Wall clock for the boundary: immunity must not depend on run-start now.
+		if time.Now().Before(until) {
 			return "人工改动免疫期内"
 		}
 	}

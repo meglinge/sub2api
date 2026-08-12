@@ -58,7 +58,7 @@ export default {
     cooldown: '账号冷静期(分钟)',
     cooldownHint: '同一账号两次 AI 动作之间的最短间隔。',
     manualImmunity: '人工改动免疫(小时)',
-    manualImmunityHint: '人刚改过的账号，这段时间内 AI 不碰。',
+    manualImmunityHint: '人刚改过的账号，这段时间内 AI 不碰。填 0 = 关闭免疫（立刻允许 AI 继续管）。',
     confidence: '置信度门槛',
     confidenceHint: '0–1。低于门槛的建议不自动执行。',
     weightPct: '权重最大相对变化(%)',

@@ -293,6 +293,7 @@ func (s AIAutopilotSettings) Normalize() AIAutopilotSettings {
 	if s.ChannelCooldownMinutes < 0 {
 		s.ChannelCooldownMinutes = d.ChannelCooldownMinutes
 	}
+	// 0 = explicit off (no human-edit cooldown). Only negative is invalid → default.
 	if s.ManualImmunityHours < 0 {
 		s.ManualImmunityHours = d.ManualImmunityHours
 	}

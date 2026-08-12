@@ -61,7 +61,7 @@ export default {
     cooldown: 'Account cooldown (minutes)',
     cooldownHint: 'Minimum gap between two AI actions on the same account.',
     manualImmunity: 'Manual immunity (hours)',
-    manualImmunityHint: 'Accounts touched by humans are read-only for this duration.',
+    manualImmunityHint: 'Accounts touched by humans are read-only for this duration. 0 = off (AI may manage immediately).',
     confidence: 'Confidence threshold',
     confidenceHint: '0–1. Below threshold → suggest only.',
     weightPct: 'Weight max relative delta (%)',

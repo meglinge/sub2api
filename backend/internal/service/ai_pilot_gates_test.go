@@ -137,3 +137,35 @@ func TestReadOnlyReason_ManualImmunity(t *testing.T) {
 		t.Fatal("expected manual immunity")
 	}
 }
+
+func TestReadOnlyReason_ManualImmunityZeroMeansOff(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultAIAutopilotSettings()
+	cfg.ManualImmunityHours = 0
+	now := time.Now()
+	// Stale Analyze "now" before a mid-run human touch — must NOT block when hours=0.
+	staleNow := now.Add(-5 * time.Minute)
+	touched := now.Add(-1 * time.Minute) // after staleNow, like mid-run admin edit
+	acc := &Account{
+		Platform: PlatformOpenAI, AIManaged: true,
+		ManualTouchedAt: &touched, GroupIDs: []int64{1},
+	}
+	if reason := readOnlyReason(acc, cfg, staleNow, nil); reason != "" {
+		t.Fatalf("hours=0 must disable immunity, got %q", reason)
+	}
+}
+
+func TestReadOnlyReason_ManualImmunityExpired(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultAIAutopilotSettings()
+	cfg.ManualImmunityHours = 1
+	now := time.Now()
+	touched := now.Add(-2 * time.Hour)
+	acc := &Account{
+		Platform: PlatformOpenAI, AIManaged: true,
+		ManualTouchedAt: &touched, GroupIDs: []int64{1},
+	}
+	if reason := readOnlyReason(acc, cfg, now, nil); reason != "" {
+		t.Fatalf("expected expired immunity, got %q", reason)
+	}
+}
