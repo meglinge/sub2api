@@ -85,14 +85,18 @@ func (p *AIPilotService) backfillOutcomes(ctx context.Context, cfg AIAutopilotSe
 	if maxWait <= 0 {
 		maxWait = 5 * time.Minute
 	}
-	// Only look back a few days so we don't reprocess ancient empty outcomes forever.
-	since := time.Now().Add(-72 * time.Hour)
-	acts, err := p.Repo.ListActionsPendingOutcome(ctx, since, 20)
+	// Recent window only — older pending rows are bulk-closed so new actions can
+	// settle within a few pilot cycles instead of waiting behind a multi-day backlog.
+	now := time.Now()
+	since := now.Add(-time.Duration(outcomeLookbackHours) * time.Hour)
+	// Drain stale backlog first (outside lookback) so indexes stay healthy.
+	p.closeStalePendingOutcomes(ctx, since, now)
+
+	acts, err := p.Repo.ListActionsPendingOutcome(ctx, since, 80)
 	if err != nil || len(acts) == 0 {
 		return
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	now := time.Now()
+	deadline := now.Add(5 * time.Second)
 	settled := 0
 	for _, a := range acts {
 		if time.Now().After(deadline) {
@@ -125,6 +129,37 @@ func (p *AIPilotService) backfillOutcomes(ctx context.Context, cfg AIAutopilotSe
 	}
 	if settled > 0 && p.Log != nil {
 		p.Log.Info("ai pilot outcome backfill", "settled", settled)
+	}
+}
+
+// closeStalePendingOutcomes marks ancient applied actions (older than lookback)
+// with a thin historical verdict so they stop blocking the pending-outcome index
+// and demotion decay. Processes a bounded batch per Analyze call.
+func (p *AIPilotService) closeStalePendingOutcomes(ctx context.Context, newerThan time.Time, now time.Time) {
+	// ListActionsPendingOutcome orders ASC — fetch a wide since so old rows appear first.
+	// We only close those strictly before newerThan.
+	oldSince := now.Add(-30 * 24 * time.Hour)
+	acts, err := p.Repo.ListActionsPendingOutcome(ctx, oldSince, 120)
+	if err != nil || len(acts) == 0 {
+		return
+	}
+	closed := 0
+	for _, a := range acts {
+		if !a.TS.Before(newerThan) {
+			// Hit the recent window; remaining rows are also recent (ASC order).
+			break
+		}
+		outcome := verdictPrefix + verdictThinSamples +
+			" | 改后历史积压: 超过观察窗口未结算,自动关闭(不参与衰减回滚)"
+		if err := p.Repo.SetActionOutcome(ctx, a.ID, outcome, now); err != nil {
+			continue
+		}
+		// Prevent decay from treating these as live demotions to revert.
+		_ = p.Repo.MarkActionDecayed(ctx, a.ID, now)
+		closed++
+	}
+	if closed > 0 && p.Log != nil {
+		p.Log.Info("ai pilot outcome stale closed", "closed", closed)
 	}
 }
 

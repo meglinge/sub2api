@@ -85,9 +85,10 @@ func (r *upstreamCostCountingAccountRepo) calls() int {
 
 func upstreamCostTestAccount(id int64, status string, rate float64, receivedAt time.Time, interval time.Duration) *Account {
 	return &Account{
-		ID:       id,
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeAPIKey,
+		ID:             id,
+		Platform:       PlatformOpenAI,
+		Type:           AccountTypeAPIKey,
+		ScheduleWeight: 10, // DB default; 0 would be soft-quarantine and fail selection
 		Extra: map[string]any{
 			UpstreamBillingProbeExtraKey: map[string]any{
 				"status": status,
@@ -107,7 +108,7 @@ func upstreamCostTestAccount(id int64, status string, rate float64, receivedAt t
 }
 
 func upstreamCostTestOAuthAccount(id int64) *Account {
-	return &Account{ID: id, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	return &Account{ID: id, Platform: PlatformOpenAI, Type: AccountTypeOAuth, ScheduleWeight: 10}
 }
 
 func TestAdvancedCostSchedulerUsesTopKOverflowWhenPreferredAccountIsKnownFull(t *testing.T) {

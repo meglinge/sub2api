@@ -34,18 +34,22 @@ func TestShouldClearStickySession(t *testing.T) {
 		want           bool
 	}{
 		{name: "nil account", account: nil, requestedModel: "", want: false},
-		{name: "status error", account: &Account{Status: StatusError, Schedulable: true}, requestedModel: "", want: true},
-		{name: "status disabled", account: &Account{Status: StatusDisabled, Schedulable: true}, requestedModel: "", want: true},
-		{name: "schedulable false", account: &Account{Status: StatusActive, Schedulable: false}, requestedModel: "", want: true},
-		{name: "temp unschedulable", account: &Account{Status: StatusActive, Schedulable: true, TempUnschedulableUntil: &future}, requestedModel: "", want: true},
-		{name: "temp unschedulable expired", account: &Account{Status: StatusActive, Schedulable: true, TempUnschedulableUntil: &past}, requestedModel: "", want: false},
-		{name: "active schedulable", account: &Account{Status: StatusActive, Schedulable: true}, requestedModel: "", want: false},
+		{name: "status error", account: &Account{Status: StatusError, Schedulable: true, ScheduleWeight: 10}, requestedModel: "", want: true},
+		{name: "status disabled", account: &Account{Status: StatusDisabled, Schedulable: true, ScheduleWeight: 10}, requestedModel: "", want: true},
+		{name: "schedulable false", account: &Account{Status: StatusActive, Schedulable: false, ScheduleWeight: 10}, requestedModel: "", want: true},
+		{name: "temp unschedulable", account: &Account{Status: StatusActive, Schedulable: true, ScheduleWeight: 10, TempUnschedulableUntil: &future}, requestedModel: "", want: true},
+		{name: "temp unschedulable expired", account: &Account{Status: StatusActive, Schedulable: true, ScheduleWeight: 10, TempUnschedulableUntil: &past}, requestedModel: "", want: false},
+		{name: "active schedulable", account: &Account{Status: StatusActive, Schedulable: true, ScheduleWeight: 10}, requestedModel: "", want: false},
+		{name: "ai_disabled", account: &Account{Status: StatusActive, Schedulable: true, ScheduleWeight: 10, AIDisabled: true}, requestedModel: "", want: true},
+		{name: "soft quarantine weight 0 managed", account: &Account{Status: StatusActive, Schedulable: true, AIManaged: true, ScheduleWeight: 0}, requestedModel: "", want: true},
+		{name: "unmanaged weight 0 not soft-q", account: &Account{Status: StatusActive, Schedulable: true, ScheduleWeight: 0}, requestedModel: "", want: false},
 		// 模型限流测试：有限流即清除
 		{
 			name: "model rate limited short duration",
 			account: &Account{
-				Status:      StatusActive,
-				Schedulable: true,
+				Status:          StatusActive,
+				Schedulable:     true,
+				ScheduleWeight:  10,
 				Extra: map[string]any{
 					"model_rate_limits": map[string]any{
 						"claude-sonnet-4": map[string]any{
@@ -60,8 +64,9 @@ func TestShouldClearStickySession(t *testing.T) {
 		{
 			name: "model rate limited long duration",
 			account: &Account{
-				Status:      StatusActive,
-				Schedulable: true,
+				Status:          StatusActive,
+				Schedulable:     true,
+				ScheduleWeight:  10,
 				Extra: map[string]any{
 					"model_rate_limits": map[string]any{
 						"claude-sonnet-4": map[string]any{
@@ -76,8 +81,9 @@ func TestShouldClearStickySession(t *testing.T) {
 		{
 			name: "model rate limited different model",
 			account: &Account{
-				Status:      StatusActive,
-				Schedulable: true,
+				Status:         StatusActive,
+				Schedulable:    true,
+				ScheduleWeight: 10,
 				Extra: map[string]any{
 					"model_rate_limits": map[string]any{
 						"claude-sonnet-4": map[string]any{
@@ -92,9 +98,10 @@ func TestShouldClearStickySession(t *testing.T) {
 		{
 			name: "apikey quota exceeded",
 			account: &Account{
-				Status:      StatusActive,
-				Schedulable: true,
-				Type:        AccountTypeAPIKey,
+				Status:         StatusActive,
+				Schedulable:    true,
+				ScheduleWeight: 10,
+				Type:           AccountTypeAPIKey,
 				Extra: map[string]any{
 					"quota_daily_limit": 10.0,
 					"quota_daily_used":  10.0,
@@ -107,9 +114,10 @@ func TestShouldClearStickySession(t *testing.T) {
 		{
 			name: "oauth quota exceeded not cleared",
 			account: &Account{
-				Status:      StatusActive,
-				Schedulable: true,
-				Type:        AccountTypeOAuth,
+				Status:         StatusActive,
+				Schedulable:    true,
+				ScheduleWeight: 10,
+				Type:           AccountTypeOAuth,
 				Extra: map[string]any{
 					"quota_daily_limit": 10.0,
 					"quota_daily_used":  10.0,
@@ -122,9 +130,10 @@ func TestShouldClearStickySession(t *testing.T) {
 		{
 			name: "overloaded account",
 			account: &Account{
-				Status:       StatusActive,
-				Schedulable:  true,
-				OverloadUntil: &future,
+				Status:         StatusActive,
+				Schedulable:    true,
+				ScheduleWeight: 10,
+				OverloadUntil:  &future,
 			},
 			requestedModel: "",
 			want:           true,
@@ -134,6 +143,7 @@ func TestShouldClearStickySession(t *testing.T) {
 			account: &Account{
 				Status:           StatusActive,
 				Schedulable:      true,
+				ScheduleWeight:   10,
 				RateLimitResetAt: &future,
 			},
 			requestedModel: "",

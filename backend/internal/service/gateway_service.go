@@ -516,17 +516,22 @@ func prefetchedStickyAccountIDFromContext(ctx context.Context, groupID *int64) i
 }
 
 // shouldClearStickySession 检查账号是否处于不可调度状态，需要清理粘性会话绑定。
-// 委托 IsSchedulable() 判断账号级可调度性（状态、配额、过载、限流等），
-// 额外检查模型级限流。
+// 委托 IsSchedulable() 判断账号级可调度性（状态、配额、过载、限流、ai_disabled 等），
+// 额外检查模型级限流与 soft-quarantine（schedule_weight<=0）。
 //
 // shouldClearStickySession checks if an account is in an unschedulable state
 // and the sticky session binding should be cleared.
-// Delegates to IsSchedulable() for account-level checks, plus model-level rate limiting.
+// Delegates to IsSchedulable() for account-level checks, plus model-level rate limiting
+// and schedule_weight soft quarantine.
 func shouldClearStickySession(account *Account, requestedModel string) bool {
 	if account == nil {
 		return false
 	}
 	if !account.IsSchedulable() {
+		return true
+	}
+	// AI soft quarantine (weight=0 on managed accounts): sticky must not keep burning.
+	if account.IsSoftWeightStopped() {
 		return true
 	}
 	if remaining := account.GetRateLimitRemainingTimeWithContext(context.Background(), requestedModel); remaining > 0 {

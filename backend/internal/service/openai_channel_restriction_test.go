@@ -28,7 +28,7 @@ func TestOpenAISelectAccountForModelWithExclusions_ChannelMappedRestrictionRejec
 
 	svc := &OpenAIGatewayService{
 		accountRepo: stubOpenAIAccountRepo{accounts: []Account{
-			{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true},
+			{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, ScheduleWeight: 10},
 		}},
 		channelService: channelSvc,
 	}
@@ -56,21 +56,23 @@ func TestOpenAISelectAccountForModelWithExclusions_UpstreamRestrictionSkipsDisal
 	svc := &OpenAIGatewayService{
 		accountRepo: stubOpenAIAccountRepo{accounts: []Account{
 			{
-				ID:          1,
-				Platform:    PlatformOpenAI,
-				Status:      StatusActive,
-				Schedulable: true,
-				Priority:    10,
+				ID:             1,
+				Platform:       PlatformOpenAI,
+				Status:         StatusActive,
+				Schedulable:    true,
+				ScheduleWeight: 10,
+				Priority:       10,
 				Credentials: map[string]any{
 					"model_mapping": map[string]any{"gpt-4.1": "gpt-4o"},
 				},
 			},
 			{
-				ID:          2,
-				Platform:    PlatformOpenAI,
-				Status:      StatusActive,
-				Schedulable: true,
-				Priority:    20,
+				ID:             2,
+				Platform:       PlatformOpenAI,
+				Status:         StatusActive,
+				Schedulable:    true,
+				ScheduleWeight: 10,
+				Priority:       20,
 				Credentials: map[string]any{
 					"model_mapping": map[string]any{"gpt-4.1": "o3-mini"},
 				},
@@ -106,21 +108,23 @@ func TestOpenAISelectAccountForModelWithExclusions_StickyRestrictedUpstreamFalls
 	svc := &OpenAIGatewayService{
 		accountRepo: stubOpenAIAccountRepo{accounts: []Account{
 			{
-				ID:          1,
-				Platform:    PlatformOpenAI,
-				Status:      StatusActive,
-				Schedulable: true,
-				Priority:    10,
+				ID:             1,
+				Platform:       PlatformOpenAI,
+				Status:         StatusActive,
+				Schedulable:    true,
+				ScheduleWeight: 10,
+				Priority:       10,
 				Credentials: map[string]any{
 					"model_mapping": map[string]any{"gpt-4.1": "gpt-4o"},
 				},
 			},
 			{
-				ID:          2,
-				Platform:    PlatformOpenAI,
-				Status:      StatusActive,
-				Schedulable: true,
-				Priority:    20,
+				ID:             2,
+				Platform:       PlatformOpenAI,
+				Status:         StatusActive,
+				Schedulable:    true,
+				ScheduleWeight: 10,
+				Priority:       20,
 				Credentials: map[string]any{
 					"model_mapping": map[string]any{"gpt-4.1": "o3-mini"},
 				},

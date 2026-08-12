@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,14 +12,24 @@ import (
 const decayTrigger = "decay"
 const decayReasonPrefix = "[TTL衰减] "
 
-// decayStaleDemotions reverts demotions that starved/worsened, or aged past TTL
-// without supporting evidence (UpstreamRouter parity).
+// outcome/decay only consider recent actions. Settling or reverting 7-day-old
+// demotions (often against deleted accounts) caused mass silent re-enables and
+// thrash against intentional soft quarantine / disable.
+const (
+	outcomeLookbackHours = 24
+	decayLookbackHours   = 24
+)
+
+// decayStaleDemotions reverts demotions that aged past TTL without supporting
+// evidence (UpstreamRouter parity) — but never undoes intentional hard stops:
+//   - AIOpDisable: never auto-enable (model/recovery inject owns re-enable)
+//   - weight→0 soft quarantine: starved is the *goal*, not a failure to revert
 func (p *AIPilotService) decayStaleDemotions(ctx context.Context, cfg AIAutopilotSettings) int {
 	if p == nil || p.Repo == nil || cfg.DemotionTTLMinutes <= 0 {
 		return 0
 	}
 	ttl := time.Duration(cfg.DemotionTTLMinutes) * time.Minute
-	since := time.Now().Add(-7 * 24 * time.Hour)
+	since := time.Now().Add(-time.Duration(decayLookbackHours) * time.Hour)
 	acts, err := p.Repo.ListActionsPendingDecay(ctx, since, 100)
 	if err != nil || len(acts) == 0 {
 		return 0
@@ -30,19 +41,38 @@ func (p *AIPilotService) decayStaleDemotions(ctx context.Context, cfg AIAutopilo
 			_ = p.Repo.MarkActionDecayed(ctx, a.ID, now)
 			continue
 		}
+		// Disable is a hard stop; decay must not silently re-enable (was the
+		// main thrash driver: disable → starved → auto enable → disable…).
+		if a.Op == AIOpDisable {
+			_ = p.Repo.MarkActionDecayed(ctx, a.ID, now)
+			continue
+		}
+		// weight→0 soft quarantine: zero post-change traffic is expected.
+		if a.Op == AIOpSetWeight {
+			_, after, ok := parseIntPair(a.Before, a.After)
+			if ok && after <= 0 {
+				_ = p.Repo.MarkActionDecayed(ctx, a.ID, now)
+				continue
+			}
+		}
 		v := verdictOfOutcome(a.Outcome)
 		switch v {
 		case verdictEffective:
 			_ = p.Repo.MarkActionDecayed(ctx, a.ID, now)
 			continue
 		case verdictStarved, verdictWorse:
-			// revert immediately
+			// revert immediately for priority/weight demotions that hurt
 		default:
 			if now.Sub(a.TS) < ttl {
 				continue
 			}
 		}
 		if err := p.revertDemotion(ctx, a); err != nil {
+			// Deleted accounts are common in the backlog — mark decayed quietly.
+			if isAccountNotFoundErr(err) {
+				_ = p.Repo.MarkActionDecayed(ctx, a.ID, now)
+				continue
+			}
 			if p.Log != nil {
 				p.Log.Warn("demotion decay revert failed", "id", a.ID, "err", err)
 			}
@@ -58,10 +88,29 @@ func (p *AIPilotService) decayStaleDemotions(ctx context.Context, cfg AIAutopilo
 	return reverted
 }
 
+func isAccountNotFoundErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrAccountNotFound) {
+		return true
+	}
+	// Cover both typed and stringy ent/app errors without importing ent here.
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "account not found") ||
+		(strings.Contains(msg, "not found") && strings.Contains(msg, "account"))
+}
+
 func (p *AIPilotService) revertDemotion(ctx context.Context, a AIAction) error {
+	if p.Accounts == nil {
+		return fmt.Errorf("accounts store nil")
+	}
 	acc, err := p.Accounts.GetByID(ctx, a.AccountID)
-	if err != nil || acc == nil {
+	if err != nil {
 		return err
+	}
+	if acc == nil {
+		return ErrAccountNotFound
 	}
 	switch a.Op {
 	case AIOpSetPriority:
@@ -91,6 +140,10 @@ func (p *AIPilotService) revertDemotion(ctx context.Context, a AIAction) error {
 		if !ok || after >= before {
 			return nil
 		}
+		// Soft quarantine weight=0 is never auto-raised here (handled above).
+		if after <= 0 {
+			return nil
+		}
 		if acc.EffectiveScheduleWeight() > after {
 			return nil // already raised
 		}
@@ -101,25 +154,8 @@ func (p *AIPilotService) revertDemotion(ctx context.Context, a AIAction) error {
 		acc.ScheduleWeight = target
 		return p.Accounts.Update(ctx, acc)
 	case AIOpDisable:
-		// Only auto-enable if still disabled and outcome was starved/worse (not hard-fail thrash).
-		if !acc.AIDisabled {
-			return nil
-		}
-		v := verdictOfOutcome(a.Outcome)
-		if v != verdictStarved && v != verdictWorse {
-			// TTL-only path for disable is riskier; leave for model unless starved.
-			if v != "" {
-				return nil
-			}
-		}
-		acc.AIDisabled = false
-		if acc.Priority > AIMaxPriority {
-			acc.Priority = AIMaxPriority
-		}
-		if acc.ScheduleWeight <= 0 {
-			acc.ScheduleWeight = 10
-		}
-		return p.Accounts.Update(ctx, acc)
+		// Hard-disabled: never auto-enable via decay.
+		return nil
 	default:
 		return nil
 	}

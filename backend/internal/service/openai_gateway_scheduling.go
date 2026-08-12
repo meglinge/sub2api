@@ -264,6 +264,12 @@ func isOpenAICompatibleAccountEligibleForRequest(ctx context.Context, account *A
 	if account == nil || account.Platform != platform || !account.IsOpenAICompatible() || !account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 		return false
 	}
+	// Soft quarantine (AI-managed weight=0) must not enter legacy/simple selection
+	// either — advanced Top-K already zeros draw weight, but sticky/LRU paths
+	// previously ignored weight entirely when advanced scheduler was off.
+	if !AllowControlPlaneSchedule(ctx) && account.IsSoftWeightStopped() {
+		return false
+	}
 	if account.IsOpenAI() {
 		if paused, reason := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
 			// Debug level: this fires per-candidate on the scheduling hot path, so Info

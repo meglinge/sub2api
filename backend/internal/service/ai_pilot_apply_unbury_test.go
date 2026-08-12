@@ -89,9 +89,11 @@ func (m *memoryAccountRepo) ListByPlatform(_ context.Context, platform string) (
 }
 
 type aiPilotStoreMem struct {
-	mu      sync.Mutex
-	actions []AIAction
-	nextID  int64
+	mu           sync.Mutex
+	actions      []AIAction
+	pendingDecay []AIAction
+	decayedIDs   map[int64]bool
+	nextID       int64
 }
 
 func (s *aiPilotStoreMem) CreateRun(_ context.Context, run AIRun) (AIRun, error) {
@@ -146,10 +148,33 @@ func (s *aiPilotStoreMem) ListActionsPendingOutcome(context.Context, time.Time, 
 }
 func (s *aiPilotStoreMem) NextActionTS(context.Context, int64, time.Time) (*time.Time, error) { return nil, nil }
 func (s *aiPilotStoreMem) SetActionOutcome(context.Context, int64, string, time.Time) error { return nil }
-func (s *aiPilotStoreMem) ListActionsPendingDecay(context.Context, time.Time, int) ([]AIAction, error) {
-	return nil, nil
+func (s *aiPilotStoreMem) ListActionsPendingDecay(_ context.Context, since time.Time, limit int) ([]AIAction, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]AIAction, 0, len(s.pendingDecay))
+	for _, a := range s.pendingDecay {
+		if s.decayedIDs != nil && s.decayedIDs[a.ID] {
+			continue
+		}
+		if a.TS.Before(since) {
+			continue
+		}
+		out = append(out, a)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
 }
-func (s *aiPilotStoreMem) MarkActionDecayed(context.Context, int64, time.Time) error { return nil }
+func (s *aiPilotStoreMem) MarkActionDecayed(_ context.Context, id int64, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.decayedIDs == nil {
+		s.decayedIDs = map[int64]bool{}
+	}
+	s.decayedIDs[id] = true
+	return nil
+}
 func (s *aiPilotStoreMem) AppendAccountScores(context.Context, int64, []AIAccountScore) error {
 	return nil
 }

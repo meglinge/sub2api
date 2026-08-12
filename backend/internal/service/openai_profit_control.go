@@ -327,12 +327,32 @@ func OpenAIProfitControlVeto(ctx context.Context, account *Account) (bool, strin
 }
 
 // ProfitControlVetoLatest performs the handler-side terminal check after a
-// concurrency slot is actually acquired. The latest cached account replaces
-// the selection snapshot when available, so a probe/manual rate change during
-// wait time cannot pass on a stale pointer.
+// concurrency slot is actually acquired. Prefers a fresh DB read so mid-wait
+// ai_disabled / weight=0 changes take effect even when the scheduler snapshot
+// is briefly stale; falls back to snapshot-only when accountRepo is nil.
 func (s *OpenAIGatewayService) ProfitControlVetoLatest(ctx context.Context, selected *Account) (*Account, bool, string) {
 	if s == nil {
 		return selected, false, ""
+	}
+	if selected == nil {
+		return nil, true, "nil_account"
+	}
+	// DB recheck is authoritative for AI disable / soft-quarantine fields that
+	// must stop traffic within one request RTT after pilot apply.
+	if s.accountRepo != nil {
+		if dbAcc, err := s.accountRepo.GetByID(ctx, selected.ID); err == nil && dbAcc != nil {
+			if reason := postSlotAdmissionVetoReason(ctx, dbAcc); reason != "" {
+				return dbAcc, true, reason
+			}
+			// Still run profit gate on the freshest account when present.
+			gate, _ := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
+			if gate != nil {
+				if vetoed, reason := openAIProfitControlVetoReason(ctx, dbAcc); vetoed {
+					return dbAcc, true, reason
+				}
+			}
+			return dbAcc, false, ""
+		}
 	}
 	return profitControlVetoLatest(ctx, selected, s.schedulerSnapshot)
 }

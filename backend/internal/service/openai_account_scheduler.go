@@ -1372,6 +1372,12 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			}
 			continue
 		}
+		// Soft quarantine: AI-managed weight=0 stays out of advanced Top-K entirely
+		// (draw already zeros weight, but sticky overflow still needed a hard skip).
+		if !AllowControlPlaneSchedule(ctx) && account.IsSoftWeightStopped() {
+			filterStats.exclude("schedule_weight_zero")
+			continue
+		}
 		if account.Platform != normalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() {
 			filterStats.exclude("platform_mismatch")
 			continue

@@ -86,13 +86,14 @@ func TestOpenAISelectAccountWithLoadAwareness_HydratesSelectedAccountFromSchedul
 	cache := &snapshotHydrationCache{
 		snapshot: []*Account{
 			{
-				ID:          1,
-				Platform:    PlatformOpenAI,
-				Type:        AccountTypeAPIKey,
-				Status:      StatusActive,
-				Schedulable: true,
-				Concurrency: 1,
-				Priority:    1,
+				ID:             1,
+				Platform:       PlatformOpenAI,
+				Type:           AccountTypeAPIKey,
+				Status:         StatusActive,
+				Schedulable:    true,
+				ScheduleWeight: 10,
+				Concurrency:    1,
+				Priority:       1,
 				Credentials: map[string]any{
 					"model_mapping": map[string]any{
 						"gpt-4": "gpt-4",
@@ -102,13 +103,14 @@ func TestOpenAISelectAccountWithLoadAwareness_HydratesSelectedAccountFromSchedul
 		},
 		accounts: map[int64]*Account{
 			1: {
-				ID:          1,
-				Platform:    PlatformOpenAI,
-				Type:        AccountTypeAPIKey,
-				Status:      StatusActive,
-				Schedulable: true,
-				Concurrency: 1,
-				Priority:    1,
+				ID:             1,
+				Platform:       PlatformOpenAI,
+				Type:           AccountTypeAPIKey,
+				Status:         StatusActive,
+				Schedulable:    true,
+				ScheduleWeight: 10,
+				Concurrency:    1,
+				Priority:       1,
 				Credentials: map[string]any{
 					"api_key":       "sk-live",
 					"model_mapping": map[string]any{"gpt-4": "gpt-4"},

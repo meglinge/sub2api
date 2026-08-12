@@ -261,6 +261,18 @@ func (a *Account) EffectiveScheduleWeight() int {
 	return a.ScheduleWeight
 }
 
+// IsSoftWeightStopped reports intentional soft quarantine (AI set schedule_weight=0).
+// Go zero-value test fixtures also have weight 0 but leave AIManaged=false; those
+// must remain selectable. Production pilot accounts are AIManaged and use weight 0
+// as the cost/error soft-quarantine signal (sticky + selection must honor it even
+// when the advanced scheduler is off).
+func (a *Account) IsSoftWeightStopped() bool {
+	if a == nil || !a.AIManaged {
+		return false
+	}
+	return a.ScheduleWeight <= 0
+}
+
 // IsCredentialUsableForShadow 报告本账号(作为某 spark 影子的母账号)的凭据/传输是否可被影子透传使用。
 //
 // 检查「凭据/账号/传输可用性」:

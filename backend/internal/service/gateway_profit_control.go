@@ -81,24 +81,53 @@ func (s *GatewayService) GatewayProfitControlVetoLatest(ctx context.Context, sel
 }
 
 func profitControlVetoLatest(ctx context.Context, selected *Account, snapshot *SchedulerSnapshotService) (*Account, bool, string) {
-	gate, _ := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
-	if gate == nil || selected == nil {
-		return selected, false, ""
+	if selected == nil {
+		return nil, true, "nil_account"
 	}
+	gate, _ := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
 	latest := selected
 	if snapshot != nil {
 		refreshed, err := snapshot.GetAccount(ctx, selected.ID)
 		if err != nil || refreshed == nil {
-			slog.Warn("profit_control_account_refresh_failed", "group_id", gate.groupID, "platform", gate.platform, "account_id", selected.ID, "error", err)
-			openAIProfitControlObserverInstance.recordRefreshFailure(gate.groupID, gate.platform, gate.threshold)
+			if gate != nil {
+				slog.Warn("profit_control_account_refresh_failed", "group_id", gate.groupID, "platform", gate.platform, "account_id", selected.ID, "error", err)
+				openAIProfitControlObserverInstance.recordRefreshFailure(gate.groupID, gate.platform, gate.threshold)
+			}
 		} else if !refreshed.UpdatedAt.Before(selected.UpdatedAt) {
 			// 选号路径可能已做过 DB recheck，selected 比缓存快照更新鲜；只有
 			// 快照不落后时才替换，避免终检把新鲜账号换回较旧的缓存对象。
 			latest = refreshed
 		}
 	}
+	// Always re-check schedulability after slot acquire (WaitPlan may outlive a
+	// mid-wait ai_disabled / weight=0 soft quarantine). Profit gate may be absent.
+	if reason := postSlotAdmissionVetoReason(ctx, latest); reason != "" {
+		return latest, true, reason
+	}
+	if gate == nil {
+		return latest, false, ""
+	}
 	vetoed, reason := openAIProfitControlVetoReason(ctx, latest)
 	return latest, vetoed, reason
+}
+
+// postSlotAdmissionVetoReason rejects accounts that became unusable between
+// selection and slot acquire (ai_disabled, soft quarantine weight=0, etc.).
+func postSlotAdmissionVetoReason(ctx context.Context, account *Account) string {
+	if account == nil {
+		return "nil_account"
+	}
+	if !account.IsSchedulableForRequest(AllowControlPlaneSchedule(ctx)) {
+		if account.AIDisabled {
+			return "ai_disabled"
+		}
+		return "not_schedulable"
+	}
+	// Soft quarantine: AI-managed weight=0 must not receive normal traffic.
+	if !AllowControlPlaneSchedule(ctx) && account.IsSoftWeightStopped() {
+		return "schedule_weight_zero"
+	}
+	return ""
 }
 
 func (s *GatewayService) isGatewayAccountProfitEligible(ctx context.Context, account *Account) bool {
