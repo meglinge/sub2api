@@ -429,7 +429,12 @@ func TestWeightCrushAndDisableGates(t *testing.T) {
 	}
 	recentBad := AccountTrafficStats{Requests: 10, Successes: 2, Errors: 10}
 	if reason := disableHealthyGateReason(acc, long, recentBad); reason != "" {
-		t.Fatalf("hard fail should allow disable: %s", reason)
+		t.Fatalf("majority-fail recent should allow disable: %s", reason)
+	}
+	// 3-minute blip: 34 billed + 12 errors = 73.9% — NOT disable-worthy.
+	recentBlip := AccountTrafficStats{Requests: 34, Successes: 34, Errors: 12}
+	if reason := disableHealthyGateReason(acc, long, recentBlip); reason == "" {
+		t.Fatal("expected reject disable on 74% recent SR (transient 502/504)")
 	}
 	// Depleted must allow disable even with healthy long/recent windows.
 	accDep := &Account{
@@ -439,10 +444,19 @@ func TestWeightCrushAndDisableGates(t *testing.T) {
 	if reason := disableHealthyGateReason(accDep, long, recent); reason != "" {
 		t.Fatalf("depleted should allow disable: %s", reason)
 	}
-	// Fresh activation fail should allow disable.
-	failProbe := activationResult{AccountID: 1, Verdict: "fail", Fresh: true, Error: "deadline exceeded"}
-	if reason := disableHealthyGateReasonEx(acc, long, recent, &failProbe); reason != "" {
-		t.Fatalf("activation fail should allow disable: %s", reason)
+	// Transient probe (timeout/502) must NOT open disable.
+	timeoutProbe := activationResult{AccountID: 1, Verdict: "fail", Fresh: true, Error: "deadline exceeded"}
+	if reason := disableHealthyGateReasonEx(acc, long, recent, &timeoutProbe); reason == "" {
+		t.Fatal("timeout probe must not allow disable")
+	}
+	slowProbe := activationResult{AccountID: 1, Verdict: "slow", Fresh: true, Error: "HTTP 503 responses model=gpt-5.6-sol"}
+	if reason := disableHealthyGateReasonEx(acc, long, recent, &slowProbe); reason == "" {
+		t.Fatal("503 probe must not allow disable")
+	}
+	// Fatal auth/quota probe may disable.
+	quotaProbe := activationResult{AccountID: 1, Verdict: "fail", Fresh: true, Error: "HTTP 403 额度不足"}
+	if reason := disableHealthyGateReasonEx(acc, long, recent, &quotaProbe); reason != "" {
+		t.Fatalf("quota 403 should allow disable: %s", reason)
 	}
 }
 

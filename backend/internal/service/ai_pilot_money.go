@@ -318,7 +318,9 @@ func longWindowHealthyEnough(st AccountTrafficStats) bool {
 	return sr >= 0.90
 }
 
-// recentWindowHardFail is true when recent samples clearly show breakage.
+// recentWindowHardFail is true when recent samples look flaky.
+// Used for unbury / demotion / switch (do not promote into a 502 burst).
+// This is intentionally looser than disable — see recentWindowDisableWorthy.
 func recentWindowHardFail(st AccountTrafficStats) bool {
 	n := st.Requests + st.Errors
 	if n < 5 {
@@ -326,6 +328,19 @@ func recentWindowHardFail(st AccountTrafficStats) bool {
 	}
 	sr := float64(st.Successes) / float64(n)
 	return sr < 0.85
+}
+
+// recentWindowDisableWorthy is true only when the recent window is actually dead.
+// Prod LLM relays routinely sit at 70–90% for a few minutes (502/503/504/timeout).
+// Treating SR<85% over 3 minutes as "hard fail" mass-disabled healthy cheap accounts
+// (CoCo/kedaya ~97% over 3h) that still look "active/schedulable" in the UI.
+func recentWindowDisableWorthy(st AccountTrafficStats) bool {
+	n := st.Requests + st.Errors
+	if n < 10 {
+		return false
+	}
+	sr := float64(st.Successes) / float64(n)
+	return sr < 0.50
 }
 
 // softUnburyEligible gates automatic 150→100 lift for the classic path.
@@ -653,9 +668,9 @@ func weightCrushGateReasonEx(acc *Account, next int, long, recent AccountTraffic
 // disableHealthyGateReason rejects disable without hard failure (disable/enable thrash).
 // Allowed even when long-window looks healthy when:
 //   - wallet is depleted (balance hard gate — no reason to keep serving)
-//   - recent traffic hard-fails
-//   - fresh activation probe is fail (cannot recover traffic path)
-//   - costJustified=true (very expensive under cost pressure; soft scheduler still feeds p150)
+//   - recent traffic is majority-failing (recentWindowDisableWorthy)
+//   - fresh activation probe is a fatal fail (auth/quota) — NOT 502/503/timeout
+// costJustified no longer opens disable: expensive accounts use p200+weight=0 spare.
 func disableHealthyGateReason(acc *Account, long, recent AccountTrafficStats) string {
 	return disableHealthyGateReasonEx(acc, long, recent, nil)
 }
@@ -668,25 +683,23 @@ func disableHealthyGateReasonEx2(acc *Account, long, recent AccountTrafficStats,
 	if acc == nil {
 		return ""
 	}
+	_ = costJustified // kept in signature; isolation is soft (weight=0), not disable
 	// Depleted accounts must be disableable regardless of historical SR.
 	if st, _, _ := balanceViewFromAccount(acc); strings.EqualFold(st, "depleted") {
 		return ""
 	}
-	// Soft OpenAI load-balance still routes overflow/sticky to p150; sinking alone
-	// cannot stop a very expensive account from burning money.
-	if costJustified {
+	if recentWindowDisableWorthy(recent) {
 		return ""
 	}
-	if recentWindowHardFail(recent) {
-		return ""
-	}
-	if probe != nil && probe.Fresh && strings.EqualFold(probe.Verdict, "fail") {
+	// Only fatal probe (401/403/quota). Transient 502/503/timeout is "slow", not fail.
+	if probe != nil && probe.Fresh && strings.EqualFold(probe.Verdict, "fail") && probeErrorIsFatal(probe.Error) {
 		return ""
 	}
 	if longWindowHealthyEnough(long) {
-		return "长窗健康且近窗无硬失败,禁止 disable;请 set_weight/set_priority"
+		return "长窗健康且近窗未过半失败,禁止 disable;瞬时 502/503/超时请 set_weight/set_priority"
 	}
-	return ""
+	// Blank / mediocre long window + no majority-fail recent is not a dead account.
+	return "近窗未过半失败且无长窗硬证据,禁止 disable;探测 502/503/超时不等于账号坏了"
 }
 
 // isBalanceDepleted is a convenience for cooldown / apply bypasses.

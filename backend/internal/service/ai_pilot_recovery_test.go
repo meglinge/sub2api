@@ -246,6 +246,33 @@ func TestProbeViaUpstream_RetriesModelNotFound(t *testing.T) {
 	}
 }
 
+func TestProbeViaUpstream_503IsSlowNotFail(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503)
+		_, _ = io.WriteString(w, `{"error":{"message":"Service temporarily unavailable","type":"api_error"}}`)
+	}))
+	defer srv.Close()
+	p := &AIPilotService{HTTP: srv.Client()}
+	cfg := DefaultAIAutopilotSettings()
+	cfg.ActivationProbeMaxTtfbMs = 0
+	acc := &Account{
+		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-x", "base_url": srv.URL},
+		Extra:       map[string]any{"probe_model": "gpt-5.6-sol", "openai_responses_supported": true},
+	}
+	res, ok := p.probeViaUpstream(context.Background(), acc, 5*time.Second, "r", cfg)
+	if !ok {
+		t.Fatal("expected upstream path")
+	}
+	if res.Verdict != "slow" {
+		t.Fatalf("503 must be slow not %s err=%s", res.Verdict, res.Error)
+	}
+	if reason := activationGateReason(AIOpEnable, "", 10, map[int64]activationResult{1: res}, 1, cfg); reason != "" {
+		t.Fatalf("slow 503 must not block enable: %s", reason)
+	}
+}
+
 func TestProbeViaUpstream_NoChatFallbackWhenResponsesSupported(t *testing.T) {
 	t.Parallel()
 	var hitResponses, hitChat int

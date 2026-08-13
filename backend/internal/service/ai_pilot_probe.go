@@ -315,8 +315,8 @@ func (p *AIPilotService) probeViaUpstream(
 			if err != nil {
 				cancel()
 				lastErr = fmt.Sprintf("%s model=%s: %v", pe.name, model, err)
-				// Timeout / network: try next model once, do not switch to chat.
-				if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline") {
+				// Timeout / transient network: try next model; never treat as fatal fail.
+				if probeErrorIsTransient(err.Error()) {
 					continue
 				}
 				res.TTFBMs = ttfb
@@ -334,6 +334,10 @@ func (p *AIPilotService) probeViaUpstream(
 					continue // next model
 				}
 				res.TTFBMs = ttfb
+				if probeHTTPIsTransient(resp.StatusCode) {
+					// 429/502/503/504: keep trying models, then fall through as slow.
+					continue
+				}
 				res.Verdict = "fail"
 				res.Error = msg
 				return res, true
@@ -350,12 +354,82 @@ func (p *AIPilotService) probeViaUpstream(
 		}
 	}
 	res.TTFBMs = lastTTFB
-	res.Verdict = "fail"
 	if lastErr == "" {
 		lastErr = "no usable probe model"
 	}
 	res.Error = lastErr
+	// Exhausted models: transient upstream (502/503/timeout) is slow, not fail.
+	// fail here would both allow disable AND block enable — the prod ratchet.
+	if probeErrorIsTransient(lastErr) || probeErrorLooksTransientHTTP(lastErr) {
+		res.Verdict = "slow"
+	} else {
+		res.Verdict = "fail"
+	}
 	return res, true
+}
+
+// probeHTTPIsTransient: relay blips, not account death.
+func probeHTTPIsTransient(status int) bool {
+	switch status {
+	case 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524:
+		return true
+	default:
+		return false
+	}
+}
+
+func probeErrorIsTransient(msg string) bool {
+	low := strings.ToLower(msg)
+	if low == "" {
+		return false
+	}
+	for _, n := range []string{
+		"timeout", "deadline", "context canceled", "connection reset",
+		"connection refused", "broken pipe", "eof", "tls handshake",
+		"i/o timeout", "temporarily unavailable",
+	} {
+		if strings.Contains(low, n) {
+			return true
+		}
+	}
+	return false
+}
+
+func probeErrorLooksTransientHTTP(msg string) bool {
+	low := strings.ToLower(msg)
+	for _, n := range []string{
+		"http 408", "http 429", "http 500", "http 502", "http 503", "http 504",
+		"http 520", "http 521", "http 522", "http 524",
+		"service temporarily unavailable", "bad gateway", "gateway timeout",
+		"upstream rate limit",
+	} {
+		if strings.Contains(low, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// probeErrorIsFatal is auth/quota/key death — the only probe class that may disable.
+func probeErrorIsFatal(msg string) bool {
+	if strings.TrimSpace(msg) == "" {
+		return false
+	}
+	if probeErrorIsTransient(msg) || probeErrorLooksTransientHTTP(msg) {
+		return false
+	}
+	low := strings.ToLower(msg)
+	for _, n := range []string{
+		"http 401", "http 402", "http 403",
+		"unauthorized", "invalid api key", "incorrect api key",
+		"insufficient", "depleted", "余额不足", "额度不足", "quota",
+		"account deactivated", "billing",
+	} {
+		if strings.Contains(low, n) {
+			return true
+		}
+	}
+	return false
 }
 
 func joinOpenAIURL(base, path string) string {
