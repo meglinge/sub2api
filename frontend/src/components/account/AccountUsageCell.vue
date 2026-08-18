@@ -505,6 +505,7 @@
             >
               U ${{ formatKeyUserCost }}
             </span>
+            <CacheHitRateBadge :rate="todayStats.cache_hit_rate" />
           </div>
         </div>
         <div
@@ -585,6 +586,7 @@
           >
             U ${{ formatKeyUserCost }}
           </span>
+          <CacheHitRateBadge :rate="todayStats.cache_hit_rate" />
         </div>
       </div>
       <!-- Loading skeleton for today stats -->
@@ -643,6 +645,7 @@ import GrokQuotaProbeCell from './GrokQuotaProbeCell.vue'
 import CNProviderQuotaCell from './CNProviderQuotaCell.vue'
 import CNProviderBalanceCell from './CNProviderBalanceCell.vue'
 import OllamaCloudUsageCell from './OllamaCloudUsageCell.vue'
+import CacheHitRateBadge from './CacheHitRateBadge.vue'
 import { cnQuotaCellVisible as cnQuotaCellVisibleFn, cnBalanceCellVisible as cnBalanceCellVisibleFn } from './credentialsBuilder'
 
 // Module-level cache shared across all AccountUsageCell instances

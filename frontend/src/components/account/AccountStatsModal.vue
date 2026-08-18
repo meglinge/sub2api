@@ -220,6 +220,17 @@
                   formatTokens(stats.summary.today?.tokens || 0)
                 }}</span>
               </div>
+              <div
+                v-if="stats.summary.today?.cache_hit_rate != null"
+                class="flex items-center justify-between"
+              >
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{
+                  t('admin.accounts.stats.cacheHitRate')
+                }}</span>
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">{{
+                  formatCacheHit(stats.summary.today.cache_hit_rate)
+                }}</span>
+              </div>
             </div>
           </div>
 
@@ -727,6 +738,11 @@ const formatNumber = (value: number): string => {
     return (value / 1_000).toFixed(2) + 'K'
   }
   return value.toLocaleString()
+}
+
+const formatCacheHit = (rate: number): string => {
+  const digits = rate >= 10 || rate === 0 ? 0 : 1
+  return `${rate.toFixed(digits)}%`
 }
 
 const formatTokens = (value: number): string => {

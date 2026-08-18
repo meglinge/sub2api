@@ -138,11 +138,13 @@ func NewUsageCache() *UsageCache {
 // standard_cost: 标准费用（total_cost，不含倍率）
 // user_cost: 用户/API Key 口径费用（actual_cost，受分组倍率影响）
 type WindowStats struct {
-	Requests     int64   `json:"requests"`
-	Tokens       int64   `json:"tokens"`
-	Cost         float64 `json:"cost"`
-	StandardCost float64 `json:"standard_cost"`
-	UserCost     float64 `json:"user_cost"`
+	Requests        int64    `json:"requests"`
+	Tokens          int64    `json:"tokens"`
+	Cost            float64  `json:"cost"`
+	StandardCost    float64  `json:"standard_cost"`
+	UserCost        float64  `json:"user_cost"`
+	CacheReadTokens int64    `json:"cache_read_tokens,omitempty"`
+	CacheHitRate    *float64 `json:"cache_hit_rate,omitempty"` // 0-100
 }
 
 // UsageProgress 使用量进度
@@ -1359,13 +1361,7 @@ func (s *AccountUsageService) addWindowStats(ctx context.Context, account *Accou
 			return
 		}
 
-		windowStats = &WindowStats{
-			Requests:     stats.Requests,
-			Tokens:       stats.Tokens,
-			Cost:         stats.Cost,
-			StandardCost: stats.StandardCost,
-			UserCost:     stats.UserCost,
-		}
+		windowStats = windowStatsFromAccountStats(stats)
 
 		// 缓存窗口统计（1 分钟）
 		s.cache.windowStatsCache.Store(account.ID, &windowStatsCache{
@@ -1387,13 +1383,7 @@ func (s *AccountUsageService) GetTodayStats(ctx context.Context, accountID int64
 		return nil, fmt.Errorf("get today stats failed: %w", err)
 	}
 
-	return &WindowStats{
-		Requests:     stats.Requests,
-		Tokens:       stats.Tokens,
-		Cost:         stats.Cost,
-		StandardCost: stats.StandardCost,
-		UserCost:     stats.UserCost,
-	}, nil
+	return windowStatsFromAccountStats(stats), nil
 }
 
 // GetTodayStatsBatch 批量获取账号今日统计，优先走批量 SQL，失败时回退单账号查询。
@@ -1460,11 +1450,13 @@ func windowStatsFromAccountStats(stats *usagestats.AccountStats) *WindowStats {
 		return &WindowStats{}
 	}
 	return &WindowStats{
-		Requests:     stats.Requests,
-		Tokens:       stats.Tokens,
-		Cost:         stats.Cost,
-		StandardCost: stats.StandardCost,
-		UserCost:     stats.UserCost,
+		Requests:        stats.Requests,
+		Tokens:          stats.Tokens,
+		Cost:            stats.Cost,
+		StandardCost:    stats.StandardCost,
+		UserCost:        stats.UserCost,
+		CacheReadTokens: stats.CacheReadTokens,
+		CacheHitRate:    stats.CacheHitRate,
 	}
 }
 

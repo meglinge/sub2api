@@ -46,6 +46,11 @@
           formatCurrency(props.stats.user_cost)
         }}</span>
       </div>
+      <!-- Cache hit rate -->
+      <div v-if="props.stats.cache_hit_rate != null" class="flex items-center gap-1">
+        <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.cacheHitRate') }}:</span>
+        <CacheHitRateBadge :rate="props.stats.cache_hit_rate" compact />
+      </div>
     </div>
 
     <!-- No data -->
@@ -57,6 +62,7 @@
 import { useI18n } from 'vue-i18n'
 import type { WindowStats } from '@/types'
 import { formatNumber, formatCurrency } from '@/utils/format'
+import CacheHitRateBadge from './CacheHitRateBadge.vue'
 
 const props = withDefaults(
   defineProps<{

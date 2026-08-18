@@ -283,7 +283,10 @@ func (r *usageLogRepository) GetAccountTodayStats(ctx context.Context, accountID
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
 			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as cost,
 			COALESCE(SUM(total_cost), 0) as standard_cost,
-			COALESCE(SUM(actual_cost), 0) as user_cost
+			COALESCE(SUM(actual_cost), 0) as user_cost,
+			COALESCE(SUM(input_tokens), 0) as input_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens
 		FROM usage_logs
 		WHERE account_id = $1 AND created_at >= $2
 	`
@@ -299,9 +302,13 @@ func (r *usageLogRepository) GetAccountTodayStats(ctx context.Context, accountID
 		&stats.Cost,
 		&stats.StandardCost,
 		&stats.UserCost,
+		&stats.InputTokens,
+		&stats.CacheCreationTokens,
+		&stats.CacheReadTokens,
 	); err != nil {
 		return nil, err
 	}
+	stats.FillCacheHitRate()
 	return stats, nil
 }
 
@@ -313,7 +320,10 @@ func (r *usageLogRepository) GetAccountWindowStats(ctx context.Context, accountI
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
 			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as cost,
 			COALESCE(SUM(total_cost), 0) as standard_cost,
-			COALESCE(SUM(actual_cost), 0) as user_cost
+			COALESCE(SUM(actual_cost), 0) as user_cost,
+			COALESCE(SUM(input_tokens), 0) as input_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens
 		FROM usage_logs
 		WHERE account_id = $1 AND created_at >= $2
 	`
@@ -329,9 +339,13 @@ func (r *usageLogRepository) GetAccountWindowStats(ctx context.Context, accountI
 		&stats.Cost,
 		&stats.StandardCost,
 		&stats.UserCost,
+		&stats.InputTokens,
+		&stats.CacheCreationTokens,
+		&stats.CacheReadTokens,
 	); err != nil {
 		return nil, err
 	}
+	stats.FillCacheHitRate()
 	return stats, nil
 }
 
@@ -350,7 +364,10 @@ func (r *usageLogRepository) GetAccountWindowStatsBatch(ctx context.Context, acc
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
 			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as cost,
 			COALESCE(SUM(total_cost), 0) as standard_cost,
-			COALESCE(SUM(actual_cost), 0) as user_cost
+			COALESCE(SUM(actual_cost), 0) as user_cost,
+			COALESCE(SUM(input_tokens), 0) as input_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens
 		FROM usage_logs
 		WHERE account_id = ANY($1) AND created_at >= $2
 		GROUP BY account_id
@@ -371,9 +388,13 @@ func (r *usageLogRepository) GetAccountWindowStatsBatch(ctx context.Context, acc
 			&stats.Cost,
 			&stats.StandardCost,
 			&stats.UserCost,
+			&stats.InputTokens,
+			&stats.CacheCreationTokens,
+			&stats.CacheReadTokens,
 		); err != nil {
 			return nil, err
 		}
+		stats.FillCacheHitRate()
 		result[accountID] = stats
 	}
 	if err := rows.Err(); err != nil {

@@ -22,6 +22,7 @@
         >
           U ${{ formatUserCost }}
         </span>
+        <CacheHitRateBadge :rate="windowStats?.cache_hit_rate" class="text-[9px]" />
       </div>
     </div>
 
@@ -61,6 +62,7 @@ import { useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import type { WindowStats } from '@/types'
 import { formatCompactNumber } from '@/utils/format'
+import CacheHitRateBadge from './CacheHitRateBadge.vue'
 
 const props = defineProps<{
   label: string

@@ -651,6 +651,33 @@ describe('AccountUsageCell', () => {
 		expect(badges.some(node => node.attributes('title') === 'usage.userBilled')).toBe(true)
   })
 
+  it('Key 账号 today stats 展示缓存命中率', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 3002,
+          platform: 'anthropic',
+          type: 'apikey'
+        }),
+        todayStats: {
+          requests: 10,
+          tokens: 1000,
+          cost: 1,
+          cache_hit_rate: 42.2
+        }
+      },
+      global: {
+        mocks: { t: (key: string) => key },
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: true
+        }
+      }
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('42%')
+  })
+
   it('Grok OAuth compact UI drops local chips and header quota bars', async () => {
     getUsage.mockResolvedValue({
       grok_local_usage: {

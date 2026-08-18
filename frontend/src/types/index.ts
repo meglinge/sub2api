@@ -1258,6 +1258,8 @@ export interface WindowStats {
   cost: number // Account cost (account multiplier)
   standard_cost?: number
   user_cost?: number
+  cache_read_tokens?: number
+  cache_hit_rate?: number | null // 0-100, prompt cache hit rate
 }
 
 export interface UsageProgress {
