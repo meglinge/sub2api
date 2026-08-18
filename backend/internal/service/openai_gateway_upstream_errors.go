@@ -488,10 +488,21 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 
 	MarkResponseCommitted(c)
 
-	// Pass through real client-facing status/message (400 invalid_request, etc.)
-	// instead of collapsing every non-failover error into 502 "Upstream request failed".
-	// Account auth (401/generic 403) remains sanitized — see MapOpenAIUpstreamClientError.
+	// Official #5479: deterministic 400 must keep real status + code/param,
+	// otherwise downstream retries a non-retryable request as 502.
+	if isOpenAIDeterministicClientError(resp.StatusCode) {
+		writeOpenAIUpstreamClientError(c, resp.StatusCode, body, upstreamMsg)
+		if upstreamMsg == "" {
+			return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
+	}
+
+	// Other statuses: keep fork mapping (sanitized 401/403, passthrough 422/404, etc.)
 	statusCode, errType, errMsg := MapOpenAIUpstreamClientError(resp.StatusCode, body, upstreamMsg)
+	if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
+		errMsg = upstreamMsg
+	}
 
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{

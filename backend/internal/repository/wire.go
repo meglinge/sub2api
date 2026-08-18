@@ -98,6 +98,7 @@ var ProviderSet = wire.NewSet(
 	NewTLSFingerprintProfileRepository,
 	NewChannelRepository,
 	NewChannelMonitorRepository,
+	NewChannelMonitorV2Repository,
 	NewChannelMonitorRequestTemplateRepository,
 	NewAIPilotRepository,
 	wire.Bind(new(service.AIPilotStore), new(*AIPilotRepository)),

@@ -88,6 +88,7 @@ func provideCleanup(
 	schedulerSnapshot *service.SchedulerSnapshotService,
 	tokenRefresh *service.TokenRefreshService,
 	accountExpiry *service.AccountExpiryService,
+	cnProviderBalanceCheck *service.CNProviderBalanceCheckService,
 	codexVersionSync *service.OpenAICodexVersionSyncService,
 	proxyExpiry *service.ProxyExpiryService,
 	subscriptionExpiry *service.SubscriptionExpiryService,
@@ -110,6 +111,7 @@ func provideCleanup(
 	backupSvc *service.BackupService,
 	paymentOrderExpiry *service.PaymentOrderExpiryService,
 	channelMonitorRunner *service.ChannelMonitorRunner,
+	channelMonitorV2Aggregator *service.ChannelMonitorV2Aggregator,
 	aiPilot *service.AIPilotService,
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
@@ -244,6 +246,12 @@ func provideCleanup(
 				accountExpiry.Stop()
 				return nil
 			}},
+			{"CNProviderBalanceCheckService", func() error {
+				if cnProviderBalanceCheck != nil {
+					cnProviderBalanceCheck.Stop()
+				}
+				return nil
+			}},
 			{"OpenAICodexVersionSyncService", func() error {
 				codexVersionSync.Stop()
 				return nil
@@ -323,6 +331,12 @@ func provideCleanup(
 			{"PaymentOrderExpiryService", func() error {
 				if paymentOrderExpiry != nil {
 					paymentOrderExpiry.Stop()
+				}
+				return nil
+			}},
+			{"ChannelMonitorV2Aggregator", func() error {
+				if channelMonitorV2Aggregator != nil {
+					channelMonitorV2Aggregator.Stop()
 				}
 				return nil
 			}},

@@ -66,6 +66,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		schedulerSnapshotSvc,
 		tokenRefreshSvc,
 		accountExpirySvc,
+		nil, // cnProviderBalanceCheck
 		codexVersionSyncSvc,
 		proxyExpirySvc,
 		subscriptionExpirySvc,
@@ -88,6 +89,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // backupSvc
 		nil, // paymentOrderExpiry
 		nil, // channelMonitorRunner
+		nil, // channelMonitorV2Aggregator
 		nil, // aiPilot
 		nil, // quotaFlusher
 		nil, // upstreamBillingProbe
