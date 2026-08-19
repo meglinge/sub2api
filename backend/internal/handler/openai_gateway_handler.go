@@ -709,7 +709,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 							continue
 						}
 					}
-					// 换号前解绑 sticky（及 hang 短冷却），防止后续请求仍粘到坏号
+					// 仅 first-output hang 解绑 sticky；429/502 等瞬时失败保持原绑定，
+					// 本次请求可以换号，下次仍回原供应商以保住 prompt cache。
 					h.gatewayService.HandleOpenAIFailoverStickyFailure(c.Request.Context(), apiKey.GroupID, sessionHash, account, failoverErr)
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}

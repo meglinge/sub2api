@@ -252,8 +252,7 @@ func TestProfitControl_TurnPricingContext(t *testing.T) {
 	})
 }
 
-// 无门时准入后绑定回退官方 eager 语义：等待/抢槽路径不得因利润控制关闭而
-// 失去粘性绑定（评审 M-Bind 回归锚点）。
+// 无门时准入后绑定也不得改写已有粘性：failover 账号不能抢走原供应商。
 func TestOpenAIProfitControlAfterAdmissionBindEagerWithoutGate(t *testing.T) {
 	groupID := int64(82)
 	expensiveID := int64(903)
@@ -266,5 +265,5 @@ func TestOpenAIProfitControlAfterAdmissionBindEagerWithoutGate(t *testing.T) {
 	svc := &OpenAIGatewayService{cache: cache}
 
 	require.NoError(t, svc.BindStickySessionAfterProfitAdmission(context.Background(), &groupID, sessionHash, cheapID))
-	require.Equal(t, cheapID, cache.sessionBindings[cacheKey], "无门时保持既有 eager 绑定行为")
+	require.Equal(t, expensiveID, cache.sessionBindings[cacheKey], "无门时 failover 账号不得覆盖原粘性绑定")
 }

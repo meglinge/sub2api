@@ -10,37 +10,26 @@ import (
 )
 
 // ShouldClearStickyOnOpenAIFailover reports whether a failover error should
-// drop the session→account sticky binding so the next request (or the next
-// selection in this request) does not re-stick to a known-bad account.
+// drop the session→account sticky binding.
 //
-// Covers hang/timeout (first_output → 504 SafeToFailoverAfterWrite), upstream
-// 5xx/524, and 429. Does not clear for credential/request-scoped stop actions
-// that cannot be fixed by another account.
+// Only first-output hangs (SafeToFailoverAfterWrite) abandon the binding.
+// Those mean the current account stopped producing tokens after the client
+// already received bytes; the next request should not pile back onto it.
+//
+// Transient 429/502/503/524 must NOT clear sticky. Those errors are common on
+// pool-mode reseller keys. Clearing then rebinding to the failover account is
+// what splits one Codex session across many suppliers and drops prompt cache
+// to the shared ~3840-token prefix (~2%). This request can still switch
+// accounts; the next request retries the original binding.
 //
 // Intentionally does NOT temp-unschedule the account: first_output timeouts are
-// frequent under load and cooling would continuously empty the pool. Sticky
-// clear alone is enough to stop session pile-on; account health remains the
-// job of rate-limit / transport / ops rules.
+// frequent under load and cooling would continuously empty the pool. Account
+// health remains the job of rate-limit / transport / ops rules.
 func ShouldClearStickyOnOpenAIFailover(failoverErr *UpstreamFailoverError) bool {
 	if failoverErr == nil {
 		return false
 	}
-	if !failoverErr.ShouldRetryNextAccount() && !failoverErr.SafeToFailoverAfterWrite {
-		return false
-	}
-	if failoverErr.SafeToFailoverAfterWrite {
-		return true
-	}
-	switch failoverErr.StatusCode {
-	case http.StatusTooManyRequests, // 429
-		http.StatusBadGateway,         // 502
-		http.StatusServiceUnavailable, // 503
-		http.StatusGatewayTimeout,     // 504
-		524:                           // Cloudflare/origin timeout
-		return true
-	default:
-		return false
-	}
+	return failoverErr.SafeToFailoverAfterWrite
 }
 
 // OpenAIPoolModeSameAccountRetryLimit returns how many same-account retries
@@ -85,8 +74,8 @@ func (s *OpenAIGatewayService) ClearStickySessionOnFailure(
 }
 
 // HandleOpenAIFailoverStickyFailure clears the session→account sticky binding
-// after a hang/5xx/429 failover. Call on both switch-away and failover-exhausted
-// paths so the next request does not re-stick to a bad account.
+// only after a first-output hang. Transient 429/5xx failovers keep the original
+// binding so the next request retries the same supplier (prompt cache).
 //
 // Does not temp-unschedule the account (see ShouldClearStickyOnOpenAIFailover).
 func (s *OpenAIGatewayService) HandleOpenAIFailoverStickyFailure(

@@ -227,6 +227,21 @@ func (s *OpenAIGatewayService) BindStickySession(ctx context.Context, groupID *i
 	return s.setStickySessionAccountID(ctx, groupID, sessionHash, accountID, ttl)
 }
 
+// bindStickySessionPreserveExisting binds session→account only when the session
+// is unbound or already points at the same account. Failover must not rewrite
+// an existing binding: this request can use a backup account, but the next
+// request should retry the original so prompt cache stays on one supplier.
+func (s *OpenAIGatewayService) bindStickySessionPreserveExisting(ctx context.Context, groupID *int64, sessionHash string, accountID int64) error {
+	if sessionHash == "" || accountID <= 0 {
+		return nil
+	}
+	existing, _ := s.getStickySessionAccountID(ctx, groupID, sessionHash)
+	if existing > 0 && existing != accountID {
+		return nil
+	}
+	return s.BindStickySession(ctx, groupID, sessionHash, accountID)
+}
+
 // SelectAccount selects an OpenAI account with sticky session support
 func (s *OpenAIGatewayService) SelectAccount(ctx context.Context, groupID *int64, sessionHash string) (*Account, error) {
 	return s.SelectAccountForModel(ctx, groupID, sessionHash, "")
@@ -770,10 +785,10 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 	}
 
 	// 4. 设置粘性会话绑定（利润门下推迟到 handler 终检通过后再绑定，
-	// 终检否决的账号不得成为新的粘性目标；无门保持既有 eager 绑定与 TTL）
+	// 终检否决的账号不得成为新的粘性目标；已有绑定时不改写到 failover 账号）
 	// Set sticky session binding (deferred until terminal admission under a profit gate)
 	if sessionHash != "" && !gatewayProfitControlGateActive(ctx) {
-		_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, selected.ID, openaiStickySessionTTL)
+		_ = s.bindStickySessionPreserveExisting(ctx, groupID, sessionHash, selected.ID)
 	}
 
 	return hydrated, nil
@@ -1220,7 +1235,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 					return nil, true, selectErr
 				}
 				if sessionHash != "" && !gatewayProfitControlGateActive(ctx) {
-					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
+					_ = s.bindStickySessionPreserveExisting(ctx, groupID, sessionHash, fresh.ID)
 				}
 				return selection, true, nil
 			}
@@ -1259,7 +1274,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 					return nil, selectErr
 				}
 				if sessionHash != "" && !gatewayProfitControlGateActive(ctx) {
-					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
+					_ = s.bindStickySessionPreserveExisting(ctx, groupID, sessionHash, fresh.ID)
 				}
 				return selection, nil
 			}

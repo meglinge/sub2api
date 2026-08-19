@@ -21,14 +21,17 @@ func TestShouldClearStickyOnOpenAIFailover(t *testing.T) {
 		StatusCode:               http.StatusGatewayTimeout,
 		SafeToFailoverAfterWrite: true,
 	}))
-	require.True(t, ShouldClearStickyOnOpenAIFailover(&UpstreamFailoverError{
-		StatusCode: http.StatusTooManyRequests,
+	require.False(t, ShouldClearStickyOnOpenAIFailover(&UpstreamFailoverError{
+		StatusCode:        http.StatusTooManyRequests,
+		NextAccountAction: NextAccountRetry,
 	}))
-	require.True(t, ShouldClearStickyOnOpenAIFailover(&UpstreamFailoverError{
-		StatusCode: http.StatusBadGateway,
+	require.False(t, ShouldClearStickyOnOpenAIFailover(&UpstreamFailoverError{
+		StatusCode:        http.StatusBadGateway,
+		NextAccountAction: NextAccountRetry,
 	}))
-	require.True(t, ShouldClearStickyOnOpenAIFailover(&UpstreamFailoverError{
-		StatusCode: 524,
+	require.False(t, ShouldClearStickyOnOpenAIFailover(&UpstreamFailoverError{
+		StatusCode:        524,
+		NextAccountAction: NextAccountRetry,
 	}))
 }
 
@@ -79,7 +82,7 @@ func TestHandleOpenAIFailoverStickyFailure_ClearsStickyOnly(t *testing.T) {
 	require.True(t, account.IsSchedulable() || account.Status == StatusActive || account.Status == "")
 }
 
-func TestHandleOpenAIFailoverStickyFailure_429ClearsSticky(t *testing.T) {
+func TestHandleOpenAIFailoverStickyFailure_429KeepsSticky(t *testing.T) {
 	cache := &stubGatewayCache{
 		sessionBindings: map[string]int64{
 			"openai:sess-429": 99,
@@ -93,11 +96,26 @@ func TestHandleOpenAIFailoverStickyFailure_429ClearsSticky(t *testing.T) {
 		&groupID,
 		"sess-429",
 		&Account{ID: 99, Platform: PlatformOpenAI},
-		&UpstreamFailoverError{StatusCode: http.StatusTooManyRequests},
+		&UpstreamFailoverError{StatusCode: http.StatusTooManyRequests, NextAccountAction: NextAccountRetry},
 	)
 
-	_, exists := cache.sessionBindings["openai:sess-429"]
-	require.False(t, exists, "429 failover must clear sticky")
+	require.Equal(t, int64(99), cache.sessionBindings["openai:sess-429"], "429 failover must keep original sticky")
+}
+
+func TestBindStickySessionPreserveExisting_DoesNotStealSession(t *testing.T) {
+	cache := &stubGatewayCache{
+		sessionBindings: map[string]int64{
+			"openai:sess-keep": 6155,
+		},
+	}
+	svc := &OpenAIGatewayService{cache: cache}
+	groupID := int64(2)
+
+	require.NoError(t, svc.bindStickySessionPreserveExisting(context.Background(), &groupID, "sess-keep", 6505))
+	require.Equal(t, int64(6155), cache.sessionBindings["openai:sess-keep"])
+
+	require.NoError(t, svc.bindStickySessionPreserveExisting(context.Background(), &groupID, "sess-new", 6505))
+	require.Equal(t, int64(6505), cache.sessionBindings["openai:sess-new"])
 }
 
 func TestClearStickySessionOnFailure_EmptySessionNoop(t *testing.T) {
