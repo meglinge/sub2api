@@ -472,8 +472,13 @@ func peerUsableCostBaseline(acc *Account, recent map[int64]AccountTrafficStats) 
 	if acc.TempUnschedulableUntil != nil && time.Now().Before(*acc.TempUnschedulableUntil) {
 		return false
 	}
-	if recent != nil && recentWindowHardFail(recent[acc.ID]) {
-		return false
+	if recent != nil {
+		st := recent[acc.ID]
+		// Empty recent = not actually covering cheap traffic this window
+		// (just-enabled 梦幻 0.045 would otherwise re-brand 2chat as 1.75×).
+		if st.Requests+st.Errors == 0 || recentWindowHardFail(st) {
+			return false
+		}
 	}
 	return true
 }

@@ -594,7 +594,10 @@ func TestCostPressureDemotionAndPromotionGates(t *testing.T) {
 	// filter keeps cost demotion under pressure
 	pro.Priority = 100
 	acts := []decisionAction{{AccountID: pro.ID, Op: AIOpSetPriority, Value: "150"}}
-	kept := filterDeathSpiralDemotions(acts, pool, map[int64]AccountTrafficStats{pro.ID: long}, map[int64]AccountTrafficStats{pro.ID: recent}, cfg)
+	kept := filterDeathSpiralDemotions(acts, pool, map[int64]AccountTrafficStats{pro.ID: long}, map[int64]AccountTrafficStats{
+		cheap.ID: {Requests: 40, Successes: 38, Errors: 2},
+		pro.ID:   recent,
+	}, cfg)
 	if len(kept) != 1 {
 		t.Fatalf("cost demotion should be kept, got %+v", kept)
 	}
@@ -750,6 +753,15 @@ func TestCostBaselineIgnoresDeadCheapPeer(t *testing.T) {
 	}
 	if costJustifiedIsolation(&twochat, pool, cfg, recent) {
 		t.Fatal("must not isolate 2chat against a dead 0.045")
+	}
+	// Just-enabled cheap with empty recent must not become the bar either.
+	emptyCheap := map[int64]AccountTrafficStats{
+		1: {},
+		2: {Requests: 50, Successes: 48, Errors: 2},
+		3: {Requests: 10, Successes: 10, Errors: 0},
+	}
+	if isExpensiveVsPeers(&twochat, pool, AICostVeryExpensiveRatio, emptyCheap) {
+		t.Fatal("empty-recent 0.045 must not make 2chat 1.75x")
 	}
 
 	d := decision{}
