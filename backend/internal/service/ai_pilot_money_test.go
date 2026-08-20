@@ -549,10 +549,10 @@ func TestCostPressureDemotionAndPromotionGates(t *testing.T) {
 		t.Fatal("35% cost should activate pressure")
 	}
 	// 0.11 / 0.06 ≈ 1.83 → above 1.45 and 1.75 vs cheapest peer
-	if !isExpensiveVsPeers(&pro, pool, AICostExpensiveRatio) {
+	if !isExpensiveVsPeers(&pro, pool, AICostExpensiveRatio, nil) {
 		t.Fatal("pro should be expensive vs cheapest peer")
 	}
-	if !costJustifiedSpareDemotion(&pro, pool, cfg) {
+	if !costJustifiedSpareDemotion(&pro, pool, cfg, nil) {
 		t.Fatal("pro should be cost-justified spare demotion")
 	}
 	// Healthy demotion normally blocked…
@@ -567,11 +567,11 @@ func TestCostPressureDemotionAndPromotionGates(t *testing.T) {
 	}
 	// Promotion blocked
 	pro.Priority = 150
-	if reason := priorityCostPromotionGateReason(&pro, 100, pool, cfg); reason == "" {
+	if reason := priorityCostPromotionGateReason(&pro, 100, pool, cfg, nil); reason == "" {
 		t.Fatal("expected block promote expensive to main")
 	}
 	// Unknown is not "expensive" by ratio (no known rate)
-	if isExpensiveVsPeers(&unknown, pool, AICostExpensiveRatio) {
+	if isExpensiveVsPeers(&unknown, pool, AICostExpensiveRatio, nil) {
 		t.Fatal("unknown rate must not count as expensive")
 	}
 
@@ -586,7 +586,7 @@ func TestCostPressureDemotionAndPromotionGates(t *testing.T) {
 
 	// inject demotes pro
 	d := decision{}
-	n := injectCostSpareDemotions(&d, pool, cfg)
+	n := injectCostSpareDemotions(&d, pool, cfg, nil)
 	if n != 1 || len(d.Actions) != 1 || d.Actions[0].AccountID != pro.ID {
 		t.Fatalf("inject cost demotion: n=%d acts=%+v", n, d.Actions)
 	}
@@ -600,7 +600,7 @@ func TestCostPressureDemotionAndPromotionGates(t *testing.T) {
 	}
 
 	// soft-unbury blocked for expensive under pressure
-	if !costBlocksMainPromotion(&pro, pool, cfg) {
+	if !costBlocksMainPromotion(&pro, pool, cfg, nil) {
 		t.Fatal("expected cost block main promotion")
 	}
 }
@@ -710,6 +710,67 @@ func TestCostIsolationDisableAndBlockEnable(t *testing.T) {
 	pool2 := []Account{cheap, madou}
 	if !softUnburyAffordableSpareRescue(&madou, pool2, AccountTrafficStats{}, AccountTrafficStats{}, nil) {
 		t.Fatal("madou 0.06 must be affordable spare rescue eligible")
+	}
+}
+
+func TestCostBaselineIgnoresDeadCheapPeer(t *testing.T) {
+	t.Parallel()
+	deadCheap := Account{
+		ID: 1, Name: "梦幻", Priority: 100, ScheduleWeight: 8000,
+		Status: StatusActive, Schedulable: true, AIManaged: true,
+		Extra: map[string]any{ExtraAIRateMultiplier: 0.045, ExtraAIRateSource: "sub2api"},
+	}
+	healthyCheap := Account{
+		ID: 2, Name: "saozhao", Priority: 100, ScheduleWeight: 4000,
+		Status: StatusActive, Schedulable: true, AIManaged: true,
+		Extra: map[string]any{ExtraAIRateMultiplier: 0.05, ExtraAIRateSource: "sub2api"},
+	}
+	twochat := Account{
+		ID: 3, Name: "2chat", Priority: 200, ScheduleWeight: 0,
+		Status: StatusActive, Schedulable: true, AIManaged: true,
+		Extra: map[string]any{ExtraAIRateMultiplier: 0.08, ExtraAIRateSource: "sub2api"},
+	}
+	pool := []Account{deadCheap, healthyCheap, twochat}
+	cfg := DefaultAIAutopilotSettings()
+	cfg.ScoreWeightCost = 40
+	cfg.ScoreWeightStability = 25
+	cfg.ScoreWeightLatency = 20
+	cfg.ScoreWeightThroughput = 15
+	recent := map[int64]AccountTrafficStats{
+		1: {Requests: 20, Successes: 1, Errors: 20}, // dead cheap
+		2: {Requests: 50, Successes: 48, Errors: 2},
+		3: {Requests: 10, Successes: 10, Errors: 0},
+	}
+	// vs 0.045 → 1.78× very expensive; vs healthy 0.05 → 1.60× not.
+	if !isExpensiveVsPeers(&twochat, pool, AICostVeryExpensiveRatio, nil) {
+		t.Fatal("without health filter 2chat looks 1.75x vs 0.045")
+	}
+	if isExpensiveVsPeers(&twochat, pool, AICostVeryExpensiveRatio, recent) {
+		t.Fatal("healthy cheapest is 0.05; 0.08 must not be 1.75x")
+	}
+	if costJustifiedIsolation(&twochat, pool, cfg, recent) {
+		t.Fatal("must not isolate 2chat against a dead 0.045")
+	}
+
+	d := decision{}
+	n := injectCostIsolationReleases(&d, pool, cfg, recent)
+	if n < 1 {
+		t.Fatalf("expected w0/p200 release, n=%d acts=%+v", n, d.Actions)
+	}
+	var sawW, sawP bool
+	for _, a := range d.Actions {
+		if a.AccountID != twochat.ID {
+			continue
+		}
+		if a.Op == AIOpSetWeight && a.Value == "10" {
+			sawW = true
+		}
+		if a.Op == AIOpSetPriority && a.Value == strconv.Itoa(AIPriorityBuriedThreshold) {
+			sawP = true
+		}
+	}
+	if !sawW || !sawP {
+		t.Fatalf("2chat should restore weight=10 and p150, acts=%+v", d.Actions)
 	}
 }
 

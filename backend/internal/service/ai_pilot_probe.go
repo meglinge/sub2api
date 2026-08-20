@@ -744,7 +744,7 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 				}
 				// Block only VERY expensive (1.75×). Soft expensive (e.g. 0.06 vs 0.04)
 				// must still unbury — otherwise 麻豆 stays p200 forever with zero traffic.
-				if costPressureActive(cfg) && isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio) {
+				if costPressureActive(cfg) && isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio, recentTraffic) {
 					continue
 				}
 				classic := softUnburyEligible(st, rst)
@@ -754,6 +754,9 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 				if (classic || cheapRescue || affordableRescue) && balanceGateReason(AIOpEnable, acc) == "" &&
 					acc.Status == StatusActive && acc.Schedulable {
 					obs := AIObservationPriority
+					if costBlocksMainPromotion(acc, accounts, cfg, recentTraffic) {
+						obs = AIPriorityBuriedThreshold
+					}
 					reason := fmt.Sprintf(
 						"自动解埋备援死循环: priority=%d∈[%d,%d] 长窗有充足健康样本且近窗无硬失败,回观察层 %d",
 						acc.Priority, AIPriorityBuriedThreshold, AIMaxPriority, obs,
@@ -762,7 +765,7 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 					if (cheapRescue || affordableRescue) && !classic {
 						sig := accountCostSignalOf(acc)
 						reason = fmt.Sprintf(
-							"性价比/软调度修复: 已知非极贵号(composite=%.3f)卡在 priority=%d 几乎无量;抬回主层 %d 参与分流(非仅调 weight)",
+							"性价比/软调度修复: 已知非极贵号(composite=%.3f)卡在 priority=%d 几乎无量;抬到 %d 参与分流(非仅调 weight)",
 							sig.Composite, acc.Priority, obs,
 						)
 						conf = 0.92
@@ -823,10 +826,10 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 		// Cost pressure: expensive accounts stay in spare (150) after enable — only deep exile lifts.
 		if !havePri[acc.ID] && cfg.OpAllowed(AIOpSetPriority) {
 			deep := ShouldUnburyPriority(acc.Priority)
-			soft := ShouldSoftUnburySpareTier(acc.Priority) && !costBlocksMainPromotion(acc, accounts, cfg)
+			soft := ShouldSoftUnburySpareTier(acc.Priority) && !costBlocksMainPromotion(acc, accounts, cfg, recentTraffic)
 			if deep || soft {
 				obs := RecoveryObservationPriority(acc.Priority)
-				if deep && costBlocksMainPromotion(acc, accounts, cfg) {
+				if deep && costBlocksMainPromotion(acc, accounts, cfg, recentTraffic) {
 					// Lift out of 9000-class exile but keep spare tier, not main.
 					obs = AIPriorityBuriedThreshold
 				}

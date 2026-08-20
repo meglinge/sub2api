@@ -416,7 +416,7 @@ func isCheapOrNearCheapest(acc *Account, accounts []Account) bool {
 	if !sig.Known || sig.Composite <= 0 {
 		return false
 	}
-	minC, ok := cheapestKnownComposite(accounts, acc.ID)
+	minC, ok := cheapestKnownComposite(accounts, acc.ID, nil)
 	if !ok || minC <= 0 {
 		// Sole known-rate account in pool — treat as eligible for rescue.
 		return true
@@ -456,14 +456,36 @@ func costPressureActive(cfg AIAutopilotSettings) bool {
 
 // peerKnownComposites collects known trusted composites for active schedulable accounts.
 // skipID>0 excludes that account (so a pricey self does not inflate the baseline).
-func peerKnownComposites(accounts []Account, skipID int64) []float64 {
+// peerUsableCostBaseline is a peer that can actually take cheap traffic right now.
+// Disabled / w=0 / temp-unsched / recent hard-fail names must not set the "cheapest"
+// bar — otherwise a dead 0.045 (梦幻) brands a healthy 0.08 (2chat) as 究极备用.
+func peerUsableCostBaseline(acc *Account, recent map[int64]AccountTrafficStats) bool {
+	if acc == nil || acc.Status != StatusActive || !acc.Schedulable || acc.AIDisabled {
+		return false
+	}
+	if acc.IsExcludedFromSchedule() || acc.IsSoftWeightStopped() {
+		return false
+	}
+	if acc.IsRateLimited() || acc.IsOverloaded() {
+		return false
+	}
+	if acc.TempUnschedulableUntil != nil && time.Now().Before(*acc.TempUnschedulableUntil) {
+		return false
+	}
+	if recent != nil && recentWindowHardFail(recent[acc.ID]) {
+		return false
+	}
+	return true
+}
+
+func peerKnownComposites(accounts []Account, skipID int64, recent map[int64]AccountTrafficStats) []float64 {
 	var vals []float64
 	for i := range accounts {
 		acc := &accounts[i]
 		if skipID > 0 && acc.ID == skipID {
 			continue
 		}
-		if acc.Status != StatusActive || !acc.Schedulable || acc.AIDisabled {
+		if !peerUsableCostBaseline(acc, recent) {
 			continue
 		}
 		sig := accountCostSignalOf(acc)
@@ -478,7 +500,7 @@ func peerKnownComposites(accounts []Account, skipID int64) []float64 {
 // peerMedianKnownComposite returns median trusted composite among pool accounts
 // that have a known (non-default) rate. ok=false when fewer than 1 known peer.
 func peerMedianKnownComposite(accounts []Account) (float64, bool) {
-	vals := peerKnownComposites(accounts, 0)
+	vals := peerKnownComposites(accounts, 0, nil)
 	if len(vals) == 0 {
 		return 0, false
 	}
@@ -498,8 +520,8 @@ func peerMedianKnownComposite(accounts []Account) (float64, bool) {
 }
 
 // cheapestKnownComposite excludes skipID so we compare against better alternatives.
-func cheapestKnownComposite(accounts []Account, skipID int64) (float64, bool) {
-	vals := peerKnownComposites(accounts, skipID)
+func cheapestKnownComposite(accounts []Account, skipID int64, recent map[int64]AccountTrafficStats) (float64, bool) {
+	vals := peerKnownComposites(accounts, skipID, recent)
 	if len(vals) == 0 {
 		return 0, false
 	}
@@ -516,7 +538,7 @@ func cheapestKnownComposite(accounts []Account, skipID int64) (float64, bool) {
 // Baseline is the cheapest OTHER known-rate account (not pool median including self —
 // otherwise a Pro at 0.11 next to 0.06 dilutes the median and never looks expensive).
 // Unknown-rate accounts are never "expensive" by this metric (neutral cost score only).
-func isExpensiveVsPeers(acc *Account, accounts []Account, ratio float64) bool {
+func isExpensiveVsPeers(acc *Account, accounts []Account, ratio float64, recent map[int64]AccountTrafficStats) bool {
 	if acc == nil || ratio <= 0 {
 		return false
 	}
@@ -524,7 +546,7 @@ func isExpensiveVsPeers(acc *Account, accounts []Account, ratio float64) bool {
 	if !sig.Known || sig.Composite <= 0 {
 		return false
 	}
-	minC, ok := cheapestKnownComposite(accounts, acc.ID)
+	minC, ok := cheapestKnownComposite(accounts, acc.ID, recent)
 	if !ok || minC <= 0 {
 		return false
 	}
@@ -533,25 +555,25 @@ func isExpensiveVsPeers(acc *Account, accounts []Account, ratio float64) bool {
 
 // costJustifiedSpareDemotion: high 性价比 weight + very expensive vs peers → allow
 // demoting a *healthy* account into spare tier (overrides health demotion gate).
-func costJustifiedSpareDemotion(acc *Account, accounts []Account, cfg AIAutopilotSettings) bool {
+func costJustifiedSpareDemotion(acc *Account, accounts []Account, cfg AIAutopilotSettings, recent map[int64]AccountTrafficStats) bool {
 	if !costPressureActive(cfg) {
 		return false
 	}
-	return isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio)
+	return isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio, recent)
 }
 
 // costBlocksMainPromotion: expensive account must not be lifted into main observation
 // tier (≤100) while cheaper peers exist and cost pressure is on.
-func costBlocksMainPromotion(acc *Account, accounts []Account, cfg AIAutopilotSettings) bool {
+func costBlocksMainPromotion(acc *Account, accounts []Account, cfg AIAutopilotSettings, recent map[int64]AccountTrafficStats) bool {
 	if !costPressureActive(cfg) {
 		return false
 	}
-	return isExpensiveVsPeers(acc, accounts, AICostExpensiveRatio)
+	return isExpensiveVsPeers(acc, accounts, AICostExpensiveRatio, recent)
 }
 
 // priorityCostPromotionGateReason rejects promoting expensive accounts into main tier.
 // Demotion/equal is not covered here (health gates + cost-justified demotion handle that).
-func priorityCostPromotionGateReason(acc *Account, next int, accounts []Account, cfg AIAutopilotSettings) string {
+func priorityCostPromotionGateReason(acc *Account, next int, accounts []Account, cfg AIAutopilotSettings, recent map[int64]AccountTrafficStats) string {
 	if acc == nil {
 		return ""
 	}
@@ -563,11 +585,11 @@ func priorityCostPromotionGateReason(acc *Account, next int, accounts []Account,
 	if next > AIObservationPriority {
 		return "" // still spare-ish; not main promotion
 	}
-	if !costBlocksMainPromotion(acc, accounts, cfg) {
+	if !costBlocksMainPromotion(acc, accounts, cfg, recent) {
 		return ""
 	}
 	sig := accountCostSignalOf(acc)
-	minC, _ := cheapestKnownComposite(accounts, acc.ID)
+	minC, _ := cheapestKnownComposite(accounts, acc.ID, recent)
 	return fmt.Sprintf(
 		"性价比权重高:禁止把贵号(composite=%.3f > 最便宜peer×%.2f≈%.3f)抬回主层≤%d;请用更便宜 peer 或 set_weight",
 		sig.Composite, AICostExpensiveRatio, minC*AICostExpensiveRatio, AIObservationPriority,
@@ -589,7 +611,7 @@ func weightCostLiftGateReason(acc *Account, next int, accounts []Account, cfg AI
 		return ""
 	}
 	sig := accountCostSignalOf(acc)
-	minC, _ := cheapestKnownComposite(accounts, acc.ID)
+	minC, _ := cheapestKnownComposite(accounts, acc.ID, recent)
 	return fmt.Sprintf(
 		"性价比软隔离中:禁止抬权 weight→%d (composite=%.3f > 最便宜peer×%.2f≈%.3f);贵号保持 weight=0 作究极备用,等便宜号挂完再顶",
 		next, sig.Composite, AICostVeryExpensiveRatio, minC*AICostVeryExpensiveRatio,
@@ -787,7 +809,7 @@ func filterDeathSpiralDemotions(
 			out = append(out, a)
 			continue
 		}
-		costOK := costJustifiedSpareDemotion(acc, accounts, cfg) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic)
+		costOK := costJustifiedSpareDemotion(acc, accounts, cfg, recentTraffic) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic)
 		if reason := priorityDemotionGateReasonEx(acc, next, long, recent, costOK); reason != "" {
 			continue // drop — inject soft-unbury may lift instead
 		}
@@ -800,7 +822,7 @@ func filterDeathSpiralDemotions(
 // 性价比 weight is high. Models often keep pricey-but-healthy Pro on priority=100;
 // health-only gates then refuse demotion and soft-unbury re-lifts them.
 // Note: spare is not isolation — see injectCostIsolations (ai_disabled).
-func injectCostSpareDemotions(decision *decision, accounts []Account, cfg AIAutopilotSettings) int {
+func injectCostSpareDemotions(decision *decision, accounts []Account, cfg AIAutopilotSettings, recent map[int64]AccountTrafficStats) int {
 	if decision == nil || !costPressureActive(cfg) || !cfg.OpAllowed(AIOpSetPriority) {
 		return 0
 	}
@@ -822,15 +844,15 @@ func injectCostSpareDemotions(decision *decision, accounts []Account, cfg AIAuto
 		if havePri[acc.ID] {
 			continue
 		}
-		if !costJustifiedSpareDemotion(acc, accounts, cfg) {
+		if !costJustifiedSpareDemotion(acc, accounts, cfg, recent) {
 			continue
 		}
 		// Keep at least one known-cheap main-tier peer before sinking.
-		if countKnownCheapMainTier(accounts, acc.ID) < 1 {
+		if countKnownCheapMainTier(accounts, acc.ID, recent) < 1 {
 			continue
 		}
 		sig := accountCostSignalOf(acc)
-		minC, _ := cheapestKnownComposite(accounts, acc.ID)
+		minC, _ := cheapestKnownComposite(accounts, acc.ID, recent)
 		decision.Actions = append(decision.Actions, decisionAction{
 			AccountID: acc.ID,
 			Op:        AIOpSetPriority,
@@ -1023,7 +1045,7 @@ func injectMainLayerCap(decision *decision, accounts []Account, recent map[int64
 }
 
 // peerAffordableKnown is true when o has a known rate and is not soft-expensive vs pool.
-func peerAffordableKnown(o, self *Account, accounts []Account) bool {
+func peerAffordableKnown(o, self *Account, accounts []Account, recent map[int64]AccountTrafficStats) bool {
 	if o == nil || self == nil || o.ID == self.ID {
 		return false
 	}
@@ -1034,7 +1056,7 @@ func peerAffordableKnown(o, self *Account, accounts []Account) bool {
 	if !sig.Known || sig.Composite <= 0 {
 		return false
 	}
-	return !isExpensiveVsPeers(o, accounts, AICostExpensiveRatio)
+	return !isExpensiveVsPeers(o, accounts, AICostExpensiveRatio, recent)
 }
 
 // peerHealthyEnoughForCostCover: affordable peer that can actually take traffic right now.
@@ -1064,7 +1086,7 @@ func hasAffordablePeerCoveringGroups(acc *Account, accounts []Account, recent ma
 	}
 	now := time.Now()
 	checkPeer := func(o *Account) bool {
-		if !peerAffordableKnown(o, acc, accounts) {
+		if !peerAffordableKnown(o, acc, accounts, recent) {
 			return false
 		}
 		if !requireHealthy {
@@ -1116,7 +1138,7 @@ func costJustifiedIsolation(acc *Account, accounts []Account, cfg AIAutopilotSet
 	if acc == nil || !costPressureActive(cfg) {
 		return false
 	}
-	if !isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio) {
+	if !isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio, recent) {
 		return false
 	}
 	return hasAffordablePeerCoveringGroups(acc, accounts, recent, true)
@@ -1133,14 +1155,14 @@ func costEnableGateReason(op string, acc *Account, accounts []Account, cfg AIAut
 	if acc == nil || !costPressureActive(cfg) {
 		return ""
 	}
-	if !isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio) {
+	if !isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio, recent) {
 		return ""
 	}
 	if !hasAffordablePeerCoveringGroups(acc, accounts, recent, true) {
 		return ""
 	}
 	sig := accountCostSignalOf(acc)
-	minC, _ := cheapestKnownComposite(accounts, acc.ID)
+	minC, _ := cheapestKnownComposite(accounts, acc.ID, recent)
 	return fmt.Sprintf(
 		"性价比硬门禁:贵号 composite=%.3f > 最便宜peer×%.2f(≈%.3f)且分组内仍有健康便宜号;禁止 enable(便宜全挂时会自动放行)",
 		sig.Composite, AICostVeryExpensiveRatio, minC*AICostVeryExpensiveRatio,
@@ -1202,7 +1224,7 @@ func injectCostIsolations(decision *decision, accounts []Account, cfg AIAutopilo
 			continue
 		}
 		sig := accountCostSignalOf(acc)
-		minC, _ := cheapestKnownComposite(accounts, acc.ID)
+		minC, _ := cheapestKnownComposite(accounts, acc.ID, recent)
 		needPri := !havePri[acc.ID] && acc.Priority < AIMaxPriority && cfg.OpAllowed(AIOpSetPriority)
 		needW := !haveWeight[acc.ID] && acc.EffectiveScheduleWeight() > costSoftQuarantineWeight && cfg.OpAllowed(AIOpSetWeight)
 		if !needPri && !needW {
@@ -1239,25 +1261,30 @@ func injectCostIsolations(decision *decision, accounts []Account, cfg AIAutopilo
 }
 
 // injectCostIsolationReleases re-enables accounts that were previously ai_disabled
-// for cost (or sit disabled while only "expensive", without recent hard-fail).
-// Hard-fail / depleted stays disabled.
+// for cost, and restores p200+weight=0 soft-quarantine when the account is no
+// longer very-expensive vs a *healthy* cheapest peer (2chat vs dead 梦幻 0.045).
+// Hard-fail / depleted stays disabled / quarantined.
 func injectCostIsolationReleases(decision *decision, accounts []Account, cfg AIAutopilotSettings, recent map[int64]AccountTrafficStats) int {
-	if decision == nil || !cfg.OpAllowed(AIOpEnable) {
+	if decision == nil {
 		return 0
 	}
 	haveEnable := map[int64]bool{}
+	havePri := map[int64]bool{}
+	haveWeight := map[int64]bool{}
 	for _, a := range decision.Actions {
-		if a.Op == AIOpEnable {
+		switch a.Op {
+		case AIOpEnable:
 			haveEnable[a.AccountID] = true
+		case AIOpSetPriority:
+			havePri[a.AccountID] = true
+		case AIOpSetWeight:
+			haveWeight[a.AccountID] = true
 		}
 	}
 	injected := 0
 	for i := range accounts {
 		acc := &accounts[i]
-		if !acc.AIDisabled || acc.Status != StatusActive || !acc.Schedulable {
-			continue
-		}
-		if haveEnable[acc.ID] {
+		if acc.Status != StatusActive || !acc.Schedulable {
 			continue
 		}
 		if reason := balanceGateReason(AIOpEnable, acc); reason != "" {
@@ -1267,41 +1294,86 @@ func injectCostIsolationReleases(decision *decision, accounts []Account, cfg AIA
 		if recent != nil {
 			rst = recent[acc.ID]
 		}
-		// Keep true hard-fail disables.
 		if recentWindowHardFail(rst) {
 			continue
 		}
-		// Only lift if this looks like cost quarantine victim OR expensive soft-isolatable,
-		// OR disabled with no recent traffic evidence of failure (mass over-disable cleanup).
-		veryExp := isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio)
-		softExp := isExpensiveVsPeers(acc, accounts, AICostExpensiveRatio)
-		noRecent := rst.Requests+rst.Errors == 0
-		if !veryExp && !softExp && !noRecent {
-			// Disabled for other reasons with some recent samples but not hard-fail:
-			// still lift if SR not terrible and samples exist — avoid leaving half the pool dead.
-			n := rst.Requests + rst.Errors
-			if n >= 5 {
-				sr := float64(rst.Successes) / float64(n)
-				if sr < 0.7 {
-					continue
+		sig := accountCostSignalOf(acc)
+		minC, _ := cheapestKnownComposite(accounts, acc.ID, recent)
+
+		if acc.AIDisabled && cfg.OpAllowed(AIOpEnable) && !haveEnable[acc.ID] {
+			veryExp := isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio, recent)
+			softExp := isExpensiveVsPeers(acc, accounts, AICostExpensiveRatio, recent)
+			noRecent := rst.Requests+rst.Errors == 0
+			lift := veryExp || softExp || noRecent
+			if !lift {
+				n := rst.Requests + rst.Errors
+				if n >= 5 {
+					sr := float64(rst.Successes) / float64(n)
+					lift = sr >= 0.7
+				} else {
+					lift = true
 				}
 			}
+			if lift {
+				decision.Actions = append(decision.Actions, decisionAction{
+					AccountID: acc.ID,
+					Op:        AIOpEnable,
+					Value:     fmt.Sprintf("priority=%d;weight=10", AIMaxPriority),
+					Reason: fmt.Sprintf(
+						"解除过度 disable: 近窗无硬失败(composite=%.3f);disable 仅留给硬失败/余额耗尽,贵号改用 p%d+低权软隔离",
+						sig.Composite, AIMaxPriority,
+					),
+					Confidence: 0.91,
+				})
+				haveEnable[acc.ID] = true
+				injected++
+			}
 		}
-		sig := accountCostSignalOf(acc)
-		// Park in enable value so priority/weight only apply if enable succeeds
-		// (avoids 200→200 spam when enable is rejected by probe gate).
-		decision.Actions = append(decision.Actions, decisionAction{
-			AccountID: acc.ID,
-			Op:        AIOpEnable,
-			Value:     fmt.Sprintf("priority=%d;weight=10", AIMaxPriority),
-			Reason: fmt.Sprintf(
-				"解除过度 disable: 近窗无硬失败(composite=%.3f);disable 仅留给硬失败/余额耗尽,贵号改用 p%d+低权软隔离",
-				sig.Composite, AIMaxPriority,
-			),
-			Confidence: 0.91,
-		})
-		haveEnable[acc.ID] = true
-		injected++
+
+		if acc.AIDisabled || !acc.AIManaged {
+			continue
+		}
+		if costJustifiedIsolation(acc, accounts, cfg, recent) {
+			continue
+		}
+		stuckW := acc.EffectiveScheduleWeight() <= costSoftQuarantineWeight
+		stuckP := acc.Priority >= AIMaxPriority
+		if !stuckW && !stuckP {
+			continue
+		}
+		expensive := isExpensiveVsPeers(acc, accounts, AICostExpensiveRatio, recent)
+		if stuckW && !haveWeight[acc.ID] && cfg.OpAllowed(AIOpSetWeight) {
+			decision.Actions = append(decision.Actions, decisionAction{
+				AccountID: acc.ID,
+				Op:        AIOpSetWeight,
+				Value:     "10",
+				Reason: fmt.Sprintf(
+					"解除过期软隔离: composite=%.3f 已不再>健康最便宜peer×%.2f(最便宜=%.3f);weight 0→10 恢复备援分流",
+					sig.Composite, AICostVeryExpensiveRatio, minC,
+				),
+				Confidence: 0.92,
+			})
+			haveWeight[acc.ID] = true
+			injected++
+		}
+		if stuckP && !havePri[acc.ID] && cfg.OpAllowed(AIOpSetPriority) {
+			target := AIObservationPriority
+			if expensive {
+				target = AIPriorityBuriedThreshold
+			}
+			decision.Actions = append(decision.Actions, decisionAction{
+				AccountID: acc.ID,
+				Op:        AIOpSetPriority,
+				Value:     strconv.Itoa(target),
+				Reason: fmt.Sprintf(
+					"解除过期软隔离: composite=%.3f 从 p%d 回到 %d(不再相对健康便宜号极贵)",
+					sig.Composite, acc.Priority, target,
+				),
+				Confidence: 0.92,
+			})
+			havePri[acc.ID] = true
+			injected++
+		}
 	}
 	return injected
 }
@@ -1318,7 +1390,7 @@ func softUnburyAffordableSpareRescue(acc *Account, accounts []Account, long, rec
 		return false
 	}
 	// Block only very-expensive (1.75×); 0.06 next to 0.04 must still unbury.
-	if isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio) {
+	if isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio, nil) {
 		return false
 	}
 	if recentWindowHardFail(recent) {
@@ -1336,7 +1408,7 @@ func softUnburyAffordableSpareRescue(acc *Account, accounts []Account, long, rec
 
 // countKnownCheapMainTier counts active main-tier accounts that are not expensive
 // vs the cheapest peer (excluding skipID). Used so we never sink the last cheap option.
-func countKnownCheapMainTier(accounts []Account, skipID int64) int {
+func countKnownCheapMainTier(accounts []Account, skipID int64, recent map[int64]AccountTrafficStats) int {
 	n := 0
 	for i := range accounts {
 		acc := &accounts[i]
@@ -1351,7 +1423,7 @@ func countKnownCheapMainTier(accounts []Account, skipID int64) int {
 			continue
 		}
 		// not expensive at the soft threshold
-		if !isExpensiveVsPeers(acc, accounts, AICostExpensiveRatio) {
+		if !isExpensiveVsPeers(acc, accounts, AICostExpensiveRatio, recent) {
 			n++
 		}
 	}

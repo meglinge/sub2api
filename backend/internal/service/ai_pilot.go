@@ -479,7 +479,7 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 		p.Log.Info("ai pilot injected recovery enables", "count", n, "trigger", trigger)
 	}
 	// High 性价比: sink very expensive healthy main-tier accounts the model kept at p=100.
-	if n := injectCostSpareDemotions(&finalDecision, accounts, cfg); n > 0 && p.Log != nil {
+	if n := injectCostSpareDemotions(&finalDecision, accounts, cfg, recentTraffic); n > 0 && p.Log != nil {
 		p.Log.Info("ai pilot injected cost spare demotions", "count", n, "trigger", trigger)
 	}
 	if n := injectMainLayerCap(&finalDecision, accounts, recentTraffic, cfg); n > 0 && p.Log != nil {
@@ -651,14 +651,14 @@ func (p *AIPilotService) applyDecisionActions(
 				// Monopoly front (p<50 e.g. default 1) → band: never treat as gated demotion.
 				safetyClamp := isPrioritySafetyBypass(acc.Priority, next)
 				if !safetyClamp {
-					costOK := costJustifiedSpareDemotion(acc, accounts, cfg) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic)
+					costOK := costJustifiedSpareDemotion(acc, accounts, cfg, recentTraffic) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic)
 					if reason := priorityDemotionGateReasonEx(acc, next, longSt, recentSt, costOK); reason != "" {
 						a.State = AIActionRejected
 						a.RejectReason = reason
 						_, _ = p.Repo.CreateAction(ctx, a)
 						continue
 					}
-					if reason := priorityCostPromotionGateReason(acc, next, accounts, cfg); reason != "" {
+					if reason := priorityCostPromotionGateReason(acc, next, accounts, cfg, recentTraffic); reason != "" {
 						a.State = AIActionRejected
 						a.RejectReason = reason
 						_, _ = p.Repo.CreateAction(ctx, a)
@@ -675,7 +675,7 @@ func (p *AIPilotService) applyDecisionActions(
 		}
 		if act.Op == AIOpSetWeight {
 			if next, err := parseIntValue(act.Value); err == nil {
-				costOK := costJustifiedSpareDemotion(acc, accounts, cfg) || isExpensiveVsPeers(acc, accounts, AICostExpensiveRatio)
+				costOK := costJustifiedSpareDemotion(acc, accounts, cfg, recentTraffic) || isExpensiveVsPeers(acc, accounts, AICostExpensiveRatio, recentTraffic)
 				if reason := weightCrushGateReasonEx(acc, next, longSt, recentSt, costOK && costPressureActive(cfg)); reason != "" {
 					a.State = AIActionRejected
 					a.RejectReason = reason
@@ -758,13 +758,22 @@ func (p *AIPilotService) applyDecisionActions(
 				bypassCool = true
 			}
 			// Cost isolation release (cheap boom) must not wait cooldown.
-			if !bypassCool && act.Op == AIOpEnable && isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio) &&
+			if !bypassCool && act.Op == AIOpEnable && isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio, recentTraffic) &&
 				!hasAffordablePeerCoveringGroups(acc, accounts, recentTraffic, true) {
 				bypassCool = true
 			}
 			if !bypassCool && act.Op == AIOpSetPriority {
 				if next, err := parseIntValue(act.Value); err == nil &&
 					(isPrioritySafetyBypass(acc.Priority, next) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic)) {
+					bypassCool = true
+				}
+			}
+			// Stuck p200+w0 that is no longer very-expensive must not wait cooldown.
+			if !bypassCool && !costJustifiedIsolation(acc, accounts, cfg, recentTraffic) {
+				if act.Op == AIOpSetWeight && acc.EffectiveScheduleWeight() <= costSoftQuarantineWeight {
+					bypassCool = true
+				}
+				if !bypassCool && act.Op == AIOpSetPriority && acc.Priority >= AIMaxPriority {
 					bypassCool = true
 				}
 			}
