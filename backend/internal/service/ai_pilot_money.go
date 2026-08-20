@@ -22,9 +22,10 @@ const (
 	AIPriorityBuriedThreshold = 150
 	// AIMaxPriority is the deepest autopilot may set for normal demotion.
 	AIMaxPriority = 200
-	// AIMainLayerMaxAccounts caps how many healthy accounts sit at p≤100.
-	// More mains → sessions bounce across 中转号池 and Codex cache resets to ~3840.
+	// AIMainLayerMaxAccounts was a hard p≤100 cap. Disabled: it blocked
+	// failover when mains blew up and made the pool unusable.
 	AIMainLayerMaxAccounts = 3
+	AIMainLayerCapEnabled  = false
 	// AIPriorityDeltaSafety is a hard ceiling on |Δpriority| even when settings
 	// are misconfigured (prod had priority_max_delta=1e9 → thrash every minute).
 	AIPriorityDeltaSafety = 50
@@ -991,6 +992,9 @@ func rankedMainLayer(accounts []Account, recent map[int64]AccountTrafficStats, p
 // (not the top-3 keepers). Otherwise the model could sink a cheap keeper while
 // inject also sinks extras and the main layer undershoots.
 func mainLayerOverflowDemotion(acc *Account, next int, accounts []Account, recent map[int64]AccountTrafficStats, actions []decisionAction) bool {
+	if !AIMainLayerCapEnabled {
+		return false
+	}
 	if acc == nil || next < AIPriorityBuriedThreshold || acc.Priority > AIObservationPriority {
 		return false
 	}
@@ -1009,6 +1013,9 @@ func mainLayerOverflowDemotion(acc *Account, next int, accounts []Account, recen
 }
 
 func mainLayerPromotionCapReason(acc *Account, next int, accounts []Account, actions []decisionAction) string {
+	if !AIMainLayerCapEnabled {
+		return ""
+	}
 	if acc == nil || next > AIObservationPriority {
 		return ""
 	}
@@ -1049,22 +1056,59 @@ func replaceOrAppendPriority(decision *decision, act decisionAction) {
 // injectMainLayerCap sinks extra p≤100 accounts to 150 so at most 3 mains remain.
 // Sticky + too many 中转号池 mains is what bounces Codex sessions and dumps cache to ~3840.
 func injectMainLayerCap(decision *decision, accounts []Account, recent map[int64]AccountTrafficStats, cfg AIAutopilotSettings) int {
+	if !AIMainLayerCapEnabled {
+		return 0
+	}
 	if decision == nil || !cfg.OpAllowed(AIOpSetPriority) {
 		return 0
 	}
 	pending := pendingPriorityMap(decision.Actions)
 	mains := rankedMainLayer(accounts, recent, pending)
-	if len(mains) <= AIMainLayerMaxAccounts {
-		return 0
+	serving := 0
+	for _, c := range mains {
+		rst := AccountTrafficStats{}
+		if recent != nil {
+			rst = recent[c.acc.ID]
+		}
+		if rst.Requests+rst.Errors > 0 && !recentWindowHardFail(rst) {
+			serving++
+		}
+	}
+	seen := map[int64]bool{}
+	var sink []mainLayerCand
+	push := func(c mainLayerCand) {
+		if c.acc == nil || seen[c.acc.ID] || !c.acc.AIManaged {
+			return
+		}
+		if pending[c.acc.ID] >= AIPriorityBuriedThreshold {
+			return
+		}
+		seen[c.acc.ID] = true
+		sink = append(sink, c)
+	}
+	if len(mains) > AIMainLayerMaxAccounts {
+		for _, extra := range mains[AIMainLayerMaxAccounts:] {
+			push(extra)
+		}
+	}
+	// Idle p100 with leftover huge weight must not occupy a main slot while
+	// someone else is actually serving (Sy 0 req vs 梦幻).
+	if serving >= 1 {
+		for _, c := range mains {
+			rst := AccountTrafficStats{}
+			if recent != nil {
+				rst = recent[c.acc.ID]
+			}
+			if rst.Requests+rst.Errors == 0 {
+				push(c)
+			}
+		}
+	}
+	if keep := len(mains) - len(sink); keep < 1 && len(mains) > 0 && len(sink) > 0 {
+		sink = sink[:len(sink)-1]
 	}
 	injected := 0
-	for _, extra := range mains[AIMainLayerMaxAccounts:] {
-		if !extra.acc.AIManaged {
-			continue
-		}
-		if pending[extra.acc.ID] >= AIPriorityBuriedThreshold {
-			continue
-		}
+	for _, extra := range sink {
 		replaceOrAppendPriority(decision, decisionAction{
 			AccountID: extra.acc.ID,
 			Op:        AIOpSetPriority,
@@ -1222,21 +1266,35 @@ func injectCostIsolations(decision *decision, accounts []Account, cfg AIAutopilo
 	havePri := map[int64]bool{}
 	haveWeight := map[int64]bool{}
 	// Drop model disable that only cites cost isolation style — keep hard-fail disables.
+	accOf := func(id int64) *Account {
+		for i := range accounts {
+			if accounts[i].ID == id {
+				return &accounts[i]
+			}
+		}
+		return nil
+	}
 	filtered := decision.Actions[:0]
 	for _, a := range decision.Actions {
+		acc := accOf(a.AccountID)
 		if a.Op == AIOpDisable {
-			var acc *Account
-			for i := range accounts {
-				if accounts[i].ID == a.AccountID {
-					acc = &accounts[i]
-					break
-				}
-			}
 			// Strip pure cost-isolation disables from the model; hard-fail still allowed via gate later.
 			if acc != nil && costJustifiedIsolation(acc, accounts, cfg, recent) {
 				r := strings.ToLower(a.Reason)
 				if strings.Contains(r, "性价比") || strings.Contains(r, "composite") || strings.Contains(r, "过贵") || strings.Contains(r, "极贵") {
-					// rewrite to soft quarantine instead of disable
+					continue
+				}
+			}
+		}
+		// Model keeps slamming 0.08 中转 to p200/w0 even when they are not 1.75×.
+		if acc != nil && !costJustifiedIsolation(acc, accounts, cfg, recent) {
+			if a.Op == AIOpSetWeight {
+				if n, err := strconv.Atoi(strings.TrimSpace(a.Value)); err == nil && n <= costSoftQuarantineWeight {
+					continue
+				}
+			}
+			if a.Op == AIOpSetPriority {
+				if n, err := strconv.Atoi(strings.TrimSpace(a.Value)); err == nil && n >= AIMaxPriority {
 					continue
 				}
 			}

@@ -426,7 +426,7 @@ func (p *AIPilotService) callLLMMessagesOnce(ctx context.Context, cfg AIAutopilo
 			"temperature": 0.2,
 			"stream":      true,
 			// Cap runaway completions (prod saw 11k tokens / 3min). Full decision JSON fits.
-			"max_tokens": 2048,
+			"max_tokens": 8192,
 			// Ask providers that support it to include usage on the final SSE chunk.
 			"stream_options": map[string]any{"include_usage": true},
 		}

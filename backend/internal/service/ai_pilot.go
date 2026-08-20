@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -590,9 +589,9 @@ func (p *AIPilotService) applyDecisionActions(
 	longTraffic map[int64]AccountTrafficStats,
 	recentTraffic map[int64]AccountTrafficStats,
 ) {
-	sort.SliceStable(decision.Actions, func(i, j int) bool {
-		return decision.Actions[i].Confidence > decision.Actions[j].Confidence
-	})
+	// Do NOT sort by confidence. Injects are appended after the model so later
+	// cap/isolation wins; sorting 0.93 cap before 0.92 unbury re-lifted mains
+	// every tick and made scheduling look random.
 	// Dwell map for soft-unbury thrash guard (LLM + inject paths share this gate).
 	var lastSpareDemotion map[int64]time.Time
 	if p.Repo != nil {
@@ -1184,8 +1183,8 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 		"trendBucketMinutes":  cfg.TrendBucketMinutes,
 		"policy": map[string]any{
 			"minAvailablePerGroup":        cfg.MinAvailablePerGroup,
-			"mainLayerMaxAccounts":        AIMainLayerMaxAccounts,
-			"mainLayerRule":               "p≤100 最多3个主力;多的后端沉到150,新会话少跨中转号池",
+			"mainLayerMaxAccounts":        0,
+			"mainLayerRule":               "主层不硬限制个数;主力炸掉时立刻把健康备援抬回 p100,不要卡在满池",
 			"maxActions":                  cfg.MaxActionsPerRun,
 			"cooldownMinutes":             cfg.ChannelCooldownMinutes,
 			"manualImmunityHours":         cfg.ManualImmunityHours,
@@ -1229,7 +1228,7 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 					"costDim":        "scores[].cost 由后端按 money.rateConfidence.trustedComposite 池内比价写死,禁止模型编造 peer 倍率",
 					"unknownRate":    "无导入倍率(default_one) cost≈40 中偏低,不要当成 0.06 便宜号",
 					"pressureOn":     costPressureActive(cfg),
-					"pressureRule":   "cost 权重≥20% 时:贵号禁止抬回主层;极贵号→p200+weight=0 软隔离(不 disable);disable 仅硬失败/余额耗尽;主层p≤100最多3个",
+					"pressureRule":   "cost 权重≥20% 时:贵号禁止抬回主层;极贵号→p200+weight=0 软隔离(不 disable);disable 仅硬失败/余额耗尽",
 					"expensiveRatio": AICostExpensiveRatio,
 					"veryExpensive":  AICostVeryExpensiveRatio,
 				},
@@ -1557,7 +1556,7 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 - priority 越小越优先,但**不是**「有 p100 时 p150 永远 0 请求」;主层忙/抖/粘性时 p150 低 weight 仍会吃生产量
 - 后端会把 set_priority 钳在 [50,200];若账号已是 priority=1 等小于50,应 set_priority 到 100(可绕过冷静期)
 - **禁止**把某一个账号单独提到顶层而把其他可用号沉深 —— 那等于全池只跑一个供应商
-- 健康池:主层 p≤100 **最多 3 个**,用 set_weight 按**综合分**分流(不是纯按成本均分);其余健康号放 150 备援
+- 健康池:多个号同在 priority≈100,用 set_weight 按**综合分**分流;备援放 150。主力近窗炸掉时**马上把健康备援抬回 100**,不要等满池/硬限制
 - schedule_weight 在 Top-K 内调分流; weight=0 削弱抽选但粘性仍可能命中
 - **真要停量用 disable**(ai_disabled);不要指望「沉到 150 + weight=10」挡住贵号
 - disable/enable 只切换 aiDisabled,绝不等于人工 schedulable/status
@@ -1597,15 +1596,13 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 - 若刚切组后近窗 503/硬失败: 后端会自动回滚 last_good 并 disable,勿再切更便宜组
 - 禁止建议不在 candidates 的组;省≥15% 且 30m 驻留
 
-- **主层 p≤100 最多 3 个**。第 4 个起必须 p≥150 当备援(跨中转号池会把 Codex 缓存打回 ~3840 前缀)
-- 便宜稳号要进主层:先让后端把最差主力沉到 150,不要把主层堆到 4+
 - 慢(TTFB 高)但成功率高 → 降 weight,不要无脑 priority 沉到 150+
 - 近窗/长窗**过半失败或 401/403 额度** → 才 disable; 几分钟 502/503/超时 **不要 disable**; **过贵** → p200+weight=0 究极备用
 - 后端会:拒绝无硬故障的胡乱下沉;长窗健康或已知便宜号可解埋;过度 disable 会自动解开;下沉有短冷静期;成本软隔离不被 TTL 拆掉
-- 健康池主层最多 3 个 priority≈100,用 weight 分流;不要每轮 100↔150 thrash
+- 不要每轮 100↔150 thrash;但主力近窗过半失败时必须立刻抬备援,不要把健康号卡在 150
 
 原则:
-1) **同层多号**:主层 p≤100 **最多 3 个**(至少 2 个更好);其余健康号放 150 备援。同层用 set_weight 分流,不要再往主层堆
+1) **同层多号**:保留多个可用账号在相近 priority(建议 50–150),用 set_weight 按 overall 分流。主力挂了就抬备援,不要人为卡死容量
 2) **disable 仅硬失败/余额耗尽**;过贵号 p200+weight=0 究极备用(便宜号都挂了才顶),禁止半池 ai_disabled
 3) disable 必须考虑 minAvailablePerGroup
 4) **恢复与停用同等重要**:每一轮扫 aiDisabled=true。
@@ -1613,7 +1610,7 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
    - 近窗过半失败 / 401/403 额度 → 可保持停用; 502/503/超时探测失败 → 应 enable
 5) 性价比/cost 必须看 money.rateConfidence.trustedComposite 与 groups[].peers 比价
    - compositeRate = rateMultiplier/rechargeMultiplier
-   - **池内最便宜/次便宜且 probe pass** 若仍在 p≥150 → 应 set_priority 100,不要只 +weight
+   - **池内最便宜/次便宜且 probe pass** 若仍在 p≥150、而主层正在失败 → 应 set_priority 100,不要只 +weight
 6) money.balanceStatus=depleted 时不要 enable/恢复流量;并优先处理低余额号的分流
 7) 所有**可用**渠道都健康且没有待恢复号时,actions 才应为空
 8) reason 写具体指标数值(含 balanceUsd / composite 时更好);confidence 反映把握

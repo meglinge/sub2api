@@ -757,6 +757,18 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 					if costBlocksMainPromotion(acc, accounts, cfg, recentTraffic) {
 						obs = AIPriorityBuriedThreshold
 					}
+					if AIMainLayerCapEnabled && obs <= AIObservationPriority {
+						pending := pendingPriorityMap(decision.Actions)
+						nMain := 0
+						for j := range accounts {
+							if occupyingMainLayer(&accounts[j], effectivePriority(&accounts[j], pending)) {
+								nMain++
+							}
+						}
+						if nMain >= AIMainLayerMaxAccounts {
+							continue
+						}
+					}
 					reason := fmt.Sprintf(
 						"自动解埋备援死循环: priority=%d∈[%d,%d] 长窗有充足健康样本且近窗无硬失败,回观察层 %d",
 						acc.Priority, AIPriorityBuriedThreshold, AIMaxPriority, obs,

@@ -399,6 +399,28 @@ func TestInjectRecovery_UnburiesPriority(t *testing.T) {
 	}
 }
 
+func TestInjectRecovery_DoesNotPromoteFourthMain(t *testing.T) {
+	t.Parallel()
+	skipIfMainLayerCapOff(t)
+	cfg := DefaultAIAutopilotSettings()
+	accounts := []Account{
+		mainLayerTestAccount(1, "a", 100, 10, 0.05),
+		mainLayerTestAccount(2, "b", 100, 10, 0.06),
+		mainLayerTestAccount(3, "c", 100, 10, 0.07),
+		{ID: 4, Name: "spare", Priority: 150, ScheduleWeight: 10, Status: StatusActive, Schedulable: true, AIManaged: true},
+	}
+	long := map[int64]AccountTrafficStats{
+		4: {Requests: 80, Successes: 76, Errors: 4},
+	}
+	d := decision{}
+	_ = injectRecoveryEnables(&d, accounts, nil, long, nil, cfg, nil, time.Time{})
+	for _, a := range d.Actions {
+		if a.AccountID == 4 && a.Op == AIOpSetPriority && a.Value == strconv.Itoa(AIObservationPriority) {
+			t.Fatalf("must not unbury a 4th main, acts=%+v", d.Actions)
+		}
+	}
+}
+
 func TestPriorityDemotionGate_BlocksStickySpare(t *testing.T) {
 	t.Parallel()
 	acc := &Account{ID: 6154, Priority: 100, Status: StatusActive, Schedulable: true}
@@ -852,8 +874,33 @@ func mainLayerTestAccount(id int64, name string, priority, weight int, composite
 	}
 }
 
+func skipIfMainLayerCapOff(t *testing.T) {
+	t.Helper()
+	if !AIMainLayerCapEnabled {
+		t.Skip("main-layer cap disabled")
+	}
+}
+
+func TestInjectMainLayerCap_Disabled(t *testing.T) {
+	t.Parallel()
+	if AIMainLayerCapEnabled {
+		t.Skip("cap on")
+	}
+	accounts := []Account{
+		mainLayerTestAccount(1, "a", 100, 10, 0.05),
+		mainLayerTestAccount(2, "b", 100, 10, 0.06),
+		mainLayerTestAccount(3, "c", 100, 10, 0.07),
+		mainLayerTestAccount(4, "d", 100, 10, 0.08),
+	}
+	d := decision{}
+	if n := injectMainLayerCap(&d, accounts, nil, DefaultAIAutopilotSettings()); n != 0 {
+		t.Fatalf("cap disabled must be noop, n=%d", n)
+	}
+}
+
 func TestInjectMainLayerCap_KeepsCheapestThree(t *testing.T) {
 	t.Parallel()
+	skipIfMainLayerCapOff(t)
 	accounts := []Account{
 		mainLayerTestAccount(1, "Sy", 100, 20, 0.05),
 		mainLayerTestAccount(2, "麻豆", 100, 15, 0.08),
@@ -892,6 +939,7 @@ func TestInjectMainLayerCap_KeepsCheapestThree(t *testing.T) {
 
 func TestInjectMainLayerCap_SinksIdleHighWeightMain(t *testing.T) {
 	t.Parallel()
+	skipIfMainLayerCapOff(t)
 	accounts := []Account{
 		mainLayerTestAccount(1, "Sy", 100, 32260, 0.05),
 		mainLayerTestAccount(2, "maok", 100, 10200, 0.10),
@@ -905,16 +953,24 @@ func TestInjectMainLayerCap_SinksIdleHighWeightMain(t *testing.T) {
 	}
 	d := decision{}
 	n := injectMainLayerCap(&d, accounts, recent, DefaultAIAutopilotSettings())
-	if n != 1 {
-		t.Fatalf("want 1 idle sink, n=%d acts=%+v", n, d.Actions)
+	if n < 1 {
+		t.Fatalf("want idle mains sunk, n=%d acts=%+v", n, d.Actions)
 	}
-	if d.Actions[0].AccountID != 2 && d.Actions[0].AccountID != 1 {
-		t.Fatalf("idle main should sink, acts=%+v", d.Actions)
+	sunk := map[int64]bool{}
+	for _, a := range d.Actions {
+		sunk[a.AccountID] = true
+	}
+	if !sunk[1] && !sunk[2] {
+		t.Fatalf("idle Sy/maok should sink, acts=%+v", d.Actions)
+	}
+	if sunk[3] && sunk[4] {
+		t.Fatalf("must not sink both serving mains, acts=%+v", d.Actions)
 	}
 }
 
 func TestInjectMainLayerCap_NoopAtCap(t *testing.T) {
 	t.Parallel()
+	skipIfMainLayerCapOff(t)
 	accounts := []Account{
 		mainLayerTestAccount(1, "a", 100, 10, 0.05),
 		mainLayerTestAccount(2, "b", 100, 10, 0.06),
@@ -929,6 +985,7 @@ func TestInjectMainLayerCap_NoopAtCap(t *testing.T) {
 
 func TestInjectMainLayerCap_SinksHardFailFirst(t *testing.T) {
 	t.Parallel()
+	skipIfMainLayerCapOff(t)
 	accounts := []Account{
 		mainLayerTestAccount(1, "cheap-fail", 100, 20, 0.04),
 		mainLayerTestAccount(2, "ok2", 100, 10, 0.08),
@@ -947,6 +1004,7 @@ func TestInjectMainLayerCap_SinksHardFailFirst(t *testing.T) {
 
 func TestInjectMainLayerCap_OverridesPendingKeep(t *testing.T) {
 	t.Parallel()
+	skipIfMainLayerCapOff(t)
 	accounts := []Account{
 		mainLayerTestAccount(1, "a", 100, 10, 0.05),
 		mainLayerTestAccount(2, "b", 100, 10, 0.06),
@@ -976,6 +1034,7 @@ func TestInjectMainLayerCap_OverridesPendingKeep(t *testing.T) {
 
 func TestMainLayerPromotionCapReason(t *testing.T) {
 	t.Parallel()
+	skipIfMainLayerCapOff(t)
 	accounts := []Account{
 		mainLayerTestAccount(1, "a", 100, 10, 0.05),
 		mainLayerTestAccount(2, "b", 100, 10, 0.06),
@@ -997,6 +1056,7 @@ func TestMainLayerPromotionCapReason(t *testing.T) {
 
 func TestMainLayerOverflowDemotion_OnlyExtras(t *testing.T) {
 	t.Parallel()
+	skipIfMainLayerCapOff(t)
 	accounts := []Account{
 		mainLayerTestAccount(1, "cheap", 100, 20, 0.05),
 		mainLayerTestAccount(2, "mid", 100, 15, 0.08),
@@ -1016,6 +1076,7 @@ func TestMainLayerOverflowDemotion_OnlyExtras(t *testing.T) {
 
 func TestMainLayerOverflow_PendingPromotionAllowsSink(t *testing.T) {
 	t.Parallel()
+	skipIfMainLayerCapOff(t)
 	accounts := []Account{
 		mainLayerTestAccount(1, "a", 100, 10, 0.05),
 		mainLayerTestAccount(2, "b", 100, 10, 0.06),
@@ -1033,6 +1094,7 @@ func TestMainLayerOverflow_PendingPromotionAllowsSink(t *testing.T) {
 
 func TestFilterDeathSpiral_KeepsOverflowExtraOnly(t *testing.T) {
 	t.Parallel()
+	skipIfMainLayerCapOff(t)
 	accounts := []Account{
 		mainLayerTestAccount(1, "cheap", 100, 20, 0.05),
 		mainLayerTestAccount(2, "mid", 100, 15, 0.08),
