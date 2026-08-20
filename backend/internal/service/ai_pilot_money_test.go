@@ -744,10 +744,7 @@ func TestCostBaselineIgnoresDeadCheapPeer(t *testing.T) {
 		2: {Requests: 50, Successes: 48, Errors: 2},
 		3: {Requests: 10, Successes: 10, Errors: 0},
 	}
-	// vs 0.045 → 1.78× very expensive; vs healthy 0.05 → 1.60× not.
-	if !isExpensiveVsPeers(&twochat, pool, AICostVeryExpensiveRatio, nil) {
-		t.Fatal("without health filter 2chat looks 1.75x vs 0.045")
-	}
+	// Dead 0.045 is ignored; only 0.05 remains → 0.08/0.05=1.60, not 究极备用.
 	if isExpensiveVsPeers(&twochat, pool, AICostVeryExpensiveRatio, recent) {
 		t.Fatal("healthy cheapest is 0.05; 0.08 must not be 1.75x")
 	}
@@ -762,6 +759,15 @@ func TestCostBaselineIgnoresDeadCheapPeer(t *testing.T) {
 	}
 	if isExpensiveVsPeers(&twochat, pool, AICostVeryExpensiveRatio, emptyCheap) {
 		t.Fatal("empty-recent 0.045 must not make 2chat 1.75x")
+	}
+	// Two healthy cheap peers: isolation bar is second-cheapest (0.05), 0.08/0.05=1.6 < 1.75.
+	bothLive := map[int64]AccountTrafficStats{
+		1: {Requests: 80, Successes: 78, Errors: 2},
+		2: {Requests: 50, Successes: 48, Errors: 2},
+		3: {Requests: 10, Successes: 10, Errors: 0},
+	}
+	if isExpensiveVsPeers(&twochat, pool, AICostVeryExpensiveRatio, bothLive) {
+		t.Fatal("2chat 0.08 vs second-cheapest 0.05 must not be 究极备用")
 	}
 
 	d := decision{}

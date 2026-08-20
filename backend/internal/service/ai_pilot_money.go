@@ -476,7 +476,7 @@ func peerUsableCostBaseline(acc *Account, recent map[int64]AccountTrafficStats) 
 		st := recent[acc.ID]
 		// Empty recent = not actually covering cheap traffic this window
 		// (just-enabled 梦幻 0.045 would otherwise re-brand 2chat as 1.75×).
-		if st.Requests+st.Errors == 0 || recentWindowHardFail(st) {
+		if st.Requests+st.Errors < 5 || recentWindowHardFail(st) {
 			return false
 		}
 	}
@@ -526,17 +526,29 @@ func peerMedianKnownComposite(accounts []Account) (float64, bool) {
 
 // cheapestKnownComposite excludes skipID so we compare against better alternatives.
 func cheapestKnownComposite(accounts []Account, skipID int64, recent map[int64]AccountTrafficStats) (float64, bool) {
+	c1, _, n := cheapestKnownComposites(accounts, skipID, recent)
+	return c1, n > 0
+}
+
+// cheapestKnownComposites returns (cheapest, secondCheapest, count).
+// Isolation (1.75×) uses the second cheapest when it exists so a single
+// ultra-cheap outlier (梦幻 0.045) cannot brand a normal 0.08 中转 as 究极备用.
+func cheapestKnownComposites(accounts []Account, skipID int64, recent map[int64]AccountTrafficStats) (c1, c2 float64, n int) {
 	vals := peerKnownComposites(accounts, skipID, recent)
 	if len(vals) == 0 {
-		return 0, false
+		return 0, 0, 0
 	}
-	minC := vals[0]
+	c1 = vals[0]
+	c2 = 0
 	for _, c := range vals[1:] {
-		if c < minC {
-			minC = c
+		if c < c1 {
+			c2 = c1
+			c1 = c
+		} else if c2 == 0 || c < c2 {
+			c2 = c
 		}
 	}
-	return minC, true
+	return c1, c2, len(vals)
 }
 
 // isExpensiveVsPeers reports composite > cheapest_peer * ratio.
@@ -551,11 +563,17 @@ func isExpensiveVsPeers(acc *Account, accounts []Account, ratio float64, recent 
 	if !sig.Known || sig.Composite <= 0 {
 		return false
 	}
-	minC, ok := cheapestKnownComposite(accounts, acc.ID, recent)
-	if !ok || minC <= 0 {
+	c1, c2, n := cheapestKnownComposites(accounts, acc.ID, recent)
+	if n == 0 || c1 <= 0 {
 		return false
 	}
-	return sig.Composite > minC*ratio+1e-12
+	bar := c1
+	// Very-expensive (究极备用) needs two cheaper healthy peers; one 0.045
+	// outlier must not lock every 0.08 account at weight=0.
+	if ratio >= AICostVeryExpensiveRatio-1e-12 && n >= 2 && c2 > 0 {
+		bar = c2
+	}
+	return sig.Composite > bar*ratio+1e-12
 }
 
 // costJustifiedSpareDemotion: high 性价比 weight + very expensive vs peers → allow
