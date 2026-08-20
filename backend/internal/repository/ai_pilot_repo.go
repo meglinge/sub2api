@@ -335,17 +335,18 @@ func (r *AIPilotRepository) AggregateAccountTraffic(ctx context.Context, from, t
 	}
 
 	// Merge ops error counts when table exists.
-	// Client cancel (499) and non-4xx "errors" (e.g. upstream_error status 200)
-	// are not account faults — counting them made healthy suppliers look like
-	// 87% SR and blocked unbury. 502/401/403/5xx still count.
+	// Not account death: 499 cancel, 429 rate limit, non-4xx (status 200 "errors").
+	// 429-majority is what made grok-4.6 disable 2chat (TTFB 3.7s, still completing).
+	// 401/403/502/5xx still count.
 	eq := fmt.Sprintf(`
 		SELECT account_id, COUNT(*)::int
 		FROM ops_error_logs
 		WHERE created_at >= $1 AND created_at < $2
 			AND account_id IN (%s)
+			AND COALESCE(error_type, '') <> 'rate_limit_error'
 			AND (
 				status_code IS NULL
-				OR (status_code >= 400 AND status_code <> 499)
+				OR (status_code >= 400 AND status_code NOT IN (429, 499))
 			)
 		GROUP BY account_id
 	`, strings.Join(ph, ","))
@@ -380,9 +381,10 @@ func (r *AIPilotRepository) RecentErrorSamples(ctx context.Context, from time.Ti
 		)
 		FROM ops_error_logs
 		WHERE account_id = $1 AND created_at >= $2
+			AND COALESCE(error_type, '') <> 'rate_limit_error'
 			AND (
 				status_code IS NULL
-				OR (status_code >= 400 AND status_code <> 499)
+				OR (status_code >= 400 AND status_code NOT IN (429, 499))
 			)
 		ORDER BY created_at DESC
 		LIMIT $3
