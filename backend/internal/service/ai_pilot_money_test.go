@@ -168,8 +168,6 @@ func TestParseSub2APIBillingRate(t *testing.T) {
 	}
 }
 
-
-
 func TestBalanceGateReason_Depleted(t *testing.T) {
 	t.Parallel()
 	acc := &Account{Extra: map[string]any{ExtraAIBalanceStatus: "depleted", ExtraAIBalanceUSD: 0.0}}
@@ -281,8 +279,8 @@ func TestSoftUnburyCheapSpareRescue_EmptyLongWindow(t *testing.T) {
 		Status: StatusActive, Schedulable: true, AIManaged: true,
 		Priority: 150, ScheduleWeight: 2940, RateMultiplier: &rateSy,
 		Extra: map[string]any{
-			ExtraAIRateMultiplier: 0.05,
-			ExtraAIRateSource:     "newapi",
+			ExtraAIRateMultiplier:   0.05,
+			ExtraAIRateSource:       "newapi",
 			ExtraRechargeMultiplier: 1.0,
 		},
 	}
@@ -755,3 +753,190 @@ func TestBuildGroupPeers_HasComposite(t *testing.T) {
 	}
 }
 
+func mainLayerTestAccount(id int64, name string, priority, weight int, composite float64) Account {
+	rate := composite
+	return Account{
+		ID:             id,
+		Name:           name,
+		Platform:       PlatformOpenAI,
+		Type:           AccountTypeAPIKey,
+		Status:         StatusActive,
+		Schedulable:    true,
+		AIManaged:      true,
+		Priority:       priority,
+		ScheduleWeight: weight,
+		RateMultiplier: &rate,
+		Extra: map[string]any{
+			ExtraAIRateMultiplier: composite,
+			ExtraAIRateSource:     "newapi",
+		},
+	}
+}
+
+func TestInjectMainLayerCap_KeepsCheapestThree(t *testing.T) {
+	t.Parallel()
+	accounts := []Account{
+		mainLayerTestAccount(1, "Sy", 100, 20, 0.05),
+		mainLayerTestAccount(2, "麻豆", 100, 15, 0.08),
+		mainLayerTestAccount(3, "哈吉米", 100, 12, 0.10),
+		mainLayerTestAccount(4, "maok", 100, 10, 0.50),
+		mainLayerTestAccount(5, "梦幻", 100, 10, 0.80),
+		mainLayerTestAccount(6, "lyy", 100, 8, 1.00),
+		mainLayerTestAccount(7, "backup", 150, 10, 0.06),
+	}
+	d := decision{}
+	n := injectMainLayerCap(&d, accounts, nil, DefaultAIAutopilotSettings())
+	if n != 3 {
+		t.Fatalf("want 3 sinks, n=%d acts=%+v", n, d.Actions)
+	}
+	sunk := map[int64]bool{}
+	for _, a := range d.Actions {
+		if a.Op != AIOpSetPriority || a.Value != strconv.Itoa(AIPriorityBuriedThreshold) {
+			t.Fatalf("unexpected action %+v", a)
+		}
+		sunk[a.AccountID] = true
+	}
+	for _, keep := range []int64{1, 2, 3} {
+		if sunk[keep] {
+			t.Fatalf("cheap keeper %d should stay on main layer, acts=%+v", keep, d.Actions)
+		}
+	}
+	for _, extra := range []int64{4, 5, 6} {
+		if !sunk[extra] {
+			t.Fatalf("expensive extra %d should sink, acts=%+v", extra, d.Actions)
+		}
+	}
+	if sunk[7] {
+		t.Fatal("already-spare backup must not be touched")
+	}
+}
+
+func TestInjectMainLayerCap_NoopAtCap(t *testing.T) {
+	t.Parallel()
+	accounts := []Account{
+		mainLayerTestAccount(1, "a", 100, 10, 0.05),
+		mainLayerTestAccount(2, "b", 100, 10, 0.06),
+		mainLayerTestAccount(3, "c", 100, 10, 0.07),
+		mainLayerTestAccount(4, "d", 150, 10, 0.08),
+	}
+	d := decision{}
+	if n := injectMainLayerCap(&d, accounts, nil, DefaultAIAutopilotSettings()); n != 0 || len(d.Actions) != 0 {
+		t.Fatalf("want noop at cap, n=%d acts=%+v", n, d.Actions)
+	}
+}
+
+func TestInjectMainLayerCap_SinksHardFailFirst(t *testing.T) {
+	t.Parallel()
+	accounts := []Account{
+		mainLayerTestAccount(1, "cheap-fail", 100, 20, 0.04),
+		mainLayerTestAccount(2, "ok2", 100, 10, 0.08),
+		mainLayerTestAccount(3, "ok3", 100, 10, 0.09),
+		mainLayerTestAccount(4, "ok4", 100, 10, 0.10),
+	}
+	recent := map[int64]AccountTrafficStats{
+		1: {Requests: 20, Successes: 4, Errors: 16},
+	}
+	d := decision{}
+	n := injectMainLayerCap(&d, accounts, recent, DefaultAIAutopilotSettings())
+	if n != 1 || len(d.Actions) != 1 || d.Actions[0].AccountID != 1 {
+		t.Fatalf("hard-fail cheap account should be the overflow extra, n=%d acts=%+v", n, d.Actions)
+	}
+}
+
+func TestInjectMainLayerCap_OverridesPendingKeep(t *testing.T) {
+	t.Parallel()
+	accounts := []Account{
+		mainLayerTestAccount(1, "a", 100, 10, 0.05),
+		mainLayerTestAccount(2, "b", 100, 10, 0.06),
+		mainLayerTestAccount(3, "c", 100, 10, 0.07),
+		mainLayerTestAccount(4, "d", 100, 10, 0.80),
+	}
+	d := decision{Actions: []decisionAction{{
+		AccountID: 4, Op: AIOpSetPriority, Value: "80", Reason: "model wants 4th main",
+	}}}
+	n := injectMainLayerCap(&d, accounts, nil, DefaultAIAutopilotSettings())
+	if n != 1 {
+		t.Fatalf("want override sink, n=%d acts=%+v", n, d.Actions)
+	}
+	var pri4 int
+	for _, a := range d.Actions {
+		if a.AccountID == 4 && a.Op == AIOpSetPriority {
+			pri4++
+			if a.Value != strconv.Itoa(AIPriorityBuriedThreshold) {
+				t.Fatalf("cap must last-write 150, got %+v", a)
+			}
+		}
+	}
+	if pri4 != 1 {
+		t.Fatalf("want single priority action for extra, got %d in %+v", pri4, d.Actions)
+	}
+}
+
+func TestMainLayerPromotionCapReason(t *testing.T) {
+	t.Parallel()
+	accounts := []Account{
+		mainLayerTestAccount(1, "a", 100, 10, 0.05),
+		mainLayerTestAccount(2, "b", 100, 10, 0.06),
+		mainLayerTestAccount(3, "c", 100, 10, 0.07),
+		mainLayerTestAccount(4, "d", 150, 10, 0.08),
+	}
+	if reason := mainLayerPromotionCapReason(&accounts[3], 100, accounts, nil); reason == "" {
+		t.Fatal("4th promotion must be blocked when 3 mains occupy")
+	}
+	if reason := mainLayerPromotionCapReason(&accounts[0], 80, accounts, nil); reason != "" {
+		t.Fatalf("existing main must still rebalance, got %s", reason)
+	}
+	// Swap: pending sink of a keeper frees a slot for the spare.
+	pending := []decisionAction{{AccountID: 3, Op: AIOpSetPriority, Value: "150"}}
+	if reason := mainLayerPromotionCapReason(&accounts[3], 100, accounts, pending); reason != "" {
+		t.Fatalf("promotion should pass when a pending extra frees a slot: %s", reason)
+	}
+}
+
+func TestMainLayerOverflowDemotion_OnlyExtras(t *testing.T) {
+	t.Parallel()
+	accounts := []Account{
+		mainLayerTestAccount(1, "cheap", 100, 20, 0.05),
+		mainLayerTestAccount(2, "mid", 100, 15, 0.08),
+		mainLayerTestAccount(3, "ok", 100, 12, 0.10),
+		mainLayerTestAccount(4, "pricey", 100, 10, 0.80),
+	}
+	if !mainLayerOverflowDemotion(&accounts[3], 150, accounts, nil) {
+		t.Fatal("expensive extra 100→150 must be allowed")
+	}
+	if mainLayerOverflowDemotion(&accounts[0], 150, accounts, nil) {
+		t.Fatal("cheap keeper must not use overflow gate")
+	}
+	if mainLayerOverflowDemotion(&accounts[3], 150, accounts[:3], nil) {
+		t.Fatal("at cap, overflow must be off")
+	}
+}
+
+func TestFilterDeathSpiral_KeepsOverflowExtraOnly(t *testing.T) {
+	t.Parallel()
+	accounts := []Account{
+		mainLayerTestAccount(1, "cheap", 100, 20, 0.05),
+		mainLayerTestAccount(2, "mid", 100, 15, 0.08),
+		mainLayerTestAccount(3, "ok", 100, 12, 0.10),
+		mainLayerTestAccount(4, "pricey", 100, 10, 0.80),
+	}
+	long := map[int64]AccountTrafficStats{
+		1: {Requests: 80, Successes: 76, Errors: 4},
+		4: {Requests: 80, Successes: 76, Errors: 4},
+	}
+	recent := map[int64]AccountTrafficStats{1: {}, 4: {}}
+	cfg := DefaultAIAutopilotSettings()
+	// Keeper healthy sink must still be dropped.
+	out := filterDeathSpiralDemotions([]decisionAction{
+		{AccountID: 1, Op: AIOpSetPriority, Value: "150", Reason: "sink keeper"},
+	}, accounts, long, recent, cfg)
+	if len(out) != 0 {
+		t.Fatalf("keeper sink must drop, got %+v", out)
+	}
+	out = filterDeathSpiralDemotions([]decisionAction{
+		{AccountID: 4, Op: AIOpSetPriority, Value: "150", Reason: "sink extra"},
+	}, accounts, long, recent, cfg)
+	if len(out) != 1 || out[0].AccountID != 4 {
+		t.Fatalf("extra sink must keep, got %+v", out)
+	}
+}

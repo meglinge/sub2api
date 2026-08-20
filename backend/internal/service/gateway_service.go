@@ -555,6 +555,30 @@ func shouldClearStickySession(account *Account, requestedModel string) bool {
 	return false
 }
 
+// stickyTransientlyUnavailable is 429 / overload / temp-unsched / model RL.
+// The current request should skip the sticky account, but the binding must
+// stay: deleting it is what rebinds Codex sessions onto a new supplier and
+// resets prompt cache to the ~3840-token shared prefix.
+func stickyTransientlyUnavailable(account *Account, requestedModel string) bool {
+	if account == nil {
+		return false
+	}
+	now := time.Now()
+	if account.OverloadUntil != nil && now.Before(*account.OverloadUntil) {
+		return true
+	}
+	if account.RateLimitResetAt != nil && now.Before(*account.RateLimitResetAt) {
+		return true
+	}
+	if account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) {
+		return true
+	}
+	if remaining := account.GetRateLimitRemainingTimeWithContext(context.Background(), requestedModel); remaining > 0 {
+		return true
+	}
+	return false
+}
+
 type AccountWaitPlan struct {
 	AccountID      int64
 	MaxConcurrency int

@@ -482,6 +482,9 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 	if n := injectCostSpareDemotions(&finalDecision, accounts, cfg); n > 0 && p.Log != nil {
 		p.Log.Info("ai pilot injected cost spare demotions", "count", n, "trigger", trigger)
 	}
+	if n := injectMainLayerCap(&finalDecision, accounts, recentTraffic, cfg); n > 0 && p.Log != nil {
+		p.Log.Info("ai pilot injected main-layer cap", "count", n, "max", AIMainLayerMaxAccounts, "trigger", trigger)
+	}
 	// Soft OpenAI scoring still feeds p150/sticky — isolate very expensive via ai_disabled.
 	if n := injectCostIsolations(&finalDecision, accounts, cfg, recentTraffic); n > 0 && p.Log != nil {
 		p.Log.Info("ai pilot injected cost isolations", "count", n, "trigger", trigger)
@@ -648,7 +651,7 @@ func (p *AIPilotService) applyDecisionActions(
 				// Monopoly front (p<50 e.g. default 1) → band: never treat as gated demotion.
 				safetyClamp := isPrioritySafetyBypass(acc.Priority, next)
 				if !safetyClamp {
-					costOK := costJustifiedSpareDemotion(acc, accounts, cfg)
+					costOK := costJustifiedSpareDemotion(acc, accounts, cfg) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic)
 					if reason := priorityDemotionGateReasonEx(acc, next, longSt, recentSt, costOK); reason != "" {
 						a.State = AIActionRejected
 						a.RejectReason = reason
@@ -656,6 +659,12 @@ func (p *AIPilotService) applyDecisionActions(
 						continue
 					}
 					if reason := priorityCostPromotionGateReason(acc, next, accounts, cfg); reason != "" {
+						a.State = AIActionRejected
+						a.RejectReason = reason
+						_, _ = p.Repo.CreateAction(ctx, a)
+						continue
+					}
+					if reason := mainLayerPromotionCapReason(acc, next, accounts, decision.Actions); reason != "" {
 						a.State = AIActionRejected
 						a.RejectReason = reason
 						_, _ = p.Repo.CreateAction(ctx, a)
@@ -726,10 +735,18 @@ func (p *AIPilotService) applyDecisionActions(
 			continue
 		}
 		if applied >= cfg.MaxActionsPerRun {
-			a.State = AIActionSuggested
-			a.RejectReason = "超过单轮上限,降级为建议"
-			_, _ = p.Repo.CreateAction(ctx, a)
-			continue
+			overflowCap := false
+			if act.Op == AIOpSetPriority {
+				if next, err := parseIntValue(act.Value); err == nil {
+					overflowCap = mainLayerOverflowDemotion(acc, next, accounts, recentTraffic)
+				}
+			}
+			if !overflowCap {
+				a.State = AIActionSuggested
+				a.RejectReason = "超过单轮上限,降级为建议"
+				_, _ = p.Repo.CreateAction(ctx, a)
+				continue
+			}
 		}
 		if last, _ := p.Repo.LastAppliedAt(ctx, act.AccountID); last != nil {
 			// Recovery enable / un-bury / monopoly-front clamp must bypass cooldown —
@@ -746,7 +763,8 @@ func (p *AIPilotService) applyDecisionActions(
 				bypassCool = true
 			}
 			if !bypassCool && act.Op == AIOpSetPriority {
-				if next, err := parseIntValue(act.Value); err == nil && isPrioritySafetyBypass(acc.Priority, next) {
+				if next, err := parseIntValue(act.Value); err == nil &&
+					(isPrioritySafetyBypass(acc.Priority, next) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic)) {
 					bypassCool = true
 				}
 			}
@@ -785,9 +803,13 @@ func (p *AIPilotService) applyDecisionActions(
 					}
 				}
 				if act.Op == AIOpSetPriority {
-					if next, err := parseIntValue(act.Value); err == nil && next >= AIMaxPriority &&
-						costJustifiedIsolation(acc, accounts, cfg, recentTraffic) {
-						bypassAmp = true
+					if next, err := parseIntValue(act.Value); err == nil {
+						if next >= AIMaxPriority && costJustifiedIsolation(acc, accounts, cfg, recentTraffic) {
+							bypassAmp = true
+						}
+						if !bypassAmp && mainLayerOverflowDemotion(acc, next, accounts, recentTraffic) {
+							bypassAmp = true
+						}
 					}
 				}
 				if !bypassAmp {
@@ -1123,6 +1145,8 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 		"trendBucketMinutes":  cfg.TrendBucketMinutes,
 		"policy": map[string]any{
 			"minAvailablePerGroup":        cfg.MinAvailablePerGroup,
+			"mainLayerMaxAccounts":        AIMainLayerMaxAccounts,
+			"mainLayerRule":               "p≤100 最多3个主力;多的后端沉到150,新会话少跨中转号池",
 			"maxActions":                  cfg.MaxActionsPerRun,
 			"cooldownMinutes":             cfg.ChannelCooldownMinutes,
 			"manualImmunityHours":         cfg.ManualImmunityHours,
@@ -1166,7 +1190,7 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 					"costDim":        "scores[].cost 由后端按 money.rateConfidence.trustedComposite 池内比价写死,禁止模型编造 peer 倍率",
 					"unknownRate":    "无导入倍率(default_one) cost≈40 中偏低,不要当成 0.06 便宜号",
 					"pressureOn":     costPressureActive(cfg),
-					"pressureRule":   "cost 权重≥20% 时:贵号禁止抬回主层;极贵号→p200+weight=0 软隔离(不 disable);disable 仅硬失败/余额耗尽",
+					"pressureRule":   "cost 权重≥20% 时:贵号禁止抬回主层;极贵号→p200+weight=0 软隔离(不 disable);disable 仅硬失败/余额耗尽;主层p≤100最多3个",
 					"expensiveRatio": AICostExpensiveRatio,
 					"veryExpensive":  AICostVeryExpensiveRatio,
 				},
@@ -1470,7 +1494,7 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 - priority 越小越优先,但**不是**「有 p100 时 p150 永远 0 请求」;主层忙/抖/粘性时 p150 低 weight 仍会吃生产量
 - 后端会把 set_priority 钳在 [50,200];若账号已是 priority=1 等小于50,应 set_priority 到 100(可绕过冷静期)
 - **禁止**把某一个账号单独提到顶层而把其他可用号沉深 —— 那等于全池只跑一个供应商
-- 健康池:尽量 2–4 个号同在 priority≈100,用 set_weight 按**综合分**分流(不是纯按成本均分)
+- 健康池:主层 p≤100 **最多 3 个**,用 set_weight 按**综合分**分流(不是纯按成本均分);其余健康号放 150 备援
 - schedule_weight 在 Top-K 内调分流; weight=0 削弱抽选但粘性仍可能命中
 - **真要停量用 disable**(ai_disabled);不要指望「沉到 150 + weight=10」挡住贵号
 - disable/enable 只切换 aiDisabled,绝不等于人工 schedulable/status
@@ -1510,15 +1534,15 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 - 若刚切组后近窗 503/硬失败: 后端会自动回滚 last_good 并 disable,勿再切更便宜组
 - 禁止建议不在 candidates 的组;省≥15% 且 30m 驻留
 
-- **禁止**用「主层已有 2–4 个/满池」拒绝把**已知便宜且健康**的号从 ≥150 抬回 100
-  (2–4 是多样性目标,不是容量上限;便宜稳号卡在 150=性价比设置失效)
+- **主层 p≤100 最多 3 个**。第 4 个起必须 p≥150 当备援(跨中转号池会把 Codex 缓存打回 ~3840 前缀)
+- 便宜稳号要进主层:先让后端把最差主力沉到 150,不要把主层堆到 4+
 - 慢(TTFB 高)但成功率高 → 降 weight,不要无脑 priority 沉到 150+
 - 近窗/长窗**过半失败或 401/403 额度** → 才 disable; 几分钟 502/503/超时 **不要 disable**; **过贵** → p200+weight=0 究极备用
 - 后端会:拒绝无硬故障的胡乱下沉;长窗健康或已知便宜号可解埋;过度 disable 会自动解开;下沉有短冷静期;成本软隔离不被 TTL 拆掉
-- 健康池保持 2–4 个号同在 priority≈100,用 weight 分流,不要每轮 100↔150 thrash
+- 健康池主层最多 3 个 priority≈100,用 weight 分流;不要每轮 100↔150 thrash
 
 原则:
-1) **同层多号**:每组至少保留 2–4 个可用账号在相近 priority(建议都在 50–150 一带),用 set_weight 按 overall 分流
+1) **同层多号**:主层 p≤100 **最多 3 个**(至少 2 个更好);其余健康号放 150 备援。同层用 set_weight 分流,不要再往主层堆
 2) **disable 仅硬失败/余额耗尽**;过贵号 p200+weight=0 究极备用(便宜号都挂了才顶),禁止半池 ai_disabled
 3) disable 必须考虑 minAvailablePerGroup
 4) **恢复与停用同等重要**:每一轮扫 aiDisabled=true。

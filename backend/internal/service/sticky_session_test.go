@@ -47,9 +47,9 @@ func TestShouldClearStickySession(t *testing.T) {
 		{
 			name: "model rate limited short duration",
 			account: &Account{
-				Status:          StatusActive,
-				Schedulable:     true,
-				ScheduleWeight:  10,
+				Status:         StatusActive,
+				Schedulable:    true,
+				ScheduleWeight: 10,
 				Extra: map[string]any{
 					"model_rate_limits": map[string]any{
 						"claude-sonnet-4": map[string]any{
@@ -64,9 +64,9 @@ func TestShouldClearStickySession(t *testing.T) {
 		{
 			name: "model rate limited long duration",
 			account: &Account{
-				Status:          StatusActive,
-				Schedulable:     true,
-				ScheduleWeight:  10,
+				Status:         StatusActive,
+				Schedulable:    true,
+				ScheduleWeight: 10,
 				Extra: map[string]any{
 					"model_rate_limits": map[string]any{
 						"claude-sonnet-4": map[string]any{
@@ -156,4 +156,23 @@ func TestShouldClearStickySession(t *testing.T) {
 			require.Equal(t, tt.want, shouldClearStickySession(tt.account, tt.requestedModel))
 		})
 	}
+}
+
+func TestStickyTransientlyUnavailable(t *testing.T) {
+	future := time.Now().Add(time.Hour)
+	require.False(t, stickyTransientlyUnavailable(nil, ""))
+	require.False(t, stickyTransientlyUnavailable(&Account{Status: StatusActive, Schedulable: true, ScheduleWeight: 10}, ""))
+	require.True(t, stickyTransientlyUnavailable(&Account{
+		Status: StatusActive, Schedulable: true, ScheduleWeight: 10, TempUnschedulableUntil: &future,
+	}, ""))
+	require.True(t, stickyTransientlyUnavailable(&Account{
+		Status: StatusActive, Schedulable: true, ScheduleWeight: 10, RateLimitResetAt: &future,
+	}, ""))
+	require.True(t, stickyTransientlyUnavailable(&Account{
+		Status: StatusActive, Schedulable: true, ScheduleWeight: 10, OverloadUntil: &future,
+	}, ""))
+	// Permanent disable is NOT transient — binding should still be dropped elsewhere.
+	require.False(t, stickyTransientlyUnavailable(&Account{
+		Status: StatusActive, Schedulable: true, ScheduleWeight: 10, AIDisabled: true,
+	}, ""))
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,9 @@ const (
 	AIPriorityBuriedThreshold = 150
 	// AIMaxPriority is the deepest autopilot may set for normal demotion.
 	AIMaxPriority = 200
+	// AIMainLayerMaxAccounts caps how many healthy accounts sit at p≤100.
+	// More mains → sessions bounce across 中转号池 and Codex cache resets to ~3840.
+	AIMainLayerMaxAccounts = 3
 	// AIPriorityDeltaSafety is a hard ceiling on |Δpriority| even when settings
 	// are misconfigured (prod had priority_max_delta=1e9 → thrash every minute).
 	AIPriorityDeltaSafety = 50
@@ -670,6 +674,7 @@ func weightCrushGateReasonEx(acc *Account, next int, long, recent AccountTraffic
 //   - wallet is depleted (balance hard gate — no reason to keep serving)
 //   - recent traffic is majority-failing (recentWindowDisableWorthy)
 //   - fresh activation probe is a fatal fail (auth/quota) — NOT 502/503/timeout
+//
 // costJustified no longer opens disable: expensive accounts use p200+weight=0 spare.
 func disableHealthyGateReason(acc *Account, long, recent AccountTrafficStats) string {
 	return disableHealthyGateReasonEx(acc, long, recent, nil)
@@ -782,7 +787,7 @@ func filterDeathSpiralDemotions(
 			out = append(out, a)
 			continue
 		}
-		costOK := costJustifiedSpareDemotion(acc, accounts, cfg)
+		costOK := costJustifiedSpareDemotion(acc, accounts, cfg) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic)
 		if reason := priorityDemotionGateReasonEx(acc, next, long, recent, costOK); reason != "" {
 			continue // drop — inject soft-unbury may lift instead
 		}
@@ -837,6 +842,181 @@ func injectCostSpareDemotions(decision *decision, accounts []Account, cfg AIAuto
 			Confidence: 0.9,
 		})
 		havePri[acc.ID] = true
+		injected++
+	}
+	return injected
+}
+
+func occupyingMainLayer(acc *Account, priority int) bool {
+	if acc == nil || acc.Status != StatusActive || !acc.Schedulable || acc.AIDisabled {
+		return false
+	}
+	if acc.IsExcludedFromSchedule() || acc.EffectiveScheduleWeight() <= 0 {
+		return false
+	}
+	return priority <= AIObservationPriority
+}
+
+func effectivePriority(acc *Account, pending map[int64]int) int {
+	if acc == nil {
+		return AIMaxPriority
+	}
+	if p, ok := pending[acc.ID]; ok {
+		return p
+	}
+	return acc.Priority
+}
+
+func pendingPriorityMap(actions []decisionAction) map[int64]int {
+	out := map[int64]int{}
+	for _, a := range actions {
+		if a.Op != AIOpSetPriority {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(a.Value))
+		if err != nil {
+			continue
+		}
+		out[a.AccountID] = n
+	}
+	return out
+}
+
+func mainLayerKeepScore(acc *Account, recent AccountTrafficStats) float64 {
+	if acc == nil {
+		return 0
+	}
+	score := float64(acc.EffectiveScheduleWeight()) * 0.05
+	sig := accountCostSignalOf(acc)
+	if sig.Known && sig.Composite > 0 {
+		score += 40.0 / sig.Composite
+	} else {
+		score += 15
+	}
+	if recentWindowHardFail(recent) {
+		// Hard-fail mains must rank below every healthy candidate, even cheaper ones.
+		score -= 1e6
+	}
+	if stickyTransientlyUnavailable(acc, "") {
+		score -= 50
+	}
+	return score
+}
+
+type mainLayerCand struct {
+	acc   *Account
+	score float64
+}
+
+func rankedMainLayer(accounts []Account, recent map[int64]AccountTrafficStats, pending map[int64]int) []mainLayerCand {
+	var mains []mainLayerCand
+	for i := range accounts {
+		acc := &accounts[i]
+		if !occupyingMainLayer(acc, effectivePriority(acc, pending)) {
+			continue
+		}
+		rst := AccountTrafficStats{}
+		if recent != nil {
+			rst = recent[acc.ID]
+		}
+		mains = append(mains, mainLayerCand{acc: acc, score: mainLayerKeepScore(acc, rst)})
+	}
+	sort.SliceStable(mains, func(i, j int) bool {
+		if mains[i].score == mains[j].score {
+			return mains[i].acc.ID < mains[j].acc.ID
+		}
+		return mains[i].score > mains[j].score
+	})
+	return mains
+}
+
+// mainLayerOverflowDemotion allows a healthy 100→150 only for overflow extras
+// (not the top-3 keepers). Otherwise the model could sink a cheap keeper while
+// inject also sinks extras and the main layer undershoots.
+func mainLayerOverflowDemotion(acc *Account, next int, accounts []Account, recent map[int64]AccountTrafficStats) bool {
+	if acc == nil || next < AIPriorityBuriedThreshold || acc.Priority > AIObservationPriority {
+		return false
+	}
+	ranked := rankedMainLayer(accounts, recent, nil)
+	if len(ranked) <= AIMainLayerMaxAccounts {
+		return false
+	}
+	for _, extra := range ranked[AIMainLayerMaxAccounts:] {
+		if extra.acc.ID == acc.ID {
+			return true
+		}
+	}
+	return false
+}
+
+func mainLayerPromotionCapReason(acc *Account, next int, accounts []Account, actions []decisionAction) string {
+	if acc == nil || next > AIObservationPriority {
+		return ""
+	}
+	if occupyingMainLayer(acc, acc.Priority) {
+		return ""
+	}
+	pending := pendingPriorityMap(actions)
+	n := 0
+	for i := range accounts {
+		o := &accounts[i]
+		if o.ID == acc.ID {
+			continue
+		}
+		if occupyingMainLayer(o, effectivePriority(o, pending)) {
+			n++
+		}
+	}
+	if n >= AIMainLayerMaxAccounts {
+		return fmt.Sprintf("主层已满%d个(p≤%d),禁止再抬入;先把最差主力沉到%d或只调 weight", AIMainLayerMaxAccounts, AIObservationPriority, AIPriorityBuriedThreshold)
+	}
+	return ""
+}
+
+func replaceOrAppendPriority(decision *decision, act decisionAction) {
+	if decision == nil {
+		return
+	}
+	out := make([]decisionAction, 0, len(decision.Actions)+1)
+	for _, a := range decision.Actions {
+		if a.Op == AIOpSetPriority && a.AccountID == act.AccountID {
+			continue
+		}
+		out = append(out, a)
+	}
+	decision.Actions = append(out, act)
+}
+
+// injectMainLayerCap sinks extra p≤100 accounts to 150 so at most 3 mains remain.
+// Sticky + too many 中转号池 mains is what bounces Codex sessions and dumps cache to ~3840.
+func injectMainLayerCap(decision *decision, accounts []Account, recent map[int64]AccountTrafficStats, cfg AIAutopilotSettings) int {
+	if decision == nil || !cfg.OpAllowed(AIOpSetPriority) {
+		return 0
+	}
+	pending := pendingPriorityMap(decision.Actions)
+	mains := rankedMainLayer(accounts, recent, pending)
+	if len(mains) <= AIMainLayerMaxAccounts {
+		return 0
+	}
+	injected := 0
+	for _, extra := range mains[AIMainLayerMaxAccounts:] {
+		if !extra.acc.AIManaged {
+			continue
+		}
+		if pending[extra.acc.ID] >= AIPriorityBuriedThreshold {
+			continue
+		}
+		replaceOrAppendPriority(decision, decisionAction{
+			AccountID: extra.acc.ID,
+			Op:        AIOpSetPriority,
+			Value:     strconv.Itoa(AIPriorityBuriedThreshold),
+			Reason: fmt.Sprintf(
+				"主层最多%d个以降低跨号池掉缓存: %s score=%.1f 从 p%d 沉到备援 %d",
+				AIMainLayerMaxAccounts, extra.acc.Name, extra.score, extra.acc.Priority, AIPriorityBuriedThreshold,
+			),
+			Confidence: 0.93,
+		})
+		pending[extra.acc.ID] = AIPriorityBuriedThreshold
 		injected++
 	}
 	return injected
