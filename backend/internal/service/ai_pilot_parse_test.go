@@ -4,6 +4,30 @@ import (
 	"testing"
 )
 
+func TestPromptLooksTruncated(t *testing.T) {
+	t.Parallel()
+	if promptLooksTruncated(2536, 66740) != true {
+		t.Fatal("60KB snap with 2536 tok must look truncated")
+	}
+	if promptLooksTruncated(27000, 66740) {
+		t.Fatal("full prompt must not look truncated")
+	}
+	if promptLooksTruncated(2000, 1000) {
+		t.Fatal("tiny request is not a dropped snapshot")
+	}
+}
+
+func TestDecisionLooksLikeMissingSnapshot(t *testing.T) {
+	t.Parallel()
+	d := decision{Summary: "未提供账号快照，无法安全调整流量。", Notices: []any{"请提供本轮 snapshot 后再自动决策。"}}
+	if !decisionLooksLikeMissingSnapshot(d) {
+		t.Fatal("expected missing snapshot")
+	}
+	if decisionLooksLikeMissingSnapshot(decision{Summary: "主层收敛到3个低价号"}) {
+		t.Fatal("normal summary must not match")
+	}
+}
+
 func TestParseDecision_ObservationsStringArray(t *testing.T) {
 	t.Parallel()
 	// Production failure: cannot unmarshal string into map[string]interface{}

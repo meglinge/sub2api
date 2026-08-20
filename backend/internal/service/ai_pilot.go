@@ -370,6 +370,7 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 		accountsByID[accounts[i].ID] = &accounts[i]
 	}
 	rawReq, _ := json.Marshal(snap)
+	snapUser := "本轮完整号池快照 JSON 如下(channels 一定存在)。只根据这份 JSON 决策,不要说缺少快照。\n" + string(rawReq)
 
 	// Multi-turn: each extra turn is a full gpt-5.5 call (often 2–4 min). Cap at 2.
 	maxTurns := cfg.MaxProbeTurns
@@ -380,10 +381,11 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 		maxTurns = 2
 	}
 
+	// Snapshot is the first user message so a short-context CCH route cannot
+	// keep only the system prompt (~2.5k tok) and drop the 60KB 号池 JSON.
 	messages := []map[string]string{
-		{"role": "system", "content": aiPilotSystemPrompt},
-		{"role": "system", "content": renderOpPermissions(cfg)},
-		{"role": "user", "content": string(rawReq)},
+		{"role": "user", "content": snapUser},
+		{"role": "system", "content": aiPilotSystemPrompt + "\n" + renderOpPermissions(cfg)},
 	}
 
 	var (
@@ -392,6 +394,7 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 		totalOut      int
 		lastContent   string
 		turns         int
+		missingSnap   bool
 	)
 	if probeMemo == nil {
 		probeMemo = map[int64]activationResult{}
@@ -402,6 +405,19 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 		turns = turn
 		p.setPhase("thinking", turn)
 		content, inTok, outTok, callErr := p.callLLMMessages(ctx, cfg, messages)
+		if callErr == nil && promptLooksTruncated(inTok, len(rawReq)) {
+			if p.Log != nil {
+				p.Log.Warn("ai pilot prompt truncated; retry snapshot-only", "inTok", inTok, "reqBytes", len(rawReq), "trigger", trigger)
+			}
+			c2, i2, o2, e2 := p.callLLMMessages(ctx, cfg, []map[string]string{
+				{"role": "user", "content": snapUser},
+			})
+			if e2 == nil {
+				totalIn += inTok
+				totalOut += outTok
+				content, inTok, outTok, callErr = c2, i2, o2, nil
+			}
+		}
 		totalIn += inTok
 		totalOut += outTok
 		lastContent = content
@@ -460,6 +476,15 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 			messages = append(messages, map[string]string{"role": "user", "content": string(probeJSON)})
 			continue
 		}
+		if decisionLooksLikeMissingSnapshot(d) {
+			if p.Log != nil {
+				p.Log.Warn("ai pilot LLM claimed missing snapshot", "inTok", inTok, "reqBytes", len(rawReq), "summary", d.Summary, "trigger", trigger)
+			}
+			d.Actions = nil
+			d.Scores = nil
+			d.ProbeRequests = nil
+			missingSnap = true
+		}
 		finalDecision = d
 		break
 	}
@@ -510,6 +535,11 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 		LatencyMs: int(time.Since(started).Milliseconds()), Turns: turns,
 		RawRequest: string(rawReq), RawResponse: lastContent,
 		Status: AIRunOK, Summary: finalDecision.Summary,
+	}
+	if missingSnap {
+		run.Status = AIRunParseFailed
+		run.Error = "LLM 未读到号池快照(prompt 被截断或空回复)"
+		run.Summary = "模型未读到快照,本轮仅执行后端硬限制"
 	}
 	obs, _ := json.Marshal(finalDecision.Observations)
 	run.Observations = string(obs)
@@ -1237,6 +1267,30 @@ type flexibleDecision struct {
 	Notices       any               `json:"notices"`
 	ProbeRequests []json.RawMessage `json:"probeRequests"`
 	Scores        []json.RawMessage `json:"scores"`
+}
+
+func promptLooksTruncated(inTok, reqBytes int) bool {
+	if inTok <= 0 || reqBytes < 20_000 {
+		return false
+	}
+	// Full snapshot is ~60KB ≈ 15k+ tokens. CCH short-context routes report ~2536
+	// (system prompt only) and the model then claims "未提供账号快照".
+	return inTok < 8000
+}
+
+func decisionLooksLikeMissingSnapshot(d decision) bool {
+	blob := strings.ToLower(d.Summary)
+	for _, n := range d.Notices {
+		blob += " " + strings.ToLower(fmt.Sprint(n))
+	}
+	for _, o := range d.Observations {
+		blob += " " + strings.ToLower(fmt.Sprint(o))
+	}
+	if !strings.Contains(blob, "快照") && !strings.Contains(blob, "snapshot") && !strings.Contains(blob, "channels") {
+		return false
+	}
+	return strings.Contains(blob, "未") || strings.Contains(blob, "缺少") || strings.Contains(blob, "没有") ||
+		strings.Contains(blob, "missing") || strings.Contains(blob, "无法")
 }
 
 func parseDecision(content string) (decision, error) {

@@ -890,6 +890,29 @@ func TestInjectMainLayerCap_KeepsCheapestThree(t *testing.T) {
 	}
 }
 
+func TestInjectMainLayerCap_SinksIdleHighWeightMain(t *testing.T) {
+	t.Parallel()
+	accounts := []Account{
+		mainLayerTestAccount(1, "Sy", 100, 32260, 0.05),
+		mainLayerTestAccount(2, "maok", 100, 10200, 0.10),
+		mainLayerTestAccount(3, "梦幻", 100, 8290, 0.045),
+		mainLayerTestAccount(4, "鲨鱼", 100, 9200, 0.06),
+	}
+	recent := map[int64]AccountTrafficStats{
+		3: {Requests: 200, Successes: 198, Errors: 2},
+		4: {Requests: 150, Successes: 148, Errors: 2},
+		// 1 and 2 idle — leftover weight must not keep them over serving peers
+	}
+	d := decision{}
+	n := injectMainLayerCap(&d, accounts, recent, DefaultAIAutopilotSettings())
+	if n != 1 {
+		t.Fatalf("want 1 idle sink, n=%d acts=%+v", n, d.Actions)
+	}
+	if d.Actions[0].AccountID != 2 && d.Actions[0].AccountID != 1 {
+		t.Fatalf("idle main should sink, acts=%+v", d.Actions)
+	}
+}
+
 func TestInjectMainLayerCap_NoopAtCap(t *testing.T) {
 	t.Parallel()
 	accounts := []Account{

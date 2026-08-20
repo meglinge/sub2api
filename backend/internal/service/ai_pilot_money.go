@@ -931,7 +931,7 @@ func mainLayerKeepScore(acc *Account, recent AccountTrafficStats) float64 {
 	if acc == nil {
 		return 0
 	}
-	score := float64(acc.EffectiveScheduleWeight()) * 0.05
+	score := 0.0
 	sig := accountCostSignalOf(acc)
 	if sig.Known && sig.Composite > 0 {
 		score += 40.0 / sig.Composite
@@ -940,7 +940,19 @@ func mainLayerKeepScore(acc *Account, recent AccountTrafficStats) float64 {
 	}
 	if recentWindowHardFail(recent) {
 		// Hard-fail mains must rank below every healthy candidate, even cheaper ones.
-		score -= 1e6
+		return score - 1e6
+	}
+	n := recent.Requests + recent.Errors
+	if n == 0 {
+		// Leftover huge schedule_weight used to keep idle Sy/maok in the
+		// main 3 while 鲨鱼/saozhao at p150 did all the real traffic.
+		score -= 120
+	} else {
+		sr := float64(recent.Successes) / float64(n)
+		score += sr * 40
+		if occupyingMainLayer(acc, acc.Priority) {
+			score += 80 // incumbent stickiness only while actually serving
+		}
 	}
 	if stickyTransientlyUnavailable(acc, "") {
 		score -= 50
