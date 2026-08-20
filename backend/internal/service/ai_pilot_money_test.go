@@ -1003,14 +1003,31 @@ func TestMainLayerOverflowDemotion_OnlyExtras(t *testing.T) {
 		mainLayerTestAccount(3, "ok", 100, 12, 0.10),
 		mainLayerTestAccount(4, "pricey", 100, 10, 0.80),
 	}
-	if !mainLayerOverflowDemotion(&accounts[3], 150, accounts, nil) {
+	if !mainLayerOverflowDemotion(&accounts[3], 150, accounts, nil, nil) {
 		t.Fatal("expensive extra 100→150 must be allowed")
 	}
-	if mainLayerOverflowDemotion(&accounts[0], 150, accounts, nil) {
+	if mainLayerOverflowDemotion(&accounts[0], 150, accounts, nil, nil) {
 		t.Fatal("cheap keeper must not use overflow gate")
 	}
-	if mainLayerOverflowDemotion(&accounts[3], 150, accounts[:3], nil) {
+	if mainLayerOverflowDemotion(&accounts[3], 150, accounts[:3], nil, nil) {
 		t.Fatal("at cap, overflow must be off")
+	}
+}
+
+func TestMainLayerOverflow_PendingPromotionAllowsSink(t *testing.T) {
+	t.Parallel()
+	accounts := []Account{
+		mainLayerTestAccount(1, "a", 100, 10, 0.05),
+		mainLayerTestAccount(2, "b", 100, 10, 0.06),
+		mainLayerTestAccount(3, "idle", 100, 10, 0.08),
+		mainLayerTestAccount(4, "spare", 150, 10, 0.055),
+	}
+	pending := []decisionAction{
+		{AccountID: 4, Op: AIOpSetPriority, Value: "100"},
+		{AccountID: 3, Op: AIOpSetPriority, Value: "150"},
+	}
+	if !mainLayerOverflowDemotion(&accounts[2], 150, accounts, nil, pending) {
+		t.Fatal("idle main must be sinkable when a 4th is pending into the layer")
 	}
 }
 

@@ -832,7 +832,7 @@ func filterDeathSpiralDemotions(
 			out = append(out, a)
 			continue
 		}
-		costOK := costJustifiedSpareDemotion(acc, accounts, cfg, recentTraffic) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic)
+		costOK := costJustifiedSpareDemotion(acc, accounts, cfg, recentTraffic) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic, actions)
 		if reason := priorityDemotionGateReasonEx(acc, next, long, recent, costOK); reason != "" {
 			continue // drop — inject soft-unbury may lift instead
 		}
@@ -990,11 +990,13 @@ func rankedMainLayer(accounts []Account, recent map[int64]AccountTrafficStats, p
 // mainLayerOverflowDemotion allows a healthy 100→150 only for overflow extras
 // (not the top-3 keepers). Otherwise the model could sink a cheap keeper while
 // inject also sinks extras and the main layer undershoots.
-func mainLayerOverflowDemotion(acc *Account, next int, accounts []Account, recent map[int64]AccountTrafficStats) bool {
+func mainLayerOverflowDemotion(acc *Account, next int, accounts []Account, recent map[int64]AccountTrafficStats, actions []decisionAction) bool {
 	if acc == nil || next < AIPriorityBuriedThreshold || acc.Priority > AIObservationPriority {
 		return false
 	}
-	ranked := rankedMainLayer(accounts, recent, nil)
+	pending := pendingPriorityMap(actions)
+	delete(pending, acc.ID) // judge this sink against others, not after applying it
+	ranked := rankedMainLayer(accounts, recent, pending)
 	if len(ranked) <= AIMainLayerMaxAccounts {
 		return false
 	}

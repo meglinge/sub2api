@@ -681,7 +681,7 @@ func (p *AIPilotService) applyDecisionActions(
 				// Monopoly front (p<50 e.g. default 1) → band: never treat as gated demotion.
 				safetyClamp := isPrioritySafetyBypass(acc.Priority, next)
 				if !safetyClamp {
-					costOK := costJustifiedSpareDemotion(acc, accounts, cfg, recentTraffic) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic)
+					costOK := costJustifiedSpareDemotion(acc, accounts, cfg, recentTraffic) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic, decision.Actions)
 					if reason := priorityDemotionGateReasonEx(acc, next, longSt, recentSt, costOK); reason != "" {
 						a.State = AIActionRejected
 						a.RejectReason = reason
@@ -768,7 +768,7 @@ func (p *AIPilotService) applyDecisionActions(
 			overflowCap := false
 			if act.Op == AIOpSetPriority {
 				if next, err := parseIntValue(act.Value); err == nil {
-					overflowCap = mainLayerOverflowDemotion(acc, next, accounts, recentTraffic)
+					overflowCap = mainLayerOverflowDemotion(acc, next, accounts, recentTraffic, decision.Actions)
 				}
 			}
 			if !overflowCap {
@@ -794,7 +794,7 @@ func (p *AIPilotService) applyDecisionActions(
 			}
 			if !bypassCool && act.Op == AIOpSetPriority {
 				if next, err := parseIntValue(act.Value); err == nil &&
-					(isPrioritySafetyBypass(acc.Priority, next) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic)) {
+					(isPrioritySafetyBypass(acc.Priority, next) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic, decision.Actions)) {
 					bypassCool = true
 				}
 			}
@@ -846,7 +846,7 @@ func (p *AIPilotService) applyDecisionActions(
 						if next >= AIMaxPriority && costJustifiedIsolation(acc, accounts, cfg, recentTraffic) {
 							bypassAmp = true
 						}
-						if !bypassAmp && mainLayerOverflowDemotion(acc, next, accounts, recentTraffic) {
+						if !bypassAmp && mainLayerOverflowDemotion(acc, next, accounts, recentTraffic, decision.Actions) {
 							bypassAmp = true
 						}
 					}
