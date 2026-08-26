@@ -154,24 +154,27 @@ func accountRechargeMultiplier(acc *Account) float64 {
 }
 
 // resolveAccountRate returns (rate, source) for pilot money view.
-// Prefer auto-imported (billing probe / cached ai_rate) over column RateMultiplier alone.
+// Prefer the *newer* of cached ai_rate vs official billing-probe snapshot;
+// a 10-day-old extra.ai_rate_multiplier must not beat a probe from this morning
+// (麻豆传媒 0.06 cache vs 0.065 probe). Column RateMultiplier is last resort.
 func resolveAccountRate(acc *Account) (rate float64, source string) {
 	if acc == nil {
 		return 1, "default_one"
 	}
-	// 1) Cached AI-resolved rate (new-api group_ratio etc.)
-	if r := extraFloat(acc.Extra, ExtraAIRateMultiplier); r > 0 {
-		src := extraString(acc.Extra, ExtraAIRateSource)
-		if src == "" {
-			src = "imported"
+	aiRate, aiSrc, aiAt := extraAIRateSignal(acc)
+	probeRate, probeAt := billingProbeRateSignal(acc)
+	if aiRate > 0 && probeRate > 0 {
+		if !probeAt.IsZero() && (aiAt.IsZero() || probeAt.After(aiAt)) {
+			return probeRate, "billing_probe"
 		}
-		return r, src
+		return aiRate, aiSrc
 	}
-	// 2) Upstream billing probe snapshot (sub2api-style)
-	if snap := parseBillingProbeRate(acc); snap > 0 {
-		return snap, "billing_probe"
+	if probeRate > 0 {
+		return probeRate, "billing_probe"
 	}
-	// 3) Account column rate_multiplier
+	if aiRate > 0 {
+		return aiRate, aiSrc
+	}
 	if acc.RateMultiplier != nil && *acc.RateMultiplier >= 0 {
 		r := *acc.RateMultiplier
 		if r == 0 {
@@ -183,6 +186,42 @@ func resolveAccountRate(acc *Account) (rate float64, source string) {
 		return r, "custom"
 	}
 	return 1, "default_one"
+}
+
+func extraAIRateSignal(acc *Account) (rate float64, source string, at time.Time) {
+	if acc == nil {
+		return 0, "", time.Time{}
+	}
+	rate = extraFloat(acc.Extra, ExtraAIRateMultiplier)
+	if rate <= 0 {
+		return 0, "", time.Time{}
+	}
+	source = extraString(acc.Extra, ExtraAIRateSource)
+	if source == "" {
+		source = "imported"
+	}
+	at = parseExtraTime(acc.Extra[ExtraAIRateCheckedAt])
+	return rate, source, at
+}
+
+func billingProbeRateSignal(acc *Account) (rate float64, at time.Time) {
+	rate = parseBillingProbeRate(acc)
+	if rate <= 0 {
+		return 0, time.Time{}
+	}
+	if acc == nil || acc.Extra == nil {
+		return rate, time.Time{}
+	}
+	raw, _ := acc.Extra[UpstreamBillingProbeExtraKey].(map[string]any)
+	if raw == nil {
+		return rate, time.Time{}
+	}
+	if v, ok := raw["received_at"].(time.Time); ok {
+		at = v
+	} else {
+		at = parseExtraTime(raw["received_at"])
+	}
+	return rate, at
 }
 
 func parseBillingProbeRate(acc *Account) float64 {
@@ -210,6 +249,21 @@ func parseBillingProbeRate(acc *Account) float64 {
 		}
 	}
 	return 0
+}
+
+// shouldRefreshSub2APIBilling is true when a stale rate should be re-probed via
+// GET /v1/sub2api/billing. Gated on account *kind*, never on the last source
+// label — manual_rollback / sub2api_group_switch used to skip forever.
+func shouldRefreshSub2APIBilling(kind string, alreadyGotLive bool) bool {
+	if alreadyGotLive {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "newapi", "oneapi":
+		return false
+	default:
+		return true
+	}
 }
 
 func asMapFloat(m map[string]any, key string) float64 {
@@ -833,7 +887,9 @@ func filterDeathSpiralDemotions(
 			out = append(out, a)
 			continue
 		}
-		costOK := costJustifiedSpareDemotion(acc, accounts, cfg, recentTraffic) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic, actions)
+		costOK := costJustifiedSpareDemotion(acc, accounts, cfg, recentTraffic) ||
+			mainLayerOverflowDemotion(acc, next, accounts, recentTraffic, actions) ||
+			isCachePriorityBandReason(a.Reason)
 		if reason := priorityDemotionGateReasonEx(acc, next, long, recent, costOK); reason != "" {
 			continue // drop — inject soft-unbury may lift instead
 		}
@@ -1260,7 +1316,7 @@ const costSoftQuarantineWeight = 0
 // Ultimate-spare recovery: when cheaper peers boom, pilot stops re-pinning w0 and
 // may unbury; scheduler already allows w0 only as last resort.
 func injectCostIsolations(decision *decision, accounts []Account, cfg AIAutopilotSettings, recent map[int64]AccountTrafficStats) int {
-	if decision == nil || !costPressureActive(cfg) {
+	if decision == nil {
 		return 0
 	}
 	havePri := map[int64]bool{}
@@ -1308,6 +1364,11 @@ func injectCostIsolations(decision *decision, accounts []Account, cfg AIAutopilo
 		}
 	}
 	decision.Actions = filtered
+
+	// cost < 20%: still strip LLM 究极备用, but do not inject p200/w0.
+	if !costPressureActive(cfg) {
+		return 0
+	}
 
 	injected := 0
 	for i := range accounts {

@@ -449,14 +449,6 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 			}
 			return run, nil
 		}
-		// Cost dim is deterministic from money.composite (LLM invents peer rates otherwise).
-		// Then recompute overall with configured 稳/延迟/吞吐/性价比 weights.
-		sw := cfg.ScoreWeights()
-		for i := range d.Scores {
-			d.Scores[i] = NormalizeAccountScoreWith(d.Scores[i], sw)
-		}
-		applyDeterministicCostScores(d.Scores, accounts, sw)
-
 		// Multi-turn: model asked for more probes and we still have turns left.
 		// Merge into probeMemo (do not drop snapshot pre-probes for disabled accounts).
 		if len(d.ProbeRequests) > 0 && turn < maxTurns && cfg.ActivationProbeOn() {
@@ -488,6 +480,10 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 		break
 	}
 
+	// Admin 稳/延迟/流畅/性价比 sliders own the ranking. LLM scores are overwritten
+	// from live traffic + composite even if the model skipped accounts or "lost" the snapshot.
+	finalDecision.Scores = applyDeterministicScores(finalDecision.Scores, accounts, longTraffic, recentTraffic, cfg.ScoreWeights())
+
 	// Drop death-spiral demotions so soft-unbury is not blocked by havePri on the same account.
 	// Cost-justified spare demotions (very expensive under high 性价比) are retained.
 	finalDecision.Actions = filterDeathSpiralDemotions(finalDecision.Actions, accounts, longTraffic, recentTraffic, cfg)
@@ -509,6 +505,9 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 	if n := injectMainLayerCap(&finalDecision, accounts, recentTraffic, cfg); n > 0 && p.Log != nil {
 		p.Log.Info("ai pilot injected main-layer cap", "count", n, "max", AIMainLayerMaxAccounts, "trigger", trigger)
 	}
+	if n := injectCachePriorityBands(&finalDecision, accounts, cfg, longTraffic, recentTraffic); n > 0 && p.Log != nil {
+		p.Log.Info("ai pilot injected cache priority bands", "count", n, "trigger", trigger)
+	}
 	// Soft OpenAI scoring still feeds p150/sticky — isolate very expensive via ai_disabled.
 	if n := injectCostIsolations(&finalDecision, accounts, cfg, recentTraffic); n > 0 && p.Log != nil {
 		p.Log.Info("ai pilot injected cost isolations", "count", n, "trigger", trigger)
@@ -516,6 +515,10 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 	// Cheap peers boom/temp-unsched/hard-fail → re-enable cost-isolated expensive as fallback.
 	if n := injectCostIsolationReleases(&finalDecision, accounts, cfg, recentTraffic); n > 0 && p.Log != nil {
 		p.Log.Info("ai pilot injected cost isolation releases", "count", n, "trigger", trigger)
+	}
+	// Last: rewrite schedule_weight from overall so leftover 3万权 / ±20 微调不能盖过设置比例.
+	if n := injectScoreDrivenWeights(&finalDecision, accounts, cfg, recentTraffic); n > 0 && p.Log != nil {
+		p.Log.Info("ai pilot injected score-driven weights", "count", n, "trigger", trigger)
 	}
 	// If a recent group switch is already 503/hard-failing, roll back to last_good first.
 	if n := injectUpstreamGroupRollbacks(&finalDecision, accounts, recentTraffic, cfg); n > 0 && p.Log != nil {
@@ -642,11 +645,13 @@ func (p *AIPilotService) applyDecisionActions(
 			_, _ = p.Repo.CreateAction(ctx, a)
 			continue
 		}
-		if reason := activationGateReason(act.Op, act.Value, acc.EffectiveScheduleWeight(), probes, act.AccountID, cfg); reason != "" {
-			a.State = AIActionRejected
-			a.RejectReason = reason
-			_, _ = p.Repo.CreateAction(ctx, a)
-			continue
+		if !isScoreWeightSyncReason(act.Reason) {
+			if reason := activationGateReason(act.Op, act.Value, acc.EffectiveScheduleWeight(), probes, act.AccountID, cfg); reason != "" {
+				a.State = AIActionRejected
+				a.RejectReason = reason
+				_, _ = p.Repo.CreateAction(ctx, a)
+				continue
+			}
 		}
 		if reason := balanceGateReason(act.Op, acc); reason != "" {
 			a.State = AIActionRejected
@@ -680,7 +685,9 @@ func (p *AIPilotService) applyDecisionActions(
 				// Monopoly front (p<50 e.g. default 1) → band: never treat as gated demotion.
 				safetyClamp := isPrioritySafetyBypass(acc.Priority, next)
 				if !safetyClamp {
-					costOK := costJustifiedSpareDemotion(acc, accounts, cfg, recentTraffic) || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic, decision.Actions)
+					costOK := costJustifiedSpareDemotion(acc, accounts, cfg, recentTraffic) ||
+						mainLayerOverflowDemotion(acc, next, accounts, recentTraffic, decision.Actions) ||
+						isCachePriorityBandReason(act.Reason)
 					if reason := priorityDemotionGateReasonEx(acc, next, longSt, recentSt, costOK); reason != "" {
 						a.State = AIActionRejected
 						a.RejectReason = reason
@@ -764,10 +771,10 @@ func (p *AIPilotService) applyDecisionActions(
 			continue
 		}
 		if applied >= cfg.MaxActionsPerRun {
-			overflowCap := false
+			overflowCap := isScoreWeightSyncReason(act.Reason) || isCachePriorityBandReason(act.Reason)
 			if act.Op == AIOpSetPriority {
 				if next, err := parseIntValue(act.Value); err == nil {
-					overflowCap = mainLayerOverflowDemotion(acc, next, accounts, recentTraffic, decision.Actions)
+					overflowCap = overflowCap || mainLayerOverflowDemotion(acc, next, accounts, recentTraffic, decision.Actions)
 				}
 			}
 			if !overflowCap {
@@ -781,7 +788,8 @@ func (p *AIPilotService) applyDecisionActions(
 			// Recovery enable / un-bury / monopoly-front clamp must bypass cooldown —
 			// otherwise soft-unbury or p=1→100 is blocked for 15m after any prior
 			// touch and summaries loop "紧急修复" forever (observed in prod).
-			bypassCool := act.Op == AIOpEnable || act.Op == AIOpRelease || act.Op == AIOpUnlock
+			bypassCool := act.Op == AIOpEnable || act.Op == AIOpRelease || act.Op == AIOpUnlock ||
+				isScoreWeightSyncReason(act.Reason) || isCachePriorityBandReason(act.Reason)
 			// Depleted wallet / cost isolation: allow disable immediately (health SR is irrelevant).
 			if !bypassCool && act.Op == AIOpDisable && (isBalanceDepleted(acc) || costJustifiedIsolation(acc, accounts, cfg, recentTraffic)) {
 				bypassCool = true
@@ -833,7 +841,8 @@ func (p *AIPilotService) applyDecisionActions(
 		if act.Op == AIOpSetWeight || act.Op == AIOpSetPriority {
 			if reason := amplitudeOK(acc, act, cfg); reason != "" {
 				// Cost soft-quarantine may jump weight → 0/10 and priority → 200 in one step.
-				bypassAmp := false
+				// Score-sync must jump 32260→85 or settings never take effect.
+				bypassAmp := isScoreWeightSyncReason(act.Reason) || isCachePriorityBandReason(act.Reason)
 				if act.Op == AIOpSetWeight {
 					if next, err := parseIntValue(act.Value); err == nil && next <= 10 &&
 						costJustifiedIsolation(acc, accounts, cfg, recentTraffic) {
@@ -1091,12 +1100,20 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 				"requests": st.Requests, "errors": st.Errors,
 				"successRate":   successRate,
 				"avgDurationMs": st.AvgDuration, "avgTtfbMs": st.AvgFirstToken,
+				"cacheEligibleRequests": st.CacheEligibleRequests,
+				"cacheEligibleTokens":   st.CacheEligibleTokens,
+				"cacheReadTokens":       st.CacheReadTokens,
+				"cacheBigMissRequests":  st.CacheBigMissRequests,
 			},
 			"recentTraffic": map[string]any{
 				"windowMinutes": cfg.RecentWindowMinutes,
 				"requests":      rst.Requests, "errors": rst.Errors,
 				"successRate":   recentRate,
 				"avgDurationMs": rst.AvgDuration, "avgTtfbMs": rst.AvgFirstToken,
+				"cacheEligibleRequests": rst.CacheEligibleRequests,
+				"cacheEligibleTokens":   rst.CacheEligibleTokens,
+				"cacheReadTokens":       rst.CacheReadTokens,
+				"cacheBigMissRequests":  rst.CacheBigMissRequests,
 			},
 			"errors":     map[string]any{"samples": samples},
 			"activation": activationView(acc, probeMemo[acc.ID], idle, cfg),
@@ -1221,14 +1238,14 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 					"latencyPct":    cfg.ScoreWeightLatency,
 					"throughputPct": cfg.ScoreWeightThroughput,
 					"costPct":       cfg.ScoreWeightCost,
-					"note":          "设置可改;后端按 composite 重算 cost 维并重算 overall,set_weight 跟 overall",
+					"note":          "设置改完下一轮生效:后端按四维重算 overall 并直接写 schedule_weight=round(overall),不受 ±20 限制",
 				},
-				"weightOp": "同 priority 层 set_weight 大致按 overall 比例,不是纯成本均分;性价比权重高时更偏向便宜号",
+				"weightOp": "schedule_weight 由 overall 对齐;模型不要 ±20 微调。性价比≥20% 才硬隔离极贵号。prompt cache 差的中转由后端按命中率自动分档 priority(100/110/150),不要点名供应商",
 				"costBackend": map[string]any{
 					"costDim":        "scores[].cost 由后端按 money.rateConfidence.trustedComposite 池内比价写死,禁止模型编造 peer 倍率",
 					"unknownRate":    "无导入倍率(default_one) cost≈40 中偏低,不要当成 0.06 便宜号",
 					"pressureOn":     costPressureActive(cfg),
-					"pressureRule":   "cost 权重≥20% 时:贵号禁止抬回主层;极贵号→p200+weight=0 软隔离(不 disable);disable 仅硬失败/余额耗尽",
+					"pressureRule":   "cost 权重≥20% 时:贵号禁止抬回主层;极贵号→p200+weight=0 软隔离(不 disable);disable 仅硬失败/余额耗尽。权重<20% 时过贵只扣 overall,禁止 p200/w0",
 					"expensiveRatio": AICostExpensiveRatio,
 					"veryExpensive":  AICostVeryExpensiveRatio,
 				},
@@ -1567,14 +1584,12 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 - activation 是现场探测:停用/零流量账号没有统计时必须看它;空白流量 ≠ 仍坏;pass ≠ 应接生产量
 
 【打分与分流 —— 必须遵守】
-- scores 四维权重以 **policy.scoreGuide.weights** 为准(管理员可在设置改;默认 稳40/延迟30/吞吐20/性价比10)
-  overall ≈ stab*wS + lat*wL + thr*wT + cost*wC (后端按设置重算)
-- 主层 set_weight **大致按 overall 比例分配**,不是「都 1」
-  例:同层 A overall=80、B overall=40 → weight 可约 2:1
-- **cost 维由后端按 composite 池内比价写死**(模型分仅作参考会被覆盖);禁止把无倍率号编造成 peer 的 0.06
+- 四维权重以 **policy.scoreGuide.weights** 为准(管理员设置,改完下一轮生效;默认 稳40/延迟30/吞吐20/性价比10)
+- **后端每轮用流量+单价重算四维和 overall,并直接写 schedule_weight=round(overall)**。模型不要 set_weight ±20,那会被丢掉
+- cost 维由后端按 composite 池内比价写死;禁止把无倍率号编造成 peer 的 0.06
 - 无导入倍率(rateConfidence.level=3/default_one)不是便宜号
-- 性价比权重≥20% 时后端硬门禁:贵号禁止抬回主层≤100;极贵号(相对最便宜 peer×1.75) **p200+weight=0 软隔离=究极备用**(调度层仅当同组没有可调度的非 w0 号时才接量),禁止无故抬权/抬主层
-- 稳/延迟/吞吐:看 traffic + recentTraffic(近况优先)
+- **只有 policy.scoreGuide.costBackend.pressureOn=true(性价比≥20%)** 才允许因单价 p200+weight=0。pressureOn=false 时 0.08 vs 0.045 只扣 overall,禁止「虽贵但…」式隔离/停用
+- 稳/延迟/吞吐:看 traffic + recentTraffic(近况优先)。延迟好的号即使稍贵也应拿更高 weight
 
 【余额参与调度 —— 原版对齐】
 - money.balanceStatus / money.balanceUsd 已写入快照(与 UpstreamRouter 一样给模型用,不是内核硬切流量)
@@ -1586,8 +1601,8 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 【禁止备援死循环 / 解埋再沉震荡】
 - 后端在「刚下沉到备援(≥150)」后约 5 分钟内禁止立刻拉回主层(防 429/硬失败 thrash);过了即可解埋
 - 驻留期内请用 set_weight 调分流,不要反复 set_priority 100↔150
-- p≥150 / weight=0 **默认不应有量**(究极备用);近窗有量=调度漏量或隔离被拆,应再压到 w0,不要抬回主层
-- 极贵号用 p200+weight=0,不要 disable(disable 留给硬失败/耗尽)
+- p≥150 / weight=0 在 **pressureOn=true** 时才是究极备用;pressureOn=false 不要把健康号压到 w0
+- disable 只留给硬失败/余额耗尽,不要用 disable 表达「贵」
 
 【上游分组切换 switch_upstream_group — 可选,极保守】
 - 仅当 channels[].upstreamGroup.switchable=true 且 policy 允许该 op 时才可调用
@@ -1596,14 +1611,14 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 - 若刚切组后近窗 503/硬失败: 后端会自动回滚 last_good 并 disable,勿再切更便宜组
 - 禁止建议不在 candidates 的组;省≥15% 且 30m 驻留
 
-- 慢(TTFB 高)但成功率高 → 降 weight,不要无脑 priority 沉到 150+
-- 近窗/长窗**过半失败或 401/403 额度** → 才 disable; 几分钟 502/503/超时 **不要 disable**; **429 限流不是号坏了**,禁止 disable,最多降 weight; **过贵** → p200+weight=0 究极备用,但健康且延迟明显更好的号不要按倍率停掉
+- 慢(TTFB 高)但成功率高 → 会在 overall/weight 里体现,不要无脑 priority 沉到 150+
+- 近窗/长窗**过半失败或 401/403 额度** → 才 disable; 几分钟 502/503/超时 **不要 disable**; **429 限流不是号坏了**,禁止 disable; **过贵** 仅当 pressureOn 才 p200+w0,否则只扣 overall
 - 后端会:拒绝无硬故障的胡乱下沉;长窗健康或已知便宜号可解埋;过度 disable 会自动解开;下沉有短冷静期;成本软隔离不被 TTL 拆掉
 - 不要每轮 100↔150 thrash;但主力近窗过半失败时必须立刻抬备援,不要把健康号卡在 150
 
 原则:
 1) **同层多号**:保留多个可用账号在相近 priority(建议 50–150),用 set_weight 按 overall 分流。主力挂了就抬备援,不要人为卡死容量
-2) **disable 仅硬失败/余额耗尽**;过贵号 p200+weight=0 究极备用(便宜号都挂了才顶),禁止半池 ai_disabled
+2) **disable 仅硬失败/余额耗尽**;过贵号仅 pressureOn 时 p200+weight=0,禁止半池 ai_disabled
 3) disable 必须考虑 minAvailablePerGroup
 4) **恢复与停用同等重要**:每一轮扫 aiDisabled=true。
    - 近窗无硬失败 → 应 enable(后端会自动解过度 disable)

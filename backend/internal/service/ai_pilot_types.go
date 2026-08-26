@@ -53,6 +53,13 @@ type AccountTrafficStats struct {
 	AvgDuration   float64
 	AvgFirstToken float64
 	Samples       []string
+	// Prompt-cache aggregates (OpenAI usage_logs). Eligible rows have
+	// input+cache_read >= 8192 so tiny warmup/probes do not dominate.
+	CacheEligibleTokens   int64
+	CacheReadTokens       int64
+	CacheEligibleRequests int
+	// Big miss: uncached input >= 20k with cache_read < 8k — the "3712/7053 floor" pattern.
+	CacheBigMissRequests int
 }
 
 // AI run / action states (aligned with UpstreamRouter semantics).

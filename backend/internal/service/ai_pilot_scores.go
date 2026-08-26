@@ -1,7 +1,9 @@
 package service
 
 import (
+	"fmt"
 	"math"
+	"strconv"
 	"strings"
 )
 
@@ -12,8 +14,8 @@ const (
 	defaultScoreWLatency    = 0.3
 	defaultScoreWThroughput = 0.2
 	defaultScoreWCost       = 0.1
-	// overallDriftTolerance: if model overall drifts this far from weighted dims, recompute.
-	overallDriftTolerance = 25
+	// overallDriftTolerance: note when model overall disagrees with weighted dims.
+	overallDriftTolerance = 1
 )
 
 // ScoreWeights are fractions that sum to 1 for overall = Σ dim * weight.
@@ -135,10 +137,11 @@ func NormalizeAccountScoreWith(s AIAccountScore, w ScoreWeights) AIAccountScore 
 
 	want := w.Stability*s.Stability + w.Latency*s.Latency +
 		w.Throughput*s.Throughput + w.Cost*s.Cost
-	s.Overall = clampScore(s.Overall)
-	// Always recompute overall from dims when cost was backend-derived, or when drifted.
-	if s.Overall <= 0 || math.Abs(s.Overall-want) > overallDriftTolerance {
-		s.Overall = clampScore(want)
+	prev := s.Overall
+	// Settings weights must always own overall — a 25pt drift slack meant 40/30/20/10
+	// never showed up in the number the panel and set_weight look at.
+	s.Overall = clampScore(math.Round(want*10) / 10)
+	if prev <= 0 || math.Abs(prev-want) > overallDriftTolerance {
 		note := strings.TrimSpace(s.Note)
 		if !strings.Contains(note, "overall 由后端") {
 			if note != "" {
@@ -270,7 +273,7 @@ func applyDeterministicCostScores(scores []AIAccountScore, accounts []Account, w
 			w.Latency*clampScore(scores[i].Latency) +
 			w.Throughput*clampScore(scores[i].Throughput) +
 			w.Cost*derived
-		scores[i].Overall = clampScore(want)
+		scores[i].Overall = clampScore(math.Round(want*10) / 10)
 		note := strings.TrimSpace(scores[i].Note)
 		tag := "[cost 由后端 composite 重算]"
 		if !strings.Contains(note, "cost 由后端") {
@@ -287,4 +290,284 @@ func applyDeterministicCostScores(scores []AIAccountScore, accounts []Account, w
 		}
 		scores[i].Note = note
 	}
+}
+
+const (
+	scoreDimUnknown             = 40.0
+	scoreDimIdleThroughput      = 15.0
+	scoreWeightSyncReasonPrefix = "综合分对齐:"
+	scoreWeightSyncEpsilon      = 2
+)
+
+type trafficScoreDims struct {
+	stab, lat, thr float64
+}
+
+func isScoreWeightSyncReason(reason string) bool {
+	return strings.Contains(reason, "综合分对齐")
+}
+
+func scoreToScheduleWeight(overall float64) int {
+	n := int(math.Round(clampScore(overall)))
+	if n < AIWeightHealthyFloor {
+		n = AIWeightHealthyFloor
+	}
+	return n
+}
+
+func trafficForScoring(recent, long AccountTrafficStats) AccountTrafficStats {
+	rn := recent.Requests + recent.Errors
+	ln := long.Requests + long.Errors
+	if rn >= 5 {
+		return recent
+	}
+	if ln >= 5 {
+		return long
+	}
+	if rn > 0 {
+		return recent
+	}
+	return long
+}
+
+func stabilityScoreOf(st AccountTrafficStats) float64 {
+	n := st.Requests + st.Errors
+	if n <= 0 {
+		return scoreDimUnknown
+	}
+	succ := st.Successes
+	if succ <= 0 && st.Requests > 0 {
+		succ = st.Requests
+	}
+	return clampScore(100 * float64(succ) / float64(n))
+}
+
+// logRankScores maps positive values onto [5,100]. Unknown/non-positive stay `unknown`.
+func logRankScores(byID map[int64]float64, lowerIsBetter bool, unknown float64) map[int64]float64 {
+	out := make(map[int64]float64, len(byID))
+	var known []float64
+	for _, v := range byID {
+		if v > 0 && !math.IsNaN(v) && !math.IsInf(v, 0) {
+			known = append(known, v)
+		}
+	}
+	minV, maxV := 0.0, 0.0
+	if len(known) > 0 {
+		minV, maxV = known[0], known[0]
+		for _, v := range known[1:] {
+			if v < minV {
+				minV = v
+			}
+			if v > maxV {
+				maxV = v
+			}
+		}
+	}
+	for id, v := range byID {
+		if v <= 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+			out[id] = unknown
+			continue
+		}
+		if len(known) < 2 || maxV <= minV*1.001 {
+			out[id] = costScoreUniformPool
+			continue
+		}
+		span := math.Log(maxV) - math.Log(minV)
+		if span <= 0 {
+			out[id] = costScoreUniformPool
+			continue
+		}
+		t := (math.Log(v) - math.Log(minV)) / span
+		if t < 0 {
+			t = 0
+		}
+		if t > 1 {
+			t = 1
+		}
+		if lowerIsBetter {
+			out[id] = clampScore(100 - t*(100-costScoreMinKnown))
+		} else {
+			out[id] = clampScore(costScoreMinKnown + t*(100-costScoreMinKnown))
+		}
+	}
+	return out
+}
+
+func deriveTrafficDimensionScores(accounts []Account, long, recent map[int64]AccountTrafficStats) map[int64]trafficScoreDims {
+	out := make(map[int64]trafficScoreDims, len(accounts))
+	ttfb := make(map[int64]float64, len(accounts))
+	vol := make(map[int64]float64, len(accounts))
+	dur := make(map[int64]float64, len(accounts))
+	for i := range accounts {
+		id := accounts[i].ID
+		var lg, rec AccountTrafficStats
+		if long != nil {
+			lg = long[id]
+		}
+		if recent != nil {
+			rec = recent[id]
+		}
+		st := trafficForScoring(rec, lg)
+		out[id] = trafficScoreDims{stab: stabilityScoreOf(st)}
+		if st.AvgFirstToken > 0 {
+			ttfb[id] = st.AvgFirstToken
+		}
+		volN := lg.Requests
+		if volN <= 0 {
+			volN = rec.Requests
+		}
+		if volN > 0 {
+			vol[id] = float64(volN)
+		}
+		if st.AvgDuration > 0 {
+			dur[id] = st.AvgDuration
+		} else if st.AvgFirstToken > 0 {
+			dur[id] = st.AvgFirstToken
+		}
+	}
+	lat := logRankScores(ttfb, true, scoreDimUnknown)
+	volS := logRankScores(vol, false, scoreDimIdleThroughput)
+	durS := logRankScores(dur, true, scoreDimUnknown)
+	for id, d := range out {
+		d.lat = lat[id]
+		if d.lat <= 0 {
+			d.lat = scoreDimUnknown
+		}
+		vs, vok := volS[id]
+		ds, dok := durS[id]
+		switch {
+		case vok && vs > scoreDimIdleThroughput && dok && ds > 0:
+			d.thr = clampScore(0.5*vs + 0.5*ds)
+		case vok && vs > 0:
+			d.thr = vs
+		default:
+			d.thr = scoreDimIdleThroughput
+		}
+		out[id] = d
+	}
+	return out
+}
+
+// applyDeterministicScores overwrites all four dims from live traffic + composite
+// so admin 稳/延迟/流畅/性价比 sliders actually rank the pool. LLM scores are display-only.
+func applyDeterministicScores(scores []AIAccountScore, accounts []Account, long, recent map[int64]AccountTrafficStats, w ScoreWeights) []AIAccountScore {
+	if len(accounts) == 0 {
+		return scores
+	}
+	dims := deriveTrafficDimensionScores(accounts, long, recent)
+	byID := make(map[int64]int, len(scores))
+	for i := range scores {
+		byID[scores[i].AccountID] = i
+	}
+	for i := range accounts {
+		acc := &accounts[i]
+		d := dims[acc.ID]
+		idx, ok := byID[acc.ID]
+		if !ok {
+			scores = append(scores, AIAccountScore{AccountID: acc.ID, AccountName: acc.Name})
+			idx = len(scores) - 1
+			byID[acc.ID] = idx
+		}
+		scores[idx].Stability = d.stab
+		scores[idx].Latency = d.lat
+		scores[idx].Throughput = d.thr
+		if scores[idx].AccountName == "" {
+			scores[idx].AccountName = acc.Name
+		}
+		if scores[idx].Confidence <= 0 {
+			scores[idx].Confidence = 90
+		}
+		note := fmt.Sprintf("后端四维 稳%.0f 延迟%.0f 流畅%.0f", d.stab, d.lat, d.thr)
+		if prev := strings.TrimSpace(scores[idx].Note); prev != "" && !strings.Contains(prev, "后端四维") {
+			note = prev + " " + note
+		}
+		scores[idx].Note = note
+	}
+	applyDeterministicCostScores(scores, accounts, w)
+	applyDeterministicCacheScores(scores, accounts, long, recent)
+	return scores
+}
+
+// injectScoreDrivenWeights writes schedule_weight = round(overall) so configured
+// 40/30/20/10 (or whatever the admin set) actually moves Top-K lottery share.
+// Bypasses ±20 abs caps at apply time via reason prefix. Skips cost-isolated w0.
+func injectScoreDrivenWeights(decision *decision, accounts []Account, cfg AIAutopilotSettings, recent map[int64]AccountTrafficStats) int {
+	if decision == nil || !cfg.OpAllowed(AIOpSetWeight) {
+		return 0
+	}
+	scoresByID := make(map[int64]AIAccountScore, len(decision.Scores))
+	for _, s := range decision.Scores {
+		scoresByID[s.AccountID] = s
+	}
+	if len(scoresByID) == 0 {
+		return 0
+	}
+	pendingEnable := map[int64]bool{}
+	pendingDisable := map[int64]bool{}
+	pendingW0 := map[int64]bool{}
+	for _, a := range decision.Actions {
+		switch a.Op {
+		case AIOpEnable:
+			pendingEnable[a.AccountID] = true
+		case AIOpDisable:
+			pendingDisable[a.AccountID] = true
+		case AIOpSetWeight:
+			if n, err := strconv.Atoi(strings.TrimSpace(a.Value)); err == nil && n <= costSoftQuarantineWeight {
+				pendingW0[a.AccountID] = true
+			}
+		}
+	}
+	filtered := decision.Actions[:0]
+	for _, a := range decision.Actions {
+		if a.Op == AIOpSetWeight && !pendingW0[a.AccountID] && !pendingDisable[a.AccountID] {
+			if _, ok := scoresByID[a.AccountID]; ok {
+				continue // drop LLM ±20 / leftover release w=10; we rewrite from overall
+			}
+		}
+		filtered = append(filtered, a)
+	}
+	decision.Actions = filtered
+
+	sPct, lPct, tPct, cPct := cfg.ScoreWeights().Percents()
+	injected := 0
+	for i := range accounts {
+		acc := &accounts[i]
+		if acc.Status != StatusActive || !acc.Schedulable {
+			continue
+		}
+		if acc.IsExcludedFromSchedule() || !acc.AIManaged {
+			continue
+		}
+		if pendingDisable[acc.ID] {
+			continue
+		}
+		if acc.AIDisabled && !pendingEnable[acc.ID] {
+			continue
+		}
+		if pendingW0[acc.ID] || costJustifiedIsolation(acc, accounts, cfg, recent) {
+			continue
+		}
+		sc, ok := scoresByID[acc.ID]
+		if !ok || sc.Overall <= 0 {
+			continue
+		}
+		target := scoreToScheduleWeight(sc.Overall)
+		cur := acc.EffectiveScheduleWeight()
+		if absInt(target-cur) < scoreWeightSyncEpsilon {
+			continue
+		}
+		decision.Actions = append(decision.Actions, decisionAction{
+			AccountID: acc.ID,
+			Op:        AIOpSetWeight,
+			Value:     strconv.Itoa(target),
+			Reason: fmt.Sprintf(
+				"%s overall=%.1f (稳%.0f 延迟%.0f 流畅%.0f 性价比%.0f) 按设置 %d/%d/%d/%d → weight %d",
+				scoreWeightSyncReasonPrefix, sc.Overall, sc.Stability, sc.Latency, sc.Throughput, sc.Cost,
+				sPct, lPct, tPct, cPct, target,
+			),
+			Confidence: 0.95,
+		})
+		injected++
+	}
+	return injected
 }

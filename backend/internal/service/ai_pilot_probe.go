@@ -747,6 +747,9 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 				if costPressureActive(cfg) && isExpensiveVsPeers(acc, accounts, AICostVeryExpensiveRatio, recentTraffic) {
 					continue
 				}
+				if q, enough := cacheQualityOf(st); enough && q < cacheMainQuality {
+					continue
+				}
 				classic := softUnburyEligible(st, rst)
 				cheapRescue := softUnburyCheapSpareRescue(acc, accounts, st, rst, probes)
 				// Broader: known-rate not very-expensive (e.g. 麻豆 0.06 stuck at p200).

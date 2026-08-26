@@ -308,7 +308,17 @@ func (r *AIPilotRepository) AggregateAccountTraffic(ctx context.Context, from, t
 		SELECT account_id,
 			COUNT(*)::int AS requests,
 			COALESCE(AVG(duration_ms) FILTER (WHERE duration_ms IS NOT NULL AND duration_ms > 0), 0)::float8 AS avg_duration,
-			COALESCE(AVG(first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL AND first_token_ms > 0), 0)::float8 AS avg_ttfb
+			COALESCE(AVG(first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL AND first_token_ms > 0), 0)::float8 AS avg_ttfb,
+			COALESCE(SUM((GREATEST(COALESCE(input_tokens,0),0) + GREATEST(COALESCE(cache_read_tokens,0),0)))
+				FILTER (WHERE GREATEST(COALESCE(input_tokens,0),0) + GREATEST(COALESCE(cache_read_tokens,0),0) >= 8192), 0)::bigint AS cache_eligible_tokens,
+			COALESCE(SUM(GREATEST(COALESCE(cache_read_tokens,0),0))
+				FILTER (WHERE GREATEST(COALESCE(input_tokens,0),0) + GREATEST(COALESCE(cache_read_tokens,0),0) >= 8192), 0)::bigint AS cache_read_tokens,
+			COUNT(*) FILTER (
+				WHERE GREATEST(COALESCE(input_tokens,0),0) + GREATEST(COALESCE(cache_read_tokens,0),0) >= 8192
+			)::int AS cache_eligible_requests,
+			COUNT(*) FILTER (
+				WHERE COALESCE(input_tokens,0) >= 20000 AND COALESCE(cache_read_tokens,0) < 8192
+			)::int AS cache_big_miss_requests
 		FROM usage_logs
 		WHERE created_at >= $1 AND created_at < $2
 			AND account_id IN (%s)
@@ -324,7 +334,10 @@ func (r *AIPilotRepository) AggregateAccountTraffic(ctx context.Context, from, t
 	defer rows.Close()
 	for rows.Next() {
 		var s service.AccountTrafficStats
-		if err := rows.Scan(&s.AccountID, &s.Requests, &s.AvgDuration, &s.AvgFirstToken); err != nil {
+		if err := rows.Scan(
+			&s.AccountID, &s.Requests, &s.AvgDuration, &s.AvgFirstToken,
+			&s.CacheEligibleTokens, &s.CacheReadTokens, &s.CacheEligibleRequests, &s.CacheBigMissRequests,
+		); err != nil {
 			return nil, err
 		}
 		s.Successes = s.Requests
