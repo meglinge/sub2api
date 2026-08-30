@@ -175,6 +175,7 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	if err != nil {
 		return fmt.Errorf("list migrations: %w", err)
 	}
+	files = filterEmbeddedMigrationSQL(files)
 	sort.Strings(files) // 确保按文件名顺序执行迁移
 
 	for _, name := range files {
@@ -447,6 +448,7 @@ func latestMigrationBaseline(fsys fs.FS) (string, string, string, error) {
 	if err != nil {
 		return "", "", "", err
 	}
+	files = filterEmbeddedMigrationSQL(files)
 	if len(files) == 0 {
 		return "baseline", "baseline", "", nil
 	}
@@ -461,6 +463,23 @@ func latestMigrationBaseline(fsys fs.FS) (string, string, string, error) {
 	hash := hex.EncodeToString(sum[:])
 	version := strings.TrimSuffix(name, ".sql")
 	return version, version, hash, nil
+}
+
+// filterEmbeddedMigrationSQL drops macOS AppleDouble / hidden junk
+// (._065_*.sql) that `go:embed *.sql` would otherwise treat as real migrations.
+func filterEmbeddedMigrationSQL(files []string) []string {
+	out := files[:0]
+	for _, name := range files {
+		base := name
+		if i := strings.LastIndex(name, "/"); i >= 0 {
+			base = name[i+1:]
+		}
+		if strings.HasPrefix(base, ".") {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
 }
 
 func checksumSet(values ...string) map[string]struct{} {
