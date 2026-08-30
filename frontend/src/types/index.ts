@@ -2160,6 +2160,7 @@ export interface AccountUsageSummary {
     user_cost: number
     requests: number
     tokens: number
+    cache_hit_rate?: number | null
   } | null
   highest_cost_day: {
     date: string
