@@ -177,6 +177,7 @@ export default {
     subscriptions: '订阅管理',
     accounts: '账号管理',
     autopilot: 'AI 自动驾驶',
+    plugins: '插件管理',
     proxies: 'IP管理',
     redeemCodes: '兑换码',
     ops: '运维监控',

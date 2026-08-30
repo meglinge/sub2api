@@ -8,35 +8,56 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Invalid replayed IDs are removed rather than rewritten because a fabricated
-// msg/fc/rs ID may point at a different upstream object.
-//
-// OpenAI Responses validates input item id prefixes by type:
-//   - message        -> must begin with "msg"
-//   - function_call* -> must begin with "fc"
-//   - reasoning      -> must begin with "rs"
-//
-// Codex / multi-turn clients (and some chat→responses bridges) often replay
-// history with a generic "item_*" id on every output item. Upstream then
-// rejects with 400:
-//
-//	Invalid 'input[N].id': 'item_...'. Expected an ID that begins with 'rs'.
-//
-// Stripping the bad id keeps the item content (encrypted_content / summary /
-// arguments) so multi-turn reasoning still works without the illegal lookup.
-func shouldStripOpenAIResponsesInputItemID(itemType, id string) bool {
-	if id == "" {
-		return false
-	}
-	switch itemType {
+func openAIResponsesInputItemIDPrefix(itemType string) (string, bool) {
+	switch strings.TrimSpace(itemType) {
 	case "message":
-		return !strings.HasPrefix(id, "msg")
+		return "msg", true
 	case "reasoning":
-		return !strings.HasPrefix(id, "rs")
+		return "rs", true
+	case "web_search_call":
+		return "ws", true
+	case "custom_tool_call":
+		return openAIResponsesToolCallIDPrefix(itemType), true
+	case "tool_search_call":
+		return openAIResponsesToolCallIDPrefix(itemType), true
+	case "custom_tool_call_output":
+		// Although custom calls use ctc IDs, OpenAI validates replayed custom
+		// call output item IDs against the generic fc namespace.
+		return "fc", true
 	default:
 		if isCodexToolCallInputType(itemType) {
-			return !strings.HasPrefix(id, "fc")
+			return openAIResponsesToolCallIDPrefix(itemType), true
 		}
+		return "", false
+	}
+}
+
+func openAIResponsesToolCallIDPrefix(itemType string) string {
+	switch strings.TrimSpace(itemType) {
+	case "custom_tool_call", "custom_tool_call_output":
+		return "ctc"
+	case "tool_search_call", "tool_search_output":
+		return "tsc"
+	default:
+		return "fc"
+	}
+}
+
+// Invalid replayed IDs are removed rather than rewritten because a fabricated
+// ID may point at a different upstream object.
+func shouldStripOpenAIResponsesInputItemID(itemType, id string) bool {
+	prefix, constrained := openAIResponsesInputItemIDPrefix(itemType)
+	if !constrained {
+		return false
+	}
+	return id == "" || !strings.HasPrefix(id, prefix)
+}
+
+func shouldStripOpenAIResponsesNonPairCallID(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case "message", "reasoning", "image_generation_call":
+		return true
+	default:
 		return false
 	}
 }
@@ -47,40 +68,61 @@ func sanitizeOpenAIResponsesInputItemIDs(body []byte) ([]byte, bool, error) {
 		return body, false, nil
 	}
 
-	items := make([][]byte, 0)
-	changed := false
-	var sanitizeErr error
-	index := 0
+	type inputItem struct {
+		body        []byte
+		stripID     bool
+		stripCallID bool
+	}
+
+	items := make([]inputItem, 0)
 	input.ForEach(func(_, item gjson.Result) bool {
-		currentIndex := index
-		index++
-		itemBody := []byte(item.Raw)
+		parsed := inputItem{body: []byte(item.Raw)}
 		if item.IsObject() {
 			itemType := item.Get("type")
 			id := item.Get("id")
-			if itemType.Type == gjson.String && id.Type == gjson.String &&
-				shouldStripOpenAIResponsesInputItemID(itemType.String(), id.String()) {
-				itemBody, sanitizeErr = sjson.DeleteBytes(itemBody, "id")
-				if sanitizeErr != nil {
-					sanitizeErr = fmt.Errorf("delete input.%d.id: %w", currentIndex, sanitizeErr)
-					return false
-				}
-				changed = true
+			trimmedItemType := strings.TrimSpace(itemType.String())
+			parsed.stripCallID = item.Get("call_id").Exists() && shouldStripOpenAIResponsesNonPairCallID(trimmedItemType)
+			if id.Type == gjson.String {
+				parsed.stripID = shouldStripOpenAIResponsesInputItemID(trimmedItemType, id.String())
 			}
 		}
-		items = append(items, itemBody)
+		items = append(items, parsed)
 		return true
 	})
-	if sanitizeErr != nil {
-		return nil, false, sanitizeErr
+	hasSanitization := false
+	for _, item := range items {
+		if item.stripID || item.stripCallID {
+			hasSanitization = true
+			break
+		}
 	}
-	if !changed {
+	if !hasSanitization {
 		return body, false, nil
+	}
+
+	rebuiltItems := make([][]byte, 0, len(items))
+	for index, item := range items {
+		itemBody := item.body
+		if item.stripID {
+			var err error
+			itemBody, err = sjson.DeleteBytes(itemBody, "id")
+			if err != nil {
+				return nil, false, fmt.Errorf("delete input.%d.id: %w", index, err)
+			}
+		}
+		if item.stripCallID {
+			var err error
+			itemBody, err = sjson.DeleteBytes(itemBody, "call_id")
+			if err != nil {
+				return nil, false, fmt.Errorf("delete input.%d.call_id: %w", index, err)
+			}
+		}
+		rebuiltItems = append(rebuiltItems, itemBody)
 	}
 
 	rebuiltInput := make([]byte, 0, len(input.Raw))
 	rebuiltInput = append(rebuiltInput, '[')
-	for i, item := range items {
+	for i, item := range rebuiltItems {
 		if i > 0 {
 			rebuiltInput = append(rebuiltInput, ',')
 		}
