@@ -357,4 +357,35 @@ describe('UpstreamBillingRateCell', () => {
     )
     expect(wrapper.text()).not.toContain('-admin.accounts.upstreamBilling.unsupported')
   })
+
+  it('prefers a newer official probe over a stale autopilot ai_rate cache', async () => {
+    const wrapper = mount(UpstreamBillingRateCell, {
+      props: {
+        account: makeAccount({
+          extra: {
+            ai_rate_multiplier: 0.03,
+            ai_rate_source: 'sub2api',
+            ai_rate_checked_at: '2026-07-01T00:00:00Z',
+            upstream_billing_probe: {
+              status: 'ok',
+              data: {
+                ...billingData,
+                peak_rate_enabled: false,
+                resolved_rate_multiplier: 0.05,
+                effective_rate_multiplier: 0.05,
+                group_rate_multiplier: 0.05
+              },
+              received_at: '2026-07-12T22:00:00Z',
+              fresh_until: '2026-07-12T23:00:00Z',
+              last_attempt_at: '2026-07-12T22:00:00Z',
+              next_probe_at: '2026-07-12T22:30:00Z'
+            }
+          }
+        }),
+        now: Date.now()
+      }
+    })
+    // Probe is stale for the peak/effective path, but still newer than extra.ai_*.
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toContain('0.05')
+  })
 })

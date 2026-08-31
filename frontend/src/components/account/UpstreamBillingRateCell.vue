@@ -31,7 +31,7 @@
           <p>{{ t('admin.accounts.upstreamBilling.effectiveRate', { value: currentEffectiveRate ?? '-' }) }}</p>
           <p>{{ t('admin.accounts.upstreamBilling.updatedAt', { value: formatDate(snapshot?.received_at) }) }}</p>
         </template>
-        <template v-else-if="billingRate != null || aiBalanceStatus || aiMoneyError">
+        <template v-else-if="aiRate != null || aiBalanceStatus || aiMoneyError">
           <p v-if="billingRate != null" data-testid="upstream-ai-rate">
             {{ t('admin.accounts.autopilotMoney.statusRate', { rate: billingRate, source: (account.extra as any)?.ai_rate_source || (probeRate != null ? 'billing_probe' : 'newapi') }) }}
           </p>
@@ -221,6 +221,12 @@ const aiRate = computed(() => {
   const v = Number(extraMap.value.ai_rate_multiplier)
   return Number.isFinite(v) && v > 0 ? v : null
 })
+const aiRateCheckedAt = computed(() => {
+  const s = extraMap.value.ai_rate_checked_at
+  if (typeof s !== 'string') return Number.NaN
+  const t = Date.parse(s)
+  return Number.isFinite(t) ? t : Number.NaN
+})
 // billing probe may be "unsupported" for new-api, but still prefer any known numeric rate
 const probeRate = computed(() => {
   const d = data.value as Record<string, unknown> | undefined
@@ -231,7 +237,19 @@ const probeRate = computed(() => {
   }
   return null
 })
-const billingRate = computed(() => aiRate.value ?? probeRate.value)
+// Newest timestamp wins. Stale extra.ai_rate (e.g. 2chat 0.03 from a bad
+// soft-refresh) must not hide a newer official probe (0.05).
+const billingRate = computed(() => {
+  const ai = aiRate.value
+  const probe = probeRate.value
+  if (ai != null && probe != null) {
+    const aiAt = aiRateCheckedAt.value
+    const probeAt = receivedAt.value
+    if (Number.isFinite(probeAt) && (!Number.isFinite(aiAt) || probeAt > aiAt)) return probe
+    return ai
+  }
+  return ai ?? probe
+})
 const rechargeMultiplier = computed(() => {
   const v = Number(extraMap.value.recharge_multiplier)
   return Number.isFinite(v) && v > 0 ? v : 1
@@ -253,9 +271,15 @@ const aiMoneyError = computed(() => {
   const s = extraMap.value.ai_money_error
   return typeof s === 'string' && s.trim() ? s.trim() : ''
 })
+const showingCachedRate = computed(() => aiRate.value != null && billingRate.value != null)
 const statusLabel = computed(() => {
   // Prefer any known rate over bare "unsupported" (new-api has no /v1/sub2api/billing).
-  if (billingRate.value != null) return ''
+  if (effectiveRate.value !== '-') {
+    if (snapshot.value?.status === 'failed') return t('admin.accounts.upstreamBilling.failed')
+    return ''
+  }
+  if (showingCachedRate.value) return ''
+  if (aiRate.value != null) return ''
   if (aiBalanceStatus.value) return ''
   if (aiMoneyError.value) return t('admin.accounts.upstreamBilling.failed')
   if (!snapshot.value) return t('admin.accounts.upstreamBilling.notProbed')
@@ -272,14 +296,19 @@ const statusClass = computed(() => {
   if (snapshot.value.status === 'failed') return 'text-red-600 dark:text-red-400'
   return ''
 })
-const hasEffectiveRate = computed(() => effectiveRate.value !== '-' || billingRate.value != null)
+const hasEffectiveRate = computed(() => effectiveRate.value !== '-' || showingCachedRate.value)
 const primaryValue = computed(() => {
   // Show composite when recharge ≠ 1 so maok-class 1:10 is not mistaken for "1x expensive"
   if (compositeRate.value != null && rechargeMultiplier.value !== 1) {
     return `${formatMultiplier(compositeRate.value)}x`
   }
   if (effectiveRate.value !== '-') return effectiveRate.value
-  if (billingRate.value != null) return `${formatMultiplier(billingRate.value)}x`
+  // extra.ai_rate vs official probe: newer timestamp wins even if the probe window is stale
+  // (2chat 0.03 cache must not hide a this-morning 0.05 probe).
+  if (showingCachedRate.value && billingRate.value != null) {
+    return `${formatMultiplier(billingRate.value)}x`
+  }
+  if (aiRate.value != null) return `${formatMultiplier(aiRate.value)}x`
   return statusLabel.value || '-'
 })
 const formatDate = (value?: string) => value

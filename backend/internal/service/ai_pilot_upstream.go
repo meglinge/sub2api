@@ -372,7 +372,20 @@ func (p *AIPilotService) ResolveAccountMoney(ctx context.Context, acc *Account) 
 	needNewAPI := mgmt != "" && base != "" && (kind == "newapi" || kind == "oneapi" || kind == "" || kind == "manual")
 	var matchedTokenRemain int64 // non-zero only when token list matched; used as balance last resort
 	gotRate := rateCacheFresh(acc) && source != "default_one" && source != "custom" && source != ""
-	if needNewAPI && !rateCacheFresh(acc) {
+
+	// Official billing-probe snapshot wins when it is strictly newer than extra.ai_*.
+	// Must run *before* HTTP writes: a just-stamped fetch would otherwise make
+	// probeAt look stale and freeze a wrong extra.ai_rate (2chat 0.03 vs probe 0.05).
+	{
+		probeRate, probeAt := billingProbeRateSignal(acc)
+		_, _, aiAt := extraAIRateSignal(acc)
+		if probeRate > 0 && !probeAt.IsZero() && (aiAt.IsZero() || probeAt.After(aiAt)) {
+			writeRate(probeRate, "billing_probe")
+			gotRate = true
+		}
+	}
+
+	if needNewAPI && !rateCacheFresh(acc) && !gotRate {
 		if r, src, remain, ok := p.fetchNewAPIRate(ctx, base, mgmt, uid, apiKey); ok {
 			writeRate(r, src)
 			matchedTokenRemain = remain
@@ -381,15 +394,12 @@ func (p *AIPilotService) ResolveAccountMoney(ctx context.Context, acc *Account) 
 			errParts = append(errParts, "newapi_rate_unresolved")
 		}
 	}
-	// sub2api key billing (sk) when rate still soft/default and ai-rate cache stale.
-	// Do NOT overwrite billing_probe/newapi/imported — those are already high-confidence.
-	if base != "" && apiKey != "" && !rateCacheFresh(acc) {
-		switch source {
-		case "default_one", "custom", "":
-			if r, ok := p.fetchSub2APIRate(ctx, base, apiKey); ok {
-				writeRate(r, "sub2api")
-				gotRate = true
-			}
+	// sub2api key billing when cache is stale. Gated on *kind* (newapi/oneapi
+	// stay on the mgmt path) and skip when a newer official probe already won.
+	if base != "" && apiKey != "" && !rateCacheFresh(acc) && shouldRefreshSub2APIBilling(kind, gotRate) {
+		if r, ok := p.fetchSub2APIRate(ctx, base, apiKey); ok {
+			writeRate(r, "sub2api")
+			gotRate = true
 		}
 	}
 
