@@ -1457,6 +1457,43 @@ func (s *AccountUsageService) GetTodayStatsBatch(ctx context.Context, accountIDs
 	return result, nil
 }
 
+type accountPerfBatchReader interface {
+	GetAccountPerfBatch(ctx context.Context, accountIDs []int64, since time.Time, perAccountLimit int) (map[int64]AccountPerfStats, error)
+}
+
+// GetPerfBatch returns recent TTFB/TPS percentiles for the account table.
+func (s *AccountUsageService) GetPerfBatch(ctx context.Context, accountIDs []int64) (map[int64]AccountPerfStats, error) {
+	uniqueIDs := make([]int64, 0, len(accountIDs))
+	seen := make(map[int64]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if accountID <= 0 {
+			continue
+		}
+		if _, exists := seen[accountID]; exists {
+			continue
+		}
+		seen[accountID] = struct{}{}
+		uniqueIDs = append(uniqueIDs, accountID)
+	}
+	out := make(map[int64]AccountPerfStats, len(uniqueIDs))
+	if len(uniqueIDs) == 0 {
+		return out, nil
+	}
+	reader, ok := s.usageLogRepo.(accountPerfBatchReader)
+	if !ok {
+		return out, nil
+	}
+	since := time.Now().Add(-AccountPerfWindow)
+	got, err := reader.GetAccountPerfBatch(ctx, uniqueIDs, since, AccountPerfSampleCap)
+	if err != nil {
+		return nil, err
+	}
+	for id, st := range got {
+		out[id] = st
+	}
+	return out, nil
+}
+
 func windowStatsFromAccountStats(stats *usagestats.AccountStats) *WindowStats {
 	if stats == nil {
 		return &WindowStats{}

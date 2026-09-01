@@ -408,6 +408,64 @@ func (r *usageLogRepository) GetAccountWindowStatsBatch(ctx context.Context, acc
 	return result, nil
 }
 
+// GetAccountPerfBatch returns TTFB/TPS percentiles for recent successful requests
+// (UpstreamRouter channel-table analog). perAccountLimit caps rows per account.
+func (r *usageLogRepository) GetAccountPerfBatch(ctx context.Context, accountIDs []int64, since time.Time, perAccountLimit int) (map[int64]service.AccountPerfStats, error) {
+	out := make(map[int64]service.AccountPerfStats, len(accountIDs))
+	if len(accountIDs) == 0 {
+		return out, nil
+	}
+	if perAccountLimit <= 0 {
+		perAccountLimit = service.AccountPerfSampleCap
+	}
+	query := `
+WITH ranked AS (
+  SELECT account_id, first_token_ms, output_tokens, duration_ms,
+         ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY created_at DESC) AS rn
+  FROM usage_logs
+  WHERE account_id = ANY($1)
+    AND created_at >= $2
+    AND first_token_ms IS NOT NULL AND first_token_ms > 0
+),
+capped AS (
+  SELECT account_id, first_token_ms,
+         CASE
+           WHEN output_tokens > 0 AND duration_ms IS NOT NULL AND duration_ms > first_token_ms
+             THEN output_tokens::float8 / ((duration_ms - first_token_ms)::float8 / 1000.0)
+           WHEN output_tokens > 0 AND duration_ms IS NOT NULL AND duration_ms > 0
+             THEN output_tokens::float8 / (duration_ms::float8 / 1000.0)
+           ELSE NULL
+         END AS tps
+  FROM ranked
+  WHERE rn <= $3
+)
+SELECT account_id,
+       COUNT(*)::int AS samples,
+       COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY first_token_ms), 0)::float8 AS ttfb_p50,
+       COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY first_token_ms), 0)::float8 AS ttfb_p99,
+       COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY tps), 0)::float8 AS tps_p50,
+       COALESCE(percentile_cont(0.01) WITHIN GROUP (ORDER BY tps), 0)::float8 AS tps_p1
+FROM capped
+GROUP BY account_id
+`
+	rows, err := r.sql.QueryContext(ctx, query, pq.Array(accountIDs), since, perAccountLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var s service.AccountPerfStats
+		if err := rows.Scan(&s.AccountID, &s.Samples, &s.TtfbP50Ms, &s.TtfbP99Ms, &s.TpsP50, &s.TpsP1); err != nil {
+			return nil, err
+		}
+		out[s.AccountID] = s
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GetGeminiUsageTotalsBatch 批量聚合 Gemini 账号在窗口内的 Pro/Flash 请求与用量。
 // 模型分类规则与 service.geminiModelClassFromName 一致：model 包含 flash/lite 视为 flash，其余视为 pro。
 func (r *usageLogRepository) GetGeminiUsageTotalsBatch(ctx context.Context, accountIDs []int64, startTime, endTime time.Time) (map[int64]service.GeminiUsageTotals, error) {

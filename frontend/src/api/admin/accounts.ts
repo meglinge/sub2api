@@ -556,6 +556,27 @@ export async function getBatchTodayStats(accountIds: number[]): Promise<BatchTod
   return data
 }
 
+/** Live TTFB/TPS percentiles from recent successful usage_logs (pool-mode / 中转 analog of UR channel table). */
+export interface AccountPerfStats {
+  account_id: number
+  samples: number
+  ttfb_p50_ms: number
+  ttfb_p99_ms: number
+  tps_p50: number
+  tps_p1: number
+}
+
+export interface BatchAccountPerfResponse {
+  perf: Record<string, AccountPerfStats>
+}
+
+export async function getBatchAccountPerf(accountIds: number[]): Promise<BatchAccountPerfResponse> {
+  const { data } = await apiClient.post<BatchAccountPerfResponse>('/admin/accounts/perf/batch', {
+    account_ids: accountIds
+  })
+  return data
+}
+
 /**
  * Set account schedulable status
  * @param id - Account ID
@@ -1065,6 +1086,7 @@ export const accountsAPI = {
   getBatchUsage,
   getTodayStats,
   getBatchTodayStats,
+  getBatchAccountPerf,
   clearRateLimit,
   recoverState,
   resetAccountQuota,

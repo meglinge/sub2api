@@ -7,6 +7,7 @@ const {
   listAccounts,
   listWithEtag,
   getBatchTodayStats,
+  getBatchAccountPerf,
   getUpstreamBillingProbeSettings,
   getAllProxies,
   getAllGroups,
@@ -15,6 +16,7 @@ const {
   listAccounts: vi.fn(),
   listWithEtag: vi.fn(),
   getBatchTodayStats: vi.fn(),
+  getBatchAccountPerf: vi.fn(),
   getUpstreamBillingProbeSettings: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn(),
@@ -27,6 +29,7 @@ vi.mock('@/api/admin', () => ({
       list: listAccounts,
       listWithEtag,
       getBatchTodayStats,
+      getBatchAccountPerf,
       getUpstreamBillingProbeSettings,
       batchDelete: vi.fn(),
       batchClearError: vi.fn(),
@@ -140,6 +143,7 @@ describe('admin AccountsView select all filtered results', () => {
     listAccounts.mockReset()
     listWithEtag.mockReset()
     getBatchTodayStats.mockReset()
+    getBatchAccountPerf.mockReset()
     getUpstreamBillingProbeSettings.mockReset()
     getAllProxies.mockReset()
     getAllGroups.mockReset()
@@ -151,6 +155,7 @@ describe('admin AccountsView select all filtered results', () => {
       data: null
     })
     getBatchTodayStats.mockResolvedValue({ stats: {} })
+    getBatchAccountPerf.mockResolvedValue({ perf: {} })
     getUpstreamBillingProbeSettings.mockResolvedValue({ enabled: true, interval_minutes: 30 })
     getAllProxies.mockResolvedValue([])
     getAllGroups.mockResolvedValue([])

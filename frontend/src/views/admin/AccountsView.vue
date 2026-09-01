@@ -303,6 +303,32 @@
               :error="todayStatsError"
             />
           </template>
+          <template #header-ttfb="{ column }">
+            <div class="flex items-center">
+              <span>{{ column.label }}</span>
+              <HelpTooltip :content="t('admin.accounts.perf.ttfbHint')" width-class="w-72" />
+            </div>
+          </template>
+          <template #cell-ttfb="{ row }">
+            <AccountPerfCell
+              kind="ttfb"
+              :stats="perfByAccountId[String(row.id)] ?? null"
+              :loading="perfLoading"
+            />
+          </template>
+          <template #header-tps="{ column }">
+            <div class="flex items-center">
+              <span>{{ column.label }}</span>
+              <HelpTooltip :content="t('admin.accounts.perf.tpsHint')" width-class="w-72" />
+            </div>
+          </template>
+          <template #cell-tps="{ row }">
+            <AccountPerfCell
+              kind="tps"
+              :stats="perfByAccountId[String(row.id)] ?? null"
+              :loading="perfLoading"
+            />
+          </template>
           <template #cell-groups="{ row }">
             <AccountGroupsCell :groups="row.groups" :max-display="4" />
           </template>
@@ -528,6 +554,7 @@ import type { SelectOption } from '@/components/common/Select.vue'
 import AccountStatusIndicator from '@/components/account/AccountStatusIndicator.vue'
 import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
 import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vue'
+import AccountPerfCell from '@/components/account/AccountPerfCell.vue'
 import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
@@ -544,6 +571,7 @@ import { sanitizeUrl } from '@/utils/url'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { formatMultiplier } from '@/utils/formatters'
 import type { Account, AccountPlatform, AccountSchedulerGroupScore, AccountType, AccountUsageInfo, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
+import type { AccountPerfStats } from '@/api/admin/accounts'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -722,6 +750,9 @@ const usageBatchErrorByAccountId = ref<Record<string, string | null>>({})
 const usageBatchLoadingByAccountId = ref<Record<string, boolean>>({})
 const usageBatchRequestTokenByAccountId = ref<Record<string, number>>({})
 const usageBatchCache = new Map<number, { data: AccountUsageInfo; ts: number }>()
+const perfByAccountId = ref<Record<string, AccountPerfStats>>({})
+const perfLoading = ref(false)
+const perfReqSeq = ref(0)
 const USAGE_BATCH_CACHE_TTL = 5 * 60 * 1000
 const pendingUsageBatchIds = new Set<number>()
 let usageBatchFlushTimer: ReturnType<typeof setTimeout> | null = null
@@ -912,6 +943,39 @@ const refreshTodayStatsBatch = async () => {
   }
 }
 
+const isPoolModeAccount = (row: Account): boolean => {
+  if (row.type !== 'apikey') return false
+  const creds = (row.credentials || {}) as Record<string, unknown>
+  return creds.pool_mode === true
+}
+
+const refreshPerfBatch = async () => {
+  if (hiddenColumns.has('ttfb') && hiddenColumns.has('tps')) {
+    perfLoading.value = false
+    return
+  }
+  const accountIDs = accounts.value.filter(isPoolModeAccount).map(account => account.id)
+  const reqSeq = ++perfReqSeq.value
+  if (accountIDs.length === 0) {
+    perfByAccountId.value = {}
+    perfLoading.value = false
+    return
+  }
+  perfLoading.value = true
+  try {
+    const result = await adminAPI.accounts.getBatchAccountPerf(accountIDs)
+    if (reqSeq !== perfReqSeq.value) return
+    perfByAccountId.value = result.perf ?? {}
+  } catch (error) {
+    if (reqSeq !== perfReqSeq.value) return
+    console.error('Failed to load account TTFB/TPS:', error)
+  } finally {
+    if (reqSeq === perfReqSeq.value) {
+      perfLoading.value = false
+    }
+  }
+}
+
 const autoRefreshIntervalLabel = (sec: number) => {
   if (sec === 5) return t('admin.accounts.refreshInterval5s')
   if (sec === 10) return t('admin.accounts.refreshInterval10s')
@@ -1084,6 +1148,11 @@ const toggleColumn = (key: string) => {
       console.error('Failed to load account today stats after showing column:', error)
     })
   }
+  if ((key === 'ttfb' || key === 'tps') && wasHidden) {
+    refreshPerfBatch().catch((error) => {
+      console.error('Failed to load account TTFB/TPS after showing column:', error)
+    })
+  }
   if (key === 'scheduler_score') {
     // The server only returns scheduler scores when this column is visible, so reload the current page immediately.
     syncAccountListDerivedParams()
@@ -1203,7 +1272,9 @@ const load = async (options: AccountLoadOptions = {}) => {
     isFirstLoad.value = false
     delete requestParams.lite
   }
-  if (options.refreshTodayStats !== false) await refreshTodayStatsBatch()
+  if (options.refreshTodayStats !== false) {
+    await Promise.all([refreshTodayStatsBatch(), refreshPerfBatch()])
+  }
 }
 
 const reload = async () => {
@@ -1212,7 +1283,7 @@ const reload = async () => {
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = false
   await baseReload()
-  await refreshTodayStatsBatch()
+  await Promise.all([refreshTodayStatsBatch(), refreshPerfBatch()])
 }
 
 const buildUpstreamBillingRateFilters = () => {
@@ -1374,7 +1445,7 @@ watch(loading, (isLoading, wasLoading) => {
   }
   if (wasLoading && !isLoading && pendingTodayStatsRefresh.value) {
     pendingTodayStatsRefresh.value = false
-    refreshTodayStatsBatch().catch((error) => {
+    Promise.all([refreshTodayStatsBatch(), refreshPerfBatch()]).catch((error) => {
       console.error('Failed to refresh account today stats after table load:', error)
     })
   }
@@ -1511,7 +1582,7 @@ const refreshAccountsIncrementally = async () => {
     }
     upstreamBillingNow.value = Date.now()
 
-    await refreshTodayStatsBatch()
+    await Promise.all([refreshTodayStatsBatch(), refreshPerfBatch()])
   } catch (error) {
     console.error('Auto refresh failed:', error)
   } finally {
@@ -1830,7 +1901,9 @@ const allColumns = computed(() => {
     { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false },
     { key: 'status', label: t('admin.accounts.columns.status'), sortable: true },
     { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true },
-    { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false }
+    { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false },
+    { key: 'ttfb', label: t('admin.accounts.columns.ttfb'), sortable: false },
+    { key: 'tps', label: t('admin.accounts.columns.tps'), sortable: false }
   ]
   if (!authStore.isSimpleMode) {
     c.push({ key: 'groups', label: t('admin.accounts.columns.groups'), sortable: false })

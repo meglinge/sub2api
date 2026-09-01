@@ -2503,6 +2503,35 @@ func (h *AccountHandler) GetBatchTodayStats(c *gin.Context) {
 	response.Success(c, payload)
 }
 
+// GetBatchAccountPerf 批量获取账号近窗 TTFB/TPS（渠道表同款分位）。
+// POST /api/v1/admin/accounts/perf/batch
+func (h *AccountHandler) GetBatchAccountPerf(c *gin.Context) {
+	var req BatchTodayStatsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	accountIDs := normalizeInt64IDList(req.AccountIDs)
+	if len(accountIDs) == 0 {
+		response.Success(c, gin.H{"perf": map[string]any{}})
+		return
+	}
+	if h.accountUsageService == nil {
+		response.Success(c, gin.H{"perf": map[string]any{}})
+		return
+	}
+	perf, err := h.accountUsageService.GetPerfBatch(c.Request.Context(), accountIDs)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	keyed := make(map[string]service.AccountPerfStats, len(perf))
+	for id, st := range perf {
+		keyed[strconv.FormatInt(id, 10)] = st
+	}
+	response.Success(c, gin.H{"perf": keyed})
+}
+
 // GetBatchUsage 批量获取多个账号的 current usage。
 // POST /api/v1/admin/accounts/usage/batch
 func (h *AccountHandler) GetBatchUsage(c *gin.Context) {
