@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -315,7 +316,9 @@ func (p *AIPilotService) ForceResolveAccountMoney(ctx context.Context, acc *Acco
 
 // ResolveAccountMoney attempts live rate/balance refresh when possible:
 //  1. new-api/one-api mgmt token → groups+token rate + /api/user/self balance
-//  2. account API key → /v1/sub2api/billing rate + /api/usage/token balance (no mgmt needed)
+//  2. account API key → /v1/sub2api/billing rate, else /v1/usage actual_cost/cost
+//     (older sub2api forks such as codekey have usage but no billing endpoint)
+//     + /v1/usage or /api/usage/token balance
 // otherwise uses cached extra / billing probe / defaults. Never invents multi-group rates.
 // When a live refresh succeeds, mutations are written to acc.Extra and persisted via
 // Accounts.UpdateExtra so applyDecisionActions (GetByID) sees depleted/rate state.
@@ -399,6 +402,9 @@ func (p *AIPilotService) ResolveAccountMoney(ctx context.Context, acc *Account) 
 	if base != "" && apiKey != "" && !rateCacheFresh(acc) && shouldRefreshSub2APIBilling(kind, gotRate) {
 		if r, ok := p.fetchSub2APIRate(ctx, base, apiKey); ok {
 			writeRate(r, "sub2api")
+			gotRate = true
+		} else if r, ok := p.fetchSub2APIUsageRate(ctx, base, apiKey); ok {
+			writeRate(r, "sub2api_usage")
 			gotRate = true
 		}
 	}
@@ -578,6 +584,16 @@ func (p *AIPilotService) fetchSub2APIRate(ctx context.Context, base, apiKey stri
 	return ParseSub2APIBillingRate(body)
 }
 
+// fetchSub2APIUsageRate infers the group rate from GET /v1/usage actual_cost/cost.
+// Used when the upstream is a sub2api-family relay that never added /v1/sub2api/billing.
+func (p *AIPilotService) fetchSub2APIUsageRate(ctx context.Context, base, apiKey string) (float64, bool) {
+	st, body, err := p.apiKeyDo(ctx, base, apiKey, http.MethodGet, "/v1/usage")
+	if err != nil || st != 200 {
+		return 0, false
+	}
+	return ParseSub2APIUsageRate(body)
+}
+
 // probeUpstreamBalanceSK mirrors UpstreamRouter balance.Probe (sk-only path):
 // concurrent-style sequential tries of sub2api /v1/usage then new-api token usage,
 // then one-api dashboard billing (last — many new-api forks return 1e8 hard_limit = unlimited).
@@ -670,6 +686,81 @@ func looksLikeSub2APIUsage(j map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// ParseSub2APIUsageRate infers the billed group multiplier from a /v1/usage body.
+// sub2api (and forks such as codekey) report list cost vs wallet actual_cost;
+// actual_cost/cost is the group rate they charged us (e.g. 1.39/17.38 = 0.08).
+func ParseSub2APIUsageRate(body []byte) (rate float64, ok bool) {
+	var obj map[string]any
+	if json.Unmarshal(body, &obj) != nil || !looksLikeSub2APIUsage(obj) {
+		return 0, false
+	}
+	if usage, ok := obj["usage"].(map[string]any); ok {
+		if r, ok := ratioFromCostPair(usage["today"]); ok {
+			return r, true
+		}
+		if r, ok := ratioFromCostPair(usage["total"]); ok {
+			return r, true
+		}
+		if r, ok := ratioFromCostPair(usage); ok {
+			return r, true
+		}
+	}
+	if days, ok := obj["daily_usage"].([]any); ok {
+		for i := len(days) - 1; i >= 0; i-- {
+			if r, ok := ratioFromCostPair(days[i]); ok {
+				return r, true
+			}
+		}
+		if r, ok := ratioFromCostPairs(days); ok {
+			return r, true
+		}
+	}
+	if models, ok := obj["model_stats"].([]any); ok {
+		if r, ok := ratioFromCostPairs(models); ok {
+			return r, true
+		}
+	}
+	return ratioFromCostPair(obj)
+}
+
+func ratioFromCostPair(v any) (float64, bool) {
+	m, ok := v.(map[string]any)
+	if !ok || m == nil {
+		return 0, false
+	}
+	return snapUsageRate(anyToFloat64(m["actual_cost"]), anyToFloat64(m["cost"]))
+}
+
+func ratioFromCostPairs(items []any) (float64, bool) {
+	var cost, actual float64
+	for _, it := range items {
+		m, ok := it.(map[string]any)
+		if !ok || m == nil {
+			continue
+		}
+		c := anyToFloat64(m["cost"])
+		a := anyToFloat64(m["actual_cost"])
+		if c > 0 && a > 0 {
+			cost += c
+			actual += a
+		}
+	}
+	return snapUsageRate(actual, cost)
+}
+
+func snapUsageRate(actual, cost float64) (float64, bool) {
+	if cost <= 0 || actual <= 0 {
+		return 0, false
+	}
+	r := actual / cost
+	if r <= 0 || r > 10 || math.IsNaN(r) || math.IsInf(r, 0) {
+		return 0, false
+	}
+	// Aggregated actual_cost often jitters at 1e-5 (codekey 1.390113/17.378777 → 0.079989).
+	// Group rates are quoted to ≤4 decimals (0.05 / 0.065 / 0.08).
+	return math.Round(r*1e4) / 1e4, true
 }
 
 func balanceStatusFromUSD(usd float64) string {

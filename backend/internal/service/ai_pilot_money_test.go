@@ -32,6 +32,10 @@ func TestBuildRateConfidence_Levels(t *testing.T) {
 	if high.Level != 1 || high.Label != "high" || high.TrustedComposite != 0.5 {
 		t.Fatalf("imported high: %+v", high)
 	}
+	usageHigh := BuildRateConfidence(0.08, 1, "sub2api_usage")
+	if usageHigh.Level != 1 || usageHigh.Label != "high" || usageHigh.TrustedComposite != 0.08 {
+		t.Fatalf("usage-inferred rate must stay high confidence: %+v", usageHigh)
+	}
 	med := BuildRateConfidence(0.8, 1, "custom")
 	if med.Level != 2 {
 		t.Fatalf("custom non-1: %+v", med)

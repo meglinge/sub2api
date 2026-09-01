@@ -427,6 +427,98 @@ func TestParseSub2APIUsageBalance_PoolShape(t *testing.T) {
 	}
 }
 
+func TestParseSub2APIUsageRate_CodekeyShape(t *testing.T) {
+	t.Parallel()
+	// Live codekey /v1/usage: list cost vs wallet actual_cost → 0.08.
+	body := []byte(`{
+		"balance":198.60988694,
+		"daily_usage":[{"date":"2026-09-01","cost":17.3787773,"actual_cost":1.390113064}],
+		"isValid":true,
+		"mode":"unrestricted",
+		"model_stats":[
+			{"model":"gpt-5.6-sol","cost":16.4165955,"actual_cost":1.31313852},
+			{"model":"gpt-5.4","cost":0.000465,"actual_cost":0.0000372}
+		],
+		"planName":"钱包余额",
+		"remaining":198.60988694,
+		"unit":"USD",
+		"usage":{"today":{"actual_cost":1.390113064,"cost":17.3787773}}
+	}`)
+	r, ok := ParseSub2APIUsageRate(body)
+	if !ok || r != 0.08 {
+		t.Fatalf("rate=%v ok=%v want 0.08", r, ok)
+	}
+
+	// daily_usage only (no usage.today)
+	r, ok = ParseSub2APIUsageRate([]byte(`{"balance":10,"daily_usage":[{"date":"2026-09-01","cost":1,"actual_cost":0.05}]}`))
+	if !ok || r != 0.05 {
+		t.Fatalf("daily_usage rate=%v ok=%v want 0.05", r, ok)
+	}
+
+	// cost without actual_cost cannot invent a rate
+	if _, ok = ParseSub2APIUsageRate([]byte(`{"balance":24.74,"daily_usage":[{"date":"2026-08-05","cost":1}]}`)); ok {
+		t.Fatal("must not infer rate without actual_cost")
+	}
+	if _, ok = ParseSub2APIUsageRate([]byte(`{"hello":"world"}`)); ok {
+		t.Fatal("must reject unknown shape")
+	}
+}
+
+func TestResolveAccountMoney_UsageRateFallbackWhenBillingMissing(t *testing.T) {
+	t.Parallel()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/sub2api/billing", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "404 page not found", http.StatusNotFound)
+	})
+	mux.HandleFunc("/v1/usage", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer sk-") {
+			w.WriteHeader(401)
+			return
+		}
+		_, _ = io.WriteString(w, `{"balance":198.61,"isValid":true,"mode":"unrestricted","usage":{"today":{"cost":17.3787773,"actual_cost":1.390113064}}}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	acc := &Account{
+		Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-codekey-test", "base_url": srv.URL},
+		Extra:       map[string]any{},
+	}
+	p := &AIPilotService{HTTP: srv.Client()}
+	rate, src, balSt, balUSD := p.ResolveAccountMoney(context.Background(), acc)
+	if rate != 0.08 || src != "sub2api_usage" {
+		t.Fatalf("rate=%v src=%s want 0.08/sub2api_usage", rate, src)
+	}
+	if balSt != "ok" || balUSD < 198 || balUSD > 199 {
+		t.Fatalf("bal st=%s usd=%v want ~198.61", balSt, balUSD)
+	}
+	if extraFloat(acc.Extra, ExtraAIRateMultiplier) != 0.08 {
+		t.Fatalf("extra rate not persisted: %+v", acc.Extra)
+	}
+
+	// Declared /v1/sub2api/billing still wins over usage inference.
+	mux2 := http.NewServeMux()
+	mux2.HandleFunc("/v1/sub2api/billing", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"object":"sub2api.key_billing","schema_version":1,"billing_scope":"token","resolved_rate_multiplier":0.05,"group_rate_multiplier":0.05,"effective_rate_multiplier":0.05}`)
+	})
+	mux2.HandleFunc("/v1/usage", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"balance":10,"usage":{"today":{"cost":10,"actual_cost":0.8}}}`)
+	})
+	srv2 := httptest.NewServer(mux2)
+	defer srv2.Close()
+	acc2 := &Account{
+		Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-has-billing", "base_url": srv2.URL},
+		Extra:       map[string]any{},
+	}
+	p2 := &AIPilotService{HTTP: srv2.Client()}
+	rate2, src2, _, _ := p2.ResolveAccountMoney(context.Background(), acc2)
+	if rate2 != 0.05 || src2 != "sub2api" {
+		t.Fatalf("billing must win, rate=%v src=%s", rate2, src2)
+	}
+}
+
 func TestFetchOneAPIDashboardBalance(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()

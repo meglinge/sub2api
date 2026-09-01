@@ -112,7 +112,7 @@ func BuildRateConfidence(rate, recharge float64, source string) RateConfidence {
 		Note:             "设定倍率为默认1且无上游导入,价格信号弱",
 	}
 	switch src {
-	case "imported", "upstream", "billing_probe", "newapi", "oneapi", "sub2api":
+	case "imported", "upstream", "billing_probe", "newapi", "oneapi", "sub2api", "sub2api_usage":
 		rc.Level = 1
 		rc.Label = "high"
 		rc.Primary = "configured_imported"
