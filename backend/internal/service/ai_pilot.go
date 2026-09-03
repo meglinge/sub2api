@@ -1100,6 +1100,7 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 				"requests": st.Requests, "errors": st.Errors,
 				"successRate":   successRate,
 				"avgDurationMs": st.AvgDuration, "avgTtfbMs": st.AvgFirstToken,
+				"p50TtfbMs": st.P50FirstToken, "avgTps": st.AvgGenerationTPS,
 				"cacheEligibleRequests": st.CacheEligibleRequests,
 				"cacheEligibleTokens":   st.CacheEligibleTokens,
 				"cacheReadTokens":       st.CacheReadTokens,
@@ -1110,6 +1111,7 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 				"requests":      rst.Requests, "errors": rst.Errors,
 				"successRate":   recentRate,
 				"avgDurationMs": rst.AvgDuration, "avgTtfbMs": rst.AvgFirstToken,
+				"p50TtfbMs": rst.P50FirstToken, "avgTps": rst.AvgGenerationTPS,
 				"cacheEligibleRequests": rst.CacheEligibleRequests,
 				"cacheEligibleTokens":   rst.CacheEligibleTokens,
 				"cacheReadTokens":       rst.CacheReadTokens,
@@ -1238,7 +1240,10 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 					"latencyPct":    cfg.ScoreWeightLatency,
 					"throughputPct": cfg.ScoreWeightThroughput,
 					"costPct":       cfg.ScoreWeightCost,
-					"note":          "设置改完下一轮生效:后端按四维重算 overall 并直接写 schedule_weight=round(overall),不受 ±20 限制",
+					"note":          "设置改完下一轮生效:后端按成功率/TTFB p50/生成TPS/单价重算 overall 并写 schedule_weight=round(overall),不受 ±20 限制",
+					"stability":     "成功率=usage_logs/(usage_logs+硬错误);429/499 不计.无样本不打40分,该项不进 overall",
+					"latency":       "绝对分:首token p50.≤800ms=100,2s=85,5s=60,15s=15.不是号池相对排名",
+					"throughput":    "绝对分:生成 TPS(output/(duration-ttfb)).不是请求量,也不是总耗时",
 				},
 				"weightOp": "schedule_weight 由 overall 对齐;模型不要 ±20 微调。性价比≥20% 才硬隔离极贵号。prompt cache 差的中转由后端按命中率自动分档 priority(100/110/150),不要点名供应商",
 				"costBackend": map[string]any{
@@ -1586,10 +1591,12 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 【打分与分流 —— 必须遵守】
 - 四维权重以 **policy.scoreGuide.weights** 为准(管理员设置,改完下一轮生效;默认 稳40/延迟30/吞吐20/性价比10)
 - **后端每轮用流量+单价重算四维和 overall,并直接写 schedule_weight=round(overall)**。模型不要 set_weight ±20,那会被丢掉
+- 稳=成功率(绝对分);延迟=TTFB p50 绝对分;流畅=生成 TPS 绝对分。都不是号池内相对排名,流畅不含请求量
+- 无样本的维显示 —、不进 overall;空闲号 overall=0,不要靠性价比把没流量的号抬成主力
 - cost 维由后端按 composite 池内比价写死;禁止把无倍率号编造成 peer 的 0.06
 - 无导入倍率(rateConfidence.level=3/default_one)不是便宜号
 - **只有 policy.scoreGuide.costBackend.pressureOn=true(性价比≥20%)** 才允许因单价 p200+weight=0。pressureOn=false 时 0.08 vs 0.045 只扣 overall,禁止「虽贵但…」式隔离/停用
-- 稳/延迟/吞吐:看 traffic + recentTraffic(近况优先)。延迟好的号即使稍贵也应拿更高 weight
+- 稳/延迟/吞吐:看 traffic + recentTraffic(近况优先,字段 p50TtfbMs / avgTps)。延迟好的号即使稍贵也应拿更高 weight
 
 【余额参与调度 —— 原版对齐】
 - money.balanceStatus / money.balanceUsd 已写入快照(与 UpstreamRouter 一样给模型用,不是内核硬切流量)

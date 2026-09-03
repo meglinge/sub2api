@@ -113,7 +113,7 @@ export default {
     trendsHint: 'Weight/priority step lines (incl. now) and per-run action outcomes.',
     noTrendData: 'Not enough runs to chart yet. Run an analysis first.',
     scoresTitle: 'Account scores',
-    scoresHint: 'Per-run model scores (0–100). Click a row for history.',
+    scoresHint: 'Backend absolute scores: stability = success rate, latency = first-token p50, smoothness = generation tokens/s. Not a within-pool rank, and not the model guessing. Missing samples show —. Click a row for history and raw metrics.',
     noScores: 'No scores yet; they appear after a successful analysis.',
     noScoreHistory: 'No score history for this account yet.',
     approveAll: 'Approve all',

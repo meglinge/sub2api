@@ -350,6 +350,11 @@
                     <td class="px-2 py-2">
                       <div class="font-medium">{{ row.name }}</div>
                       <div class="text-xs text-gray-500">#{{ row.account_id }}</div>
+                      <div
+                        v-if="row.scored && row.score.note"
+                        class="mt-0.5 max-w-xs truncate text-xs text-gray-400"
+                        :title="row.score.note"
+                      >{{ row.score.note }}</div>
                     </td>
                     <td class="px-2 py-2">
                       <div class="flex flex-wrap gap-1">
@@ -362,11 +367,11 @@
                     </td>
                     <td class="px-2 py-2 tabular-nums">{{ row.priority }}</td>
                     <td class="px-2 py-2 tabular-nums">{{ row.weight }}</td>
-                    <td class="px-2 py-2"><ScoreBar :value="row.scored ? row.score.overall : 0" /></td>
-                    <td class="px-2 py-2"><ScoreBar :value="row.scored ? row.score.stability : 0" /></td>
-                    <td class="px-2 py-2"><ScoreBar :value="row.scored ? row.score.latency : 0" /></td>
-                    <td class="px-2 py-2"><ScoreBar :value="row.scored ? row.score.throughput : 0" /></td>
-                    <td class="px-2 py-2"><ScoreBar :value="row.scored ? row.score.cost : 0" /></td>
+                    <td class="px-2 py-2"><ScoreBar :value="row.scored ? row.score.overall : 0" :missing="!row.scored" /></td>
+                    <td class="px-2 py-2"><ScoreBar :value="row.scored ? row.score.stability : 0" :missing="scoreDimMissing(row, '稳—')" /></td>
+                    <td class="px-2 py-2"><ScoreBar :value="row.scored ? row.score.latency : 0" :missing="scoreDimMissing(row, '延迟—')" /></td>
+                    <td class="px-2 py-2"><ScoreBar :value="row.scored ? row.score.throughput : 0" :missing="scoreDimMissing(row, '流畅—')" /></td>
+                    <td class="px-2 py-2"><ScoreBar :value="row.scored ? row.score.cost : 0" :missing="!row.scored" /></td>
                   </tr>
                   <tr v-if="openScoreId === row.account_id">
                     <td colspan="9" class="bg-gray-50 px-3 py-3 dark:bg-dark-800">
@@ -574,10 +579,16 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarEleme
 
 const ScoreBar = defineComponent({
   name: 'ScoreBar',
-  props: { value: { type: Number, default: 0 } },
+  props: {
+    value: { type: Number, default: 0 },
+    missing: { type: Boolean, default: false },
+  },
   setup(props) {
-    return () =>
-      h('div', { class: 'flex items-center gap-2' }, [
+    return () => {
+      if (props.missing) {
+        return h('span', { class: 'text-xs tabular-nums text-gray-400' }, '—')
+      }
+      return h('div', { class: 'flex items-center gap-2' }, [
         h('div', { class: 'h-1.5 w-14 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600' }, [
           h('div', {
             class: 'h-full rounded-full',
@@ -589,6 +600,7 @@ const ScoreBar = defineComponent({
         ]),
         h('span', { class: 'w-7 text-right text-xs tabular-nums text-gray-500' }, String(Math.round(props.value || 0))),
       ])
+    }
   },
 })
 
@@ -597,6 +609,11 @@ function scoreColor(v: number) {
   if (v >= 60) return 'hsl(80 60% 45%)'
   if (v >= 40) return 'hsl(38 92% 50%)'
   return 'hsl(0 84% 60%)'
+}
+
+function scoreDimMissing(row: { scored?: boolean; score?: { note?: string } }, token: string) {
+  if (!row.scored) return true
+  return typeof row.score?.note === 'string' && row.score.note.includes(token)
 }
 
 const { t } = useI18n()
@@ -919,6 +936,8 @@ async function toggleScore(id: number) {
           { label: t('admin.autopilot.colOverall'), data: items.map((i) => i.overall), borderColor: COLORS[0], tension: 0.2, pointRadius: 1 },
           { label: t('admin.autopilot.colStability'), data: items.map((i) => i.stability), borderColor: COLORS[1], tension: 0.2, pointRadius: 1 },
           { label: t('admin.autopilot.colLatency'), data: items.map((i) => i.latency), borderColor: COLORS[2], tension: 0.2, pointRadius: 1 },
+          { label: t('admin.autopilot.colThroughput'), data: items.map((i) => i.throughput), borderColor: COLORS[3], tension: 0.2, pointRadius: 1 },
+          { label: t('admin.autopilot.colCost'), data: items.map((i) => i.cost), borderColor: COLORS[4], tension: 0.2, pointRadius: 1 },
         ],
       }
     } else {

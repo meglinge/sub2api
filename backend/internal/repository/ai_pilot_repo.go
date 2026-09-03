@@ -309,6 +309,17 @@ func (r *AIPilotRepository) AggregateAccountTraffic(ctx context.Context, from, t
 			COUNT(*)::int AS requests,
 			COALESCE(AVG(duration_ms) FILTER (WHERE duration_ms IS NOT NULL AND duration_ms > 0), 0)::float8 AS avg_duration,
 			COALESCE(AVG(first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL AND first_token_ms > 0), 0)::float8 AS avg_ttfb,
+			COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY first_token_ms)
+				FILTER (WHERE first_token_ms IS NOT NULL AND first_token_ms > 0), 0)::float8 AS p50_ttfb,
+			COALESCE(AVG(
+				CASE
+					WHEN COALESCE(output_tokens,0) > 0 AND duration_ms IS NOT NULL AND duration_ms > COALESCE(first_token_ms,0)
+						THEN output_tokens::float8 / ((duration_ms - COALESCE(first_token_ms,0))::float8 / 1000.0)
+					WHEN COALESCE(output_tokens,0) > 0 AND duration_ms IS NOT NULL AND duration_ms > 0
+						THEN output_tokens::float8 / (duration_ms::float8 / 1000.0)
+					ELSE NULL
+				END
+			), 0)::float8 AS avg_tps,
 			COALESCE(SUM((GREATEST(COALESCE(input_tokens,0),0) + GREATEST(COALESCE(cache_read_tokens,0),0)))
 				FILTER (WHERE GREATEST(COALESCE(input_tokens,0),0) + GREATEST(COALESCE(cache_read_tokens,0),0) >= 8192), 0)::bigint AS cache_eligible_tokens,
 			COALESCE(SUM(GREATEST(COALESCE(cache_read_tokens,0),0))
@@ -335,7 +346,7 @@ func (r *AIPilotRepository) AggregateAccountTraffic(ctx context.Context, from, t
 	for rows.Next() {
 		var s service.AccountTrafficStats
 		if err := rows.Scan(
-			&s.AccountID, &s.Requests, &s.AvgDuration, &s.AvgFirstToken,
+			&s.AccountID, &s.Requests, &s.AvgDuration, &s.AvgFirstToken, &s.P50FirstToken, &s.AvgGenerationTPS,
 			&s.CacheEligibleTokens, &s.CacheReadTokens, &s.CacheEligibleRequests, &s.CacheBigMissRequests,
 		); err != nil {
 			return nil, err
@@ -522,7 +533,9 @@ func (r *AIPilotRepository) AppendAccountScores(ctx context.Context, runID int64
 		if it.AccountID <= 0 {
 			continue
 		}
-		it = service.NormalizeAccountScore(it)
+		// Do not recompute overall here: deterministic scoring already owns
+		// overall (unknown dims skipped, cache multiplier applied).
+		it = service.ClampPersistedAccountScore(it)
 		ts := it.TS
 		if ts.IsZero() {
 			ts = now

@@ -109,7 +109,7 @@ export default {
     trendsHint: '权重/优先级阶梯线（含 now），以及每轮动作状态堆叠。',
     noTrendData: '还没有足够的分析记录画趋势，请先跑一轮分析。',
     scoresTitle: '账号评分',
-    scoresHint: '模型每轮打分（0–100）。点击行展开历史曲线。',
+    scoresHint: '后端按真实指标打绝对分：稳定性=成功率，延迟=首 token p50，流畅度=生成速度（tokens/s）。不是号池相对排名，也不是模型估的。无样本显示 —。点击行看历史和原始指标。',
     noScores: '暂无评分，分析成功后会写入。',
     noScoreHistory: '这个账号还没有足够的打分历史。',
     approveAll: '本轮全批',

@@ -157,3 +157,163 @@ func TestActivationGateReason(t *testing.T) {
 		t.Fatalf("probe off should allow: %s", reason)
 	}
 }
+
+func TestLatencyScoreFromTTFB_AbsoluteNotRank(t *testing.T) {
+	t.Parallel()
+	fast, ok := latencyScoreFromTTFB(500)
+	if !ok || fast != 100 {
+		t.Fatalf("500ms=%v ok=%v want 100", fast, ok)
+	}
+	ok2k, ok := latencyScoreFromTTFB(2000)
+	if !ok {
+		t.Fatal("2000ms should be known")
+	}
+	// Old log-rank mapped 500 vs 2000 (4x) to 100 vs 5. Absolute: 2s is still "good".
+	if ok2k < 80 || ok2k > 90 {
+		t.Fatalf("2000ms=%v want ~85", ok2k)
+	}
+	slow, ok := latencyScoreFromTTFB(15000)
+	if !ok || slow < 10 || slow > 20 {
+		t.Fatalf("15s=%v want ~15", slow)
+	}
+	if _, ok := latencyScoreFromTTFB(0); ok {
+		t.Fatal("0ms should be unknown")
+	}
+}
+
+func TestThroughputScoreFromTPS_IgnoresVolume(t *testing.T) {
+	t.Parallel()
+	mid, ok := throughputScoreFromTPS(20)
+	if !ok || mid < 55 || mid > 65 {
+		t.Fatalf("20 tok/s=%v want ~60", mid)
+	}
+	fast, ok := throughputScoreFromTPS(80)
+	if !ok || fast != 100 {
+		t.Fatalf("80 tok/s=%v want 100", fast)
+	}
+	if _, ok := throughputScoreFromTPS(0); ok {
+		t.Fatal("0 tps should be unknown")
+	}
+}
+
+func TestApplyDeterministicScores_AbsoluteAndNoVolumeLoop(t *testing.T) {
+	t.Parallel()
+	pool := []Account{
+		{ID: 1, Name: "busy-slow"},
+		{ID: 2, Name: "quiet-fast"},
+		{ID: 3, Name: "idle"},
+	}
+	long := map[int64]AccountTrafficStats{
+		1: {
+			AccountID: 1, Requests: 1000, Successes: 980, Errors: 20,
+			AvgFirstToken: 8000, P50FirstToken: 7500, AvgDuration: 40000, AvgGenerationTPS: 8,
+		},
+		2: {
+			AccountID: 2, Requests: 12, Successes: 12, Errors: 0,
+			AvgFirstToken: 900, P50FirstToken: 800, AvgDuration: 3000, AvgGenerationTPS: 45,
+		},
+	}
+	scores := applyDeterministicScores(nil, pool, long, nil, DefaultScoreWeights())
+	byID := map[int64]AIAccountScore{}
+	for _, s := range scores {
+		byID[s.AccountID] = s
+	}
+	busy, quiet, idle := byID[1], byID[2], byID[3]
+	if quiet.Latency <= busy.Latency {
+		t.Fatalf("quiet TTFB 800ms latency=%v should beat busy 7.5s %v", quiet.Latency, busy.Latency)
+	}
+	if quiet.Throughput <= busy.Throughput {
+		t.Fatalf("quiet 45t/s throughput=%v should beat busy 8t/s %v (volume must not win)", quiet.Throughput, busy.Throughput)
+	}
+	if busy.Throughput > 50 {
+		t.Fatalf("busy 8t/s throughput=%v should be modest, not inflated by 1000 requests", busy.Throughput)
+	}
+	if idle.Overall != 0 {
+		t.Fatalf("idle overall=%v want 0 so cost-only cannot promote it", idle.Overall)
+	}
+	if !strings.Contains(idle.Note, "稳—") || !strings.Contains(idle.Note, "延迟—") || !strings.Contains(idle.Note, "流畅—") {
+		t.Fatalf("idle note should mark missing dims: %q", idle.Note)
+	}
+	if busy.Stability < 90 {
+		t.Fatalf("busy stability=%v want ~98", busy.Stability)
+	}
+	if quiet.Overall <= busy.Overall {
+		t.Fatalf("quiet overall=%v should beat busy %v", quiet.Overall, busy.Overall)
+	}
+}
+
+func TestApplyDeterministicScores_UnknownDimsSkippedInOverall(t *testing.T) {
+	t.Parallel()
+	pool := []Account{{ID: 1, Name: "errors-only"}}
+	long := map[int64]AccountTrafficStats{
+		1: {AccountID: 1, Requests: 0, Successes: 0, Errors: 10},
+	}
+	scores := applyDeterministicScores(nil, pool, long, nil, DefaultScoreWeights())
+	if len(scores) != 1 {
+		t.Fatalf("scores=%d", len(scores))
+	}
+	s := scores[0]
+	if s.Stability != 0 || !strings.Contains(s.Note, "稳0") {
+		t.Fatalf("all-error stability=%v note=%q", s.Stability, s.Note)
+	}
+	if !strings.Contains(s.Note, "延迟—") || !strings.Contains(s.Note, "流畅—") {
+		t.Fatalf("missing ttfb/tps should be dashed: %q", s.Note)
+	}
+	// Stability 0 + cost, latency/throughput omitted. Must stay low, not get unknown=40 drag to ~24.
+	if s.Overall > 15 {
+		t.Fatalf("overall=%v should stay near 0 after skipping unknown dims", s.Overall)
+	}
+}
+
+func TestApplyDeterministicScores_PrefersP50TTFB(t *testing.T) {
+	t.Parallel()
+	pool := []Account{{ID: 1, Name: "skewed"}}
+	long := map[int64]AccountTrafficStats{
+		1: {
+			AccountID: 1, Requests: 20, Successes: 20, Errors: 0,
+			AvgFirstToken: 12000, P50FirstToken: 1500, AvgGenerationTPS: 30,
+		},
+	}
+	scores := applyDeterministicScores(nil, pool, long, nil, DefaultScoreWeights())
+	lat := scores[0].Latency
+	want, _ := latencyScoreFromTTFB(1500)
+	if lat != want {
+		t.Fatalf("latency=%v want p50-based %v (not mean 12s)", lat, want)
+	}
+}
+
+func TestClampPersistedAccountScore_KeepsOverall(t *testing.T) {
+	t.Parallel()
+	s := ClampPersistedAccountScore(AIAccountScore{
+		Stability: 90, Latency: 80, Throughput: 70, Cost: 40,
+		Overall: 51.2, Confidence: 0.9, Note: "keep",
+	})
+	if s.Overall != 51.2 {
+		t.Fatalf("overall clobbered: %v", s.Overall)
+	}
+	if s.Confidence < 80 {
+		t.Fatalf("confidence should scale 0.9→90, got %v", s.Confidence)
+	}
+}
+
+func TestInjectScoreDrivenWeights_SkipsIdleOverall(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultAIAutopilotSettings()
+	accounts := []Account{
+		{ID: 1, Name: "idle", Status: StatusActive, Schedulable: true, AIManaged: true, ScheduleWeight: 50},
+		{ID: 2, Name: "live", Status: StatusActive, Schedulable: true, AIManaged: true, ScheduleWeight: 50},
+	}
+	d := decision{
+		Scores: []AIAccountScore{
+			{AccountID: 1, Overall: 0, Note: "后端绝对分 稳— 延迟— 流畅— 性价比90"},
+			{AccountID: 2, Overall: 82, Stability: 98, Latency: 85, Throughput: 70, Cost: 60, Note: "后端绝对分 稳98(20/20)"},
+		},
+	}
+	n := injectScoreDrivenWeights(&d, accounts, cfg, nil)
+	if n != 1 {
+		t.Fatalf("injected=%d want 1 (idle skipped) actions=%v", n, d.Actions)
+	}
+	if d.Actions[0].AccountID != 2 {
+		t.Fatalf("expected live account, got %+v", d.Actions)
+	}
+}

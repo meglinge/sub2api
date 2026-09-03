@@ -52,7 +52,12 @@ type AccountTrafficStats struct {
 	Errors        int
 	AvgDuration   float64
 	AvgFirstToken float64
-	Samples       []string
+	// P50FirstToken is more robust than the mean for latency scoring.
+	P50FirstToken float64
+	// AvgGenerationTPS is output tokens / generation-segment seconds
+	// (duration - ttfb when possible). Used for 流畅度; not request volume.
+	AvgGenerationTPS float64
+	Samples          []string
 	// Prompt-cache aggregates (OpenAI usage_logs). Eligible rows have
 	// input+cache_read >= 8192 so tiny warmup/probes do not dominate.
 	CacheEligibleTokens   int64
