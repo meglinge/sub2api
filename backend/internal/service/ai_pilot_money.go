@@ -494,6 +494,9 @@ func softUnburyCheapSpareRescue(acc *Account, accounts []Account, long, recent A
 	if recentWindowHardFail(recent) {
 		return false
 	}
+	if spareRescueDeadWindow(long, recent) {
+		return false
+	}
 	if pr, ok := probes[acc.ID]; ok && pr.Fresh && pr.Verdict == "fail" {
 		return false
 	}
@@ -502,6 +505,17 @@ func softUnburyCheapSpareRescue(acc *Account, accounts []Account, long, recent A
 		return false // real long-window failure still blocks
 	}
 	return true
+}
+
+// spareRescueDeadWindow is a 502-starved spare: zero successes and several
+// errors. Empty 0/0 windows (Sy-class) must still be rescuable; lyy/梦幻
+// 0/8 must not be lifted to p100 just because they are cheap.
+func spareRescueDeadWindow(long, recent AccountTrafficStats) bool {
+	dead := func(st AccountTrafficStats) bool {
+		succ, n := trafficSuccessCount(st)
+		return succ == 0 && st.Errors >= 3 && n >= 3
+	}
+	return dead(recent) || dead(long)
 }
 
 // costPressureActive is true when admin put enough weight on 性价比 that hard cost
@@ -1551,6 +1565,9 @@ func softUnburyAffordableSpareRescue(acc *Account, accounts []Account, long, rec
 		return false
 	}
 	if recentWindowHardFail(recent) {
+		return false
+	}
+	if spareRescueDeadWindow(long, recent) {
 		return false
 	}
 	if pr, ok := probes[acc.ID]; ok && pr.Fresh && pr.Verdict == "fail" {

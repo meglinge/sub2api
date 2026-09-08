@@ -323,6 +323,18 @@ func TestSoftUnburyCheapSpareRescue_EmptyLongWindow(t *testing.T) {
 	if softUnburyCheapSpareRescue(&pro, accounts, empty[2], empty[2], nil) {
 		t.Fatal("expensive Pro must not use cheap rescue")
 	}
+	dead := AccountTrafficStats{Requests: 0, Successes: 0, Errors: 8}
+	if spareRescueDeadWindow(dead, AccountTrafficStats{}) {
+		// ok
+	} else {
+		t.Fatal("0/8 long window should be a dead spare")
+	}
+	if softUnburyCheapSpareRescue(&sy, accounts, dead, AccountTrafficStats{}, nil) {
+		t.Fatal("cheap rescue must not lift 0-success 502-starved Sy to p100")
+	}
+	if softUnburyAffordableSpareRescue(&sy, accounts, dead, AccountTrafficStats{}, nil) {
+		t.Fatal("affordable rescue must not lift 0-success 502-starved account")
+	}
 
 	cfg := DefaultAIAutopilotSettings()
 	// high 性价比 so cost pressure is on (still unburies cheap, blocks expensive)
