@@ -173,7 +173,8 @@ func TestOpenAIGatewayService_ForwardAsAnthropic_CapacityShedReturnsRequestScope
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
 	require.True(t, failoverErr.ShouldRetryNextAccount())
-	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.False(t, failoverErr.RetryableOnSameAccount,
+		"API-key/newapi overload must switch accounts instead of retrying the same reseller")
 	require.True(t, failoverErr.RequestScopedTransient)
 	require.Zero(t, repo.modelRateLimitAccountID, "request-scoped capacity shedding must not change account health")
 	require.Empty(t, repo.modelRateLimitKey)
@@ -1856,9 +1857,8 @@ func TestOpenAIStreamingResponseFailedBeforeOutputServerOverloadedCodeReturnsFai
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusServiceUnavailable, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), "Please retry later")
-	// 容量降载是请求级信号：非池模式账号也要先在同账号重试，且不得据此临时封禁账号。
-	// 否则单个被降载的请求会把整池账号逐个消耗掉，而降载因素在每个账号上都相同。
-	require.True(t, failoverErr.RetryableOnSameAccount)
+	// API-key / 未标明 OAuth 的账号是独立中转，过载必须立刻切号；官方 OAuth 仍同账号重试。
+	require.False(t, failoverErr.RetryableOnSameAccount)
 	require.True(t, failoverErr.RequestScopedTransient)
 	require.False(t, c.Writer.Written())
 	require.Empty(t, rec.Body.String())

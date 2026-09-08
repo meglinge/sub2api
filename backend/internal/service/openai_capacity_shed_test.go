@@ -77,6 +77,26 @@ func TestStreamFailedEventCapacityShedRetriesOnSameAccount(t *testing.T) {
 	require.False(t, openAIStreamFailedEventRetryableOnSameAccount(nonPool, other, "boom"))
 }
 
+func TestStreamFailedEventCapacityShedAPIKeySwitchesImmediately(t *testing.T) {
+	payload := []byte(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_error","message":"Our servers are currently overloaded. Please try again later."}}`)
+	message := "Our servers are currently overloaded. Please try again later."
+	require.True(t, isOpenAIUpstreamCapacityShedEvent(payload))
+	require.True(t, openAIStreamErrorEventShouldFailover(payload, message))
+
+	apiKey := &Account{ID: 6509, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	require.False(t, openAIStreamFailedEventRetryableOnSameAccount(apiKey, payload, message),
+		"API-key/newapi overload must switch accounts instead of retrying the same reseller")
+
+	oauth := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	require.True(t, openAIStreamFailedEventRetryableOnSameAccount(oauth, payload, message))
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	failoverErr := svc.newOpenAIStreamFailoverErrorWithModel(nil, apiKey, false, "rid-api-key-shed", payload, message, "gpt-6-astra")
+	require.True(t, failoverErr.IsOpenAICapacityShed())
+	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.True(t, ShouldClearStickyOnOpenAIFailover(failoverErr))
+}
+
 func TestOpenAIHTTPCapacityShedIsRequestScopedForOAuthAccounts(t *testing.T) {
 	payload := []byte(`{"error":{"type":"server_error","message":"Our servers are currently overloaded. Please try again later."}}`)
 	failoverErr := newOpenAIUpstreamFailoverError(
@@ -296,6 +316,8 @@ func TestOpenAIStreamCapacityShedAfterOutputRewritesCodeForClient(t *testing.T) 
 	require.True(t, logSink.ContainsMessage("gateway.failover_suppressed_after_semantic_output"))
 	require.True(t, logSink.ContainsFieldValue("path", "native_sse"))
 	require.True(t, logSink.ContainsFieldValue("upstream_request_id", "rid-shed-after-output"))
+	require.True(t, OpenAICapacityShedAfterOutput(c),
+		"post-output overload must flag the request so the handler can drop sticky")
 }
 
 // helper 单测：只有降载码被改写，其余错误码（尤其 rate_limit_exceeded，客户端

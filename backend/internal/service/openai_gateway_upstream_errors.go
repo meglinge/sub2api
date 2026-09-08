@@ -358,6 +358,9 @@ func (s *OpenAIGatewayService) newOpenAIAccountFailoverErrorWithClassificationHe
 		failoverErr.SameAccountRetryDeadline = s.openAIOAuth429RetryDeadline(account)
 		failoverErr.SameAccountRetryDelay = openAIOAuth429SameAccountRetryDelay(responseHeaders, failoverErr.SameAccountRetryDeadline)
 	}
+	if account != nil && !account.IsOpenAIOAuthLike() && failoverErr.RequestScopedTransient {
+		failoverErr.RetryableOnSameAccount = false
+	}
 	return failoverErr
 }
 

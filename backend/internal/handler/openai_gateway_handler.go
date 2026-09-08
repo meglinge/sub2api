@@ -873,8 +873,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 							continue
 						}
 					}
-					// 仅 first-output hang 解绑 sticky；429/502 等瞬时失败保持原绑定，
-					// 本次请求可以换号，下次仍回原供应商以保住 prompt cache。
+					// first-output hang 与容量过载解绑 sticky；429/502 仍保持原绑定以保住 prompt cache。
 					h.gatewayService.HandleOpenAIFailoverStickyFailure(c.Request.Context(), apiKey.GroupID, sessionHash, account, failoverErr)
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
@@ -908,6 +907,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					continue
 				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, result), false, nil, err)
+				h.gatewayService.ClearStickyIfCapacityShedAfterOutput(c.Request.Context(), c, apiKey.GroupID, sessionHash)
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
@@ -1466,6 +1466,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					return
 				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, result), false, nil, err)
+				h.gatewayService.ClearStickyIfCapacityShedAfterOutput(c.Request.Context(), c, apiKey.GroupID, sessionHash)
 				wroteFallback := h.ensureAnthropicErrorResponse(c, streamStarted)
 				reqLog.Warn("openai_messages.forward_failed",
 					zap.Int64("account_id", account.ID),

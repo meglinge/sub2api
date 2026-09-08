@@ -6,30 +6,61 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+const openAICapacityShedAfterOutputKey = "openai_capacity_shed_after_output"
 
 // ShouldClearStickyOnOpenAIFailover reports whether a failover error should
 // drop the session→account sticky binding.
 //
-// Only first-output hangs (SafeToFailoverAfterWrite) abandon the binding.
-// Those mean the current account stopped producing tokens after the client
-// already received bytes; the next request should not pile back onto it.
+// First-output hangs (SafeToFailoverAfterWrite) abandon the binding: the
+// current account stopped producing tokens after the client already received
+// bytes, so the next request must not pile back onto it.
 //
-// Transient 429/502/503/524 must NOT clear sticky. Those errors are common on
-// pool-mode reseller keys. Clearing then rebinding to the failover account is
-// what splits one Codex session across many suppliers and drops prompt cache
-// to the shared ~3840-token prefix (~2%). This request can still switch
-// accounts; the next request retries the original binding.
+// Capacity shed / overloaded (RequestScopedTransient) also abandon the
+// binding. Reseller API-key accounts do not share one upstream pool; pinning
+// the session to the overloaded supplier turns the whole Codex window into a
+// 3-minute fail loop. Official OAuth still retries the same credential on
+// THIS request; sticky is cleared so the NEXT turn can pick a healthy account.
 //
-// Intentionally does NOT temp-unschedule the account: first_output timeouts are
-// frequent under load and cooling would continuously empty the pool. Account
-// health remains the job of rate-limit / transport / ops rules.
+// Transient 429/502/524 still keep sticky. Those are common, short-lived, and
+// clearing them splits one Codex session across suppliers and drops prompt
+// cache to the shared ~3840-token prefix.
+//
+// Intentionally does NOT temp-unschedule the account: first_output timeouts
+// and brief overload bursts would continuously empty the pool. Account health
+// remains the job of rate-limit / transport / ops rules.
 func ShouldClearStickyOnOpenAIFailover(failoverErr *UpstreamFailoverError) bool {
 	if failoverErr == nil {
 		return false
 	}
-	return failoverErr.SafeToFailoverAfterWrite
+	if failoverErr.SafeToFailoverAfterWrite {
+		return true
+	}
+	return failoverErr.IsOpenAICapacityShed()
+}
+
+// MarkOpenAICapacityShedAfterOutput records that this request saw an upstream
+// overload after semantic output had already been written. The stream cannot
+// be replayed, but the session→account sticky binding must still be dropped.
+func MarkOpenAICapacityShedAfterOutput(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	c.Set(openAICapacityShedAfterOutputKey, true)
+}
+
+// OpenAICapacityShedAfterOutput reports whether MarkOpenAICapacityShedAfterOutput
+// ran for this gin request.
+func OpenAICapacityShedAfterOutput(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	value, ok := c.Get(openAICapacityShedAfterOutputKey)
+	flagged, _ := value.(bool)
+	return ok && flagged
 }
 
 // OpenAIPoolModeSameAccountRetryLimit returns how many same-account retries
@@ -74,8 +105,9 @@ func (s *OpenAIGatewayService) ClearStickySessionOnFailure(
 }
 
 // HandleOpenAIFailoverStickyFailure clears the session→account sticky binding
-// only after a first-output hang. Transient 429/5xx failovers keep the original
-// binding so the next request retries the same supplier (prompt cache).
+// after a first-output hang or a recognized capacity-shed/overload. Transient
+// 429/502/524 failovers keep the original binding so the next request retries
+// the same supplier (prompt cache).
 //
 // Does not temp-unschedule the account (see ShouldClearStickyOnOpenAIFailover).
 func (s *OpenAIGatewayService) HandleOpenAIFailoverStickyFailure(
@@ -93,7 +125,9 @@ func (s *OpenAIGatewayService) HandleOpenAIFailoverStickyFailure(
 		status = failoverErr.StatusCode
 	}
 	reason := "failover"
-	if status > 0 {
+	if failoverErr != nil && failoverErr.IsOpenAICapacityShed() {
+		reason = "capacity_shed"
+	} else if status > 0 {
 		reason = "failover_" + http.StatusText(status)
 		if reason == "failover_" {
 			reason = "failover_status"
@@ -107,4 +141,19 @@ func (s *OpenAIGatewayService) HandleOpenAIFailoverStickyFailure(
 	}
 	_ = account // retained for call-site symmetry / future metrics
 	s.ClearStickySessionOnFailure(ctx, groupID, sessionHash, reason)
+}
+
+// ClearStickyIfCapacityShedAfterOutput drops sticky when overload arrived after
+// semantic output (this request cannot be replayed, but the next one must not
+// stay pinned to the overloaded account).
+func (s *OpenAIGatewayService) ClearStickyIfCapacityShedAfterOutput(
+	ctx context.Context,
+	c *gin.Context,
+	groupID *int64,
+	sessionHash string,
+) {
+	if !OpenAICapacityShedAfterOutput(c) {
+		return
+	}
+	s.ClearStickySessionOnFailure(ctx, groupID, sessionHash, "capacity_shed_after_output")
 }

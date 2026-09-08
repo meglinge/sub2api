@@ -513,7 +513,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				(eventType == "error" || eventType == "response.failed") &&
 				openAIStreamClientOutputStarted(c, clientOutputStarted) &&
 				isOpenAIUpstreamCapacityShedEvent(dataBytes) {
-				logOpenAICapacityFailoverSuppressed(ctx, account, "native_sse", upstreamRequestID, eventType)
+				logOpenAICapacityFailoverSuppressed(ctx, c, account, "native_sse", upstreamRequestID, eventType)
 				capacityFailoverSuppressedLogged = true
 			}
 			cyberHit := false

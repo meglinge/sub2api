@@ -1325,6 +1325,13 @@ func isOpenAIUpstreamCapacityShedEvent(payload []byte) bool {
 	case "server_is_overloaded", "slow_down":
 		return true
 	}
+	errType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "response.error.type").String()))
+	if errType == "" {
+		errType = strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "error.type").String()))
+	}
+	if errType == "service_unavailable_error" {
+		return true
+	}
 	for _, path := range []string{"response.error.message", "error.message", "message"} {
 		if isOpenAICapacityShedMessage(gjson.GetBytes(payload, path).String()) {
 			return true
@@ -1335,11 +1342,13 @@ func isOpenAIUpstreamCapacityShedEvent(payload []byte) bool {
 
 func logOpenAICapacityFailoverSuppressed(
 	ctx context.Context,
+	c *gin.Context,
 	account *Account,
 	path string,
 	upstreamRequestID string,
 	eventType string,
 ) {
+	MarkOpenAICapacityShedAfterOutput(c)
 	fields := []zap.Field{
 		zap.String("path", path),
 		zap.String("event_type", strings.TrimSpace(eventType)),
@@ -1611,10 +1620,13 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	if isOpenAIUpstreamAccessStateError(message, payload) {
 		return true
 	}
+	if isOpenAIRequestScopedCapacityShed(message, payload) {
+		return true
+	}
 	switch openAIStreamFailedEventSemanticStatus(payload, message) {
 	case http.StatusForbidden:
 		return openAIStream403AccountFailure(payload, message)
-	case http.StatusUnauthorized, http.StatusTooManyRequests, 529:
+	case http.StatusUnauthorized, http.StatusTooManyRequests, http.StatusServiceUnavailable, 529:
 		return true
 	}
 	if isOpenAITransientProcessingError(http.StatusBadRequest, message, payload) {
@@ -1668,12 +1680,13 @@ func openAIStreamFailedEventRetryableOnSameAccount(account *Account, payload []b
 	if account == nil {
 		return false
 	}
-	// 容量降载是请求级信号，不是账号级故障：上游只是让本次请求稍后再试。
-	// 换账号并不改变被降载的因素（客户端身份、模型容量都与账号无关），
-	// 只会让单个请求把整池账号逐个消耗掉，最终仍以同一个错误告终。
-	// 因此先在同一账号上做有界重试，用尽后才按常规流程切号。
+	// Official OAuth/setup-token credentials share one provider capacity pool,
+	// so retrying the same account is cheaper than burning the whole group.
+	// API-key / newapi accounts are distinct resellers: overload on one does
+	// not imply the others are down, and same-account retry just pins a dead
+	// window for another 3 minutes.
 	if isOpenAIUpstreamCapacityShedEvent(payload) {
-		return true
+		return account.IsOpenAIOAuthLike()
 	}
 	if !account.IsPoolMode() {
 		return false
@@ -2058,7 +2071,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				(eventType == "error" || eventType == "response.failed") &&
 				openAIStreamClientOutputStarted(c, clientOutputStarted) &&
 				isOpenAIUpstreamCapacityShedEvent(dataBytes) {
-				logOpenAICapacityFailoverSuppressed(ctx, account, "passthrough_sse", upstreamRequestID, eventType)
+				logOpenAICapacityFailoverSuppressed(ctx, c, account, "passthrough_sse", upstreamRequestID, eventType)
 				capacityFailoverSuppressedLogged = true
 			}
 			cyberHit := false
