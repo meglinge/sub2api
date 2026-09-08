@@ -159,6 +159,42 @@ func TestInjectCachePriorityBands_ForcesTwoMainsWhenAllPoor(t *testing.T) {
 	}
 }
 
+func TestInjectCachePriorityBands_SinksRecentFailoverStorm(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultAIAutopilotSettings()
+	cfg.OpSetPriority = boolPtr(true)
+	accounts := []Account{
+		{ID: 6506, Name: "mh-2key", Status: StatusActive, Schedulable: true, AIManaged: true, Priority: 100},
+		{ID: 2, Name: "healthy", Status: StatusActive, Schedulable: true, AIManaged: true, Priority: 110},
+	}
+	long := map[int64]AccountTrafficStats{
+		6506: {CacheEligibleRequests: 40, CacheEligibleTokens: 4_000_000, CacheReadTokens: 3_900_000},
+		2:    {CacheEligibleRequests: 40, CacheEligibleTokens: 4_000_000, CacheReadTokens: 3_500_000},
+	}
+	recent := map[int64]AccountTrafficStats{
+		6506: {Requests: 0, Successes: 0, Errors: 20},
+	}
+	d := decision{}
+	n := injectCachePriorityBands(&d, accounts, cfg, long, recent)
+	if n < 1 {
+		t.Fatalf("expected 502-storm sink, got %d %#v", n, d.Actions)
+	}
+	got := map[int64]int{}
+	for _, a := range d.Actions {
+		if a.Op != AIOpSetPriority {
+			continue
+		}
+		v, _ := strconv.Atoi(a.Value)
+		got[a.AccountID] = v
+	}
+	if got[6506] != AIPriorityBuriedThreshold {
+		t.Fatalf("502-storm account priority=%d want spare %d (actions=%v)", got[6506], AIPriorityBuriedThreshold, got)
+	}
+	if p, ok := got[2]; ok && p != AIObservationPriority {
+		t.Fatalf("healthy cache account should be kept/lifted main, got %d", p)
+	}
+}
+
 func TestFilterDeathSpiralKeepsCacheBandDemotion(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultAIAutopilotSettings()

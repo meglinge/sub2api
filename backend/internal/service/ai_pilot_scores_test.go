@@ -296,6 +296,55 @@ func TestClampPersistedAccountScore_KeepsOverall(t *testing.T) {
 	}
 }
 
+func TestTrafficForScoring_FailoverStormUsesRecent(t *testing.T) {
+	t.Parallel()
+	recent := AccountTrafficStats{Requests: 0, Successes: 0, Errors: 12}
+	long := AccountTrafficStats{Requests: 200, Successes: 198, Errors: 2, AvgFirstToken: 2000, AvgGenerationTPS: 40}
+	st := trafficForScoring(recent, long)
+	if st.Errors != 12 || st.Requests != 0 {
+		t.Fatalf("should keep recent failover window, got req=%d err=%d", st.Requests, st.Errors)
+	}
+	score, ok := stabilityScoreOf(st)
+	if !ok || score != 0 {
+		t.Fatalf("502-only window stability=%v ok=%v want 0", score, ok)
+	}
+}
+
+func TestApplyDeterministicScores_RecoveredFailoverIsUnstable(t *testing.T) {
+	t.Parallel()
+	pool := []Account{{ID: 6506, Name: "mh-2key"}}
+	long := map[int64]AccountTrafficStats{
+		6506: {AccountID: 6506, Requests: 200, Successes: 186, Errors: 2, P50FirstToken: 3000, AvgGenerationTPS: 30},
+	}
+	recent := map[int64]AccountTrafficStats{
+		6506: {AccountID: 6506, Requests: 0, Successes: 0, Errors: 20},
+	}
+	scores := applyDeterministicScores(nil, pool, long, recent, DefaultScoreWeights())
+	if len(scores) != 1 {
+		t.Fatalf("scores=%d", len(scores))
+	}
+	s := scores[0]
+	if s.Stability != 0 {
+		t.Fatalf("stability=%v want 0 (recovered 502 storm), note=%q", s.Stability, s.Note)
+	}
+	if s.Overall > 25 {
+		t.Fatalf("overall=%v should collapse when stability is 0", s.Overall)
+	}
+}
+
+func TestRecentWindowHardFail_FailoverOnly(t *testing.T) {
+	t.Parallel()
+	if !recentWindowHardFail(AccountTrafficStats{Requests: 0, Errors: 8}) {
+		t.Fatal("0 success + 8 recovered 5xx should be hard fail")
+	}
+	if recentWindowHardFail(AccountTrafficStats{Requests: 0, Errors: 2}) {
+		t.Fatal("2 errors is too few")
+	}
+	if recentWindowHardFail(AccountTrafficStats{Requests: 20, Successes: 19, Errors: 1}) {
+		t.Fatal("95% recent should not be hard fail")
+	}
+}
+
 func TestInjectScoreDrivenWeights_SkipsIdleOverall(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultAIAutopilotSettings()

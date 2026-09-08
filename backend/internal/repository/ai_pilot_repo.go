@@ -288,6 +288,25 @@ func (r *AIPilotRepository) LastSpareDemotions(ctx context.Context, accountIDs [
 	return out, rows.Err()
 }
 
+// aiPilotOpsErrorMatchSQL selects failures that should hit autopilot stability.
+// Recovered 5xx are logged as client status 200 + upstream_status_code 502
+// ("Recovered upstream error 502"); those used to look 100% stable.
+// 429/499 still do not count (rate-limit / client cancel, not a dead account).
+const aiPilotOpsErrorMatchSQL = `
+			AND COALESCE(error_type, '') <> 'rate_limit_error'
+			AND COALESCE(upstream_status_code, 0) NOT IN (429, 499)
+			AND (
+				status_code IS NULL
+				OR (status_code >= 400 AND status_code NOT IN (429, 499))
+				OR (
+					COALESCE(error_type, '') = 'upstream_error'
+					AND (
+						COALESCE(upstream_status_code, 0) >= 400
+						OR error_message ILIKE 'Recovered upstream error%'
+					)
+				)
+			)`
+
 // AggregateAccountTraffic loads usage_logs aggregates for openai accounts in window.
 func (r *AIPilotRepository) AggregateAccountTraffic(ctx context.Context, from, to time.Time, accountIDs []int64) (map[int64]service.AccountTrafficStats, error) {
 	out := make(map[int64]service.AccountTrafficStats)
@@ -359,21 +378,14 @@ func (r *AIPilotRepository) AggregateAccountTraffic(ctx context.Context, from, t
 	}
 
 	// Merge ops error counts when table exists.
-	// Not account death: 499 cancel, 429 rate limit, non-4xx (status 200 "errors").
-	// 429-majority is what made grok-4.6 disable 2chat (TTFB 3.7s, still completing).
-	// 401/403/502/5xx still count.
 	eq := fmt.Sprintf(`
 		SELECT account_id, COUNT(*)::int
 		FROM ops_error_logs
 		WHERE created_at >= $1 AND created_at < $2
 			AND account_id IN (%s)
-			AND COALESCE(error_type, '') <> 'rate_limit_error'
-			AND (
-				status_code IS NULL
-				OR (status_code >= 400 AND status_code NOT IN (429, 499))
-			)
+			%s
 		GROUP BY account_id
-	`, strings.Join(ph, ","))
+	`, strings.Join(ph, ","), aiPilotOpsErrorMatchSQL)
 	erows, err := r.db.QueryContext(ctx, eq, args...)
 	if err == nil {
 		defer erows.Close()
@@ -405,11 +417,7 @@ func (r *AIPilotRepository) RecentErrorSamples(ctx context.Context, from time.Ti
 		)
 		FROM ops_error_logs
 		WHERE account_id = $1 AND created_at >= $2
-			AND COALESCE(error_type, '') <> 'rate_limit_error'
-			AND (
-				status_code IS NULL
-				OR (status_code >= 400 AND status_code NOT IN (429, 499))
-			)
+			`+aiPilotOpsErrorMatchSQL+`
 		ORDER BY created_at DESC
 		LIMIT $3
 	`, accountID, from, limit)

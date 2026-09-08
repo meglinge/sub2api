@@ -340,6 +340,11 @@ func trafficForScoring(recent, long AccountTrafficStats) AccountTrafficStats {
 	if rn >= 5 {
 		return recent
 	}
+	// Recovered 502/503 land in Errors with Requests=0. Do not fall back to a
+	// healthy long window and call that "stable".
+	if recent.Requests == 0 && recent.Errors >= 3 {
+		return recent
+	}
 	if ln >= 5 {
 		return long
 	}

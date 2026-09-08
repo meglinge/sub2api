@@ -381,6 +381,10 @@ func longWindowHealthyEnough(st AccountTrafficStats) bool {
 // Used for unbury / demotion / switch (do not promote into a 502 burst).
 // This is intentionally looser than disable — see recentWindowDisableWorthy.
 func recentWindowHardFail(st AccountTrafficStats) bool {
+	// Failover-only window: no successful usage_logs, but recovered 5xx.
+	if st.Requests == 0 && st.Errors >= 3 {
+		return true
+	}
 	n := st.Requests + st.Errors
 	if n < 5 {
 		return false

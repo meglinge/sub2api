@@ -128,9 +128,11 @@ func applyDeterministicCacheScores(scores []AIAccountScore, accounts []Account, 
 type cacheBandCand struct {
 	acc      *Account
 	stats    AccountTrafficStats
+	recent   AccountTrafficStats
 	quality  float64
 	target   int
 	eligible bool
+	hardFail bool
 }
 
 // injectCachePriorityBands writes set_priority from observed cache quality.
@@ -158,15 +160,22 @@ func injectCachePriorityBands(decision *decision, accounts []Account, cfg AIAuto
 		}
 		st := cacheStatsForScoring(rec, lg)
 		q, enough := cacheQualityOf(st)
-		c := cacheBandCand{acc: acc, stats: st, quality: q, eligible: enough, target: acc.Priority}
-		if enough {
+		c := cacheBandCand{acc: acc, stats: st, recent: rec, quality: q, eligible: enough, target: acc.Priority}
+		if recentWindowHardFail(rec) {
+			// Cache quality is a long-window signal. A live 502 failover storm
+			// must not keep the account in the main layer just because prefix
+			// cache used to look good.
+			c.hardFail = true
+			c.eligible = true
+			c.target = AIPriorityBuriedThreshold
+		} else if enough {
 			c.target = cachePriorityForQuality(q)
 		}
 		cands = append(cands, c)
 	}
 	ranked := make([]cacheBandCand, 0, len(cands))
 	for _, c := range cands {
-		if c.eligible {
+		if c.eligible && !c.hardFail {
 			ranked = append(ranked, c)
 		}
 	}
@@ -190,21 +199,28 @@ func injectCachePriorityBands(decision *decision, accounts []Account, cfg AIAuto
 			continue
 		}
 		target := c.target
-		if keepIDs[c.acc.ID] {
+		if !c.hardFail && keepIDs[c.acc.ID] {
 			target = AIObservationPriority
 		}
 		if target == c.acc.Priority {
 			continue
 		}
+		reason := fmt.Sprintf(
+			"%s quality=%.0f%% (eligible=%d bigMiss=%d) priority %d → %d",
+			cachePriorityBandPrefix, c.quality*100, c.stats.CacheEligibleRequests, c.stats.CacheBigMissRequests,
+			c.acc.Priority, target,
+		)
+		if c.hardFail {
+			reason = fmt.Sprintf(
+				"%s 近窗失败风暴(成功=%d 错误=%d) 禁止主层 quality=%.0f%% priority %d → %d",
+				cachePriorityBandPrefix, c.recent.Requests, c.recent.Errors, c.quality*100, c.acc.Priority, target,
+			)
+		}
 		replaceOrAppendPriority(decision, decisionAction{
-			AccountID: c.acc.ID,
-			Op:        AIOpSetPriority,
-			Value:     strconv.Itoa(target),
-			Reason: fmt.Sprintf(
-				"%s quality=%.0f%% (eligible=%d bigMiss=%d) priority %d → %d",
-				cachePriorityBandPrefix, c.quality*100, c.stats.CacheEligibleRequests, c.stats.CacheBigMissRequests,
-				c.acc.Priority, target,
-			),
+			AccountID:  c.acc.ID,
+			Op:         AIOpSetPriority,
+			Value:      strconv.Itoa(target),
+			Reason:     reason,
 			Confidence: 0.94,
 		})
 		injected++
