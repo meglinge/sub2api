@@ -371,7 +371,12 @@ func stabilityScoreOf(st AccountTrafficStats) (float64, bool) {
 	if n <= 0 {
 		return 0, false
 	}
-	return clampScore(100 * float64(succ) / float64(n)), true
+	rate := float64(succ) / float64(n)
+	if n < 8 {
+		// Laplace: 2/2 or 5/5 must not read as 稳100 on the ranking.
+		rate = float64(succ+1) / float64(n+2)
+	}
+	return clampScore(100 * rate), true
 }
 
 // lerpScore maps x onto ys along increasing xs. x below xs[0] uses ys[0]; above last uses last y.

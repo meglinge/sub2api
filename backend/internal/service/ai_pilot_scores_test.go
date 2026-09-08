@@ -242,6 +242,26 @@ func TestApplyDeterministicScores_AbsoluteAndNoVolumeLoop(t *testing.T) {
 	}
 }
 
+func TestStabilityScoreOf_SmallSampleShrinks(t *testing.T) {
+	t.Parallel()
+	two, ok := stabilityScoreOf(AccountTrafficStats{Requests: 2, Successes: 2, Errors: 0})
+	if !ok || two > 76 || two < 74 {
+		t.Fatalf("2/2 stability=%v want Laplace 75", two)
+	}
+	five, ok := stabilityScoreOf(AccountTrafficStats{Requests: 5, Successes: 5, Errors: 0})
+	if !ok || five > 87 || five < 84 {
+		t.Fatalf("5/5 stability=%v want Laplace ~85.7", five)
+	}
+	full, ok := stabilityScoreOf(AccountTrafficStats{Requests: 8, Successes: 8, Errors: 0})
+	if !ok || full != 100 {
+		t.Fatalf("8/8 stability=%v want raw 100", full)
+	}
+	zero, ok := stabilityScoreOf(AccountTrafficStats{Requests: 0, Successes: 0, Errors: 12})
+	if !ok || zero != 0 {
+		t.Fatalf("0/12 should stay 0, got %v ok=%v", zero, ok)
+	}
+}
+
 func TestApplyDeterministicScores_UnknownDimsSkippedInOverall(t *testing.T) {
 	t.Parallel()
 	pool := []Account{{ID: 1, Name: "errors-only"}}
