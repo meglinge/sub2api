@@ -195,6 +195,32 @@ func TestInjectCachePriorityBands_SinksRecentFailoverStorm(t *testing.T) {
 	}
 }
 
+func TestInjectCachePriorityBands_DoesNotSinkMixedRecovered5xx(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultAIAutopilotSettings()
+	cfg.OpSetPriority = boolPtr(true)
+	accounts := []Account{
+		{ID: 7, Name: "coco", Status: StatusActive, Schedulable: true, AIManaged: true, Priority: 100},
+	}
+	long := map[int64]AccountTrafficStats{
+		7: {CacheEligibleRequests: 40, CacheEligibleTokens: 4_000_000, CacheReadTokens: 3_500_000},
+	}
+	recent := map[int64]AccountTrafficStats{
+		7: {Requests: 80, Successes: 80, Errors: 20},
+	}
+	d := decision{}
+	n := injectCachePriorityBands(&d, accounts, cfg, long, recent)
+	for _, a := range d.Actions {
+		if a.Op != AIOpSetPriority {
+			continue
+		}
+		v, _ := strconv.Atoi(a.Value)
+		if v == AIPriorityBuriedThreshold {
+			t.Fatalf("mixed recovered 5xx should not sink to spare, actions=%d %#v", n, d.Actions)
+		}
+	}
+}
+
 func TestFilterDeathSpiralKeepsCacheBandDemotion(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultAIAutopilotSettings()

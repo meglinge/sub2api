@@ -377,20 +377,17 @@ func longWindowHealthyEnough(st AccountTrafficStats) bool {
 	return sr >= 0.90
 }
 
-// recentWindowHardFail is true when recent samples look flaky.
-// Used for unbury / demotion / switch (do not promote into a 502 burst).
-// This is intentionally looser than disable — see recentWindowDisableWorthy.
+// recentWindowHardFail is true when the recent window is a live outage:
+// failover-only (no usage_log successes, recovered 5xx) or majority-failing.
+// After recovered 5xx count as Errors, healthy relays sit at 70–90% SR for
+// a few minutes; SR<85% n≥5 used to yo-yo them 100↔150. Stability score
+// still counts those 5xx. This is slightly looser than disable (3–9 error
+// storms with 0 successes bury/block unbury but do not disable).
 func recentWindowHardFail(st AccountTrafficStats) bool {
-	// Failover-only window: no successful usage_logs, but recovered 5xx.
 	if st.Requests == 0 && st.Errors >= 3 {
 		return true
 	}
-	n := st.Requests + st.Errors
-	if n < 5 {
-		return false
-	}
-	sr := float64(st.Successes) / float64(n)
-	return sr < 0.85
+	return recentWindowDisableWorthy(st)
 }
 
 // recentWindowDisableWorthy is true only when the recent window is actually dead.

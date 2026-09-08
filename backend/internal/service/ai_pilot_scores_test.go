@@ -343,6 +343,13 @@ func TestRecentWindowHardFail_FailoverOnly(t *testing.T) {
 	if recentWindowHardFail(AccountTrafficStats{Requests: 20, Successes: 19, Errors: 1}) {
 		t.Fatal("95% recent should not be hard fail")
 	}
+	// Recovered 5xx on a still-serving account (CoCo/saozhao): do not bury.
+	if recentWindowHardFail(AccountTrafficStats{Requests: 80, Successes: 80, Errors: 20}) {
+		t.Fatal("80 successes + 20 recovered 5xx is relay noise, not a 502 storm")
+	}
+	if !recentWindowHardFail(AccountTrafficStats{Requests: 4, Successes: 4, Errors: 12}) {
+		t.Fatal("majority-fail recent window should still be hard fail")
+	}
 }
 
 func TestInjectScoreDrivenWeights_SkipsIdleOverall(t *testing.T) {

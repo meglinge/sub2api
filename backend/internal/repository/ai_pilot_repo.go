@@ -556,7 +556,7 @@ func (r *AIPilotRepository) AppendAccountScores(ctx context.Context, runID int64
 	return tx.Commit()
 }
 
-// LatestAccountScores returns the newest score per account.
+// LatestAccountScores returns the newest score per live (non-deleted) account.
 func (r *AIPilotRepository) LatestAccountScores(ctx context.Context) (map[int64]service.AIAccountScore, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT c.id, c.ts, c.run_id, c.account_id, c.account_name,
@@ -565,6 +565,7 @@ func (r *AIPilotRepository) LatestAccountScores(ctx context.Context) (map[int64]
 		INNER JOIN (
 			SELECT account_id, MAX(ts) AS mts FROM ai_account_scores GROUP BY account_id
 		) t ON c.account_id = t.account_id AND c.ts = t.mts
+		INNER JOIN accounts a ON a.id = c.account_id AND a.deleted_at IS NULL
 	`)
 	if err != nil {
 		return nil, err
@@ -619,18 +620,32 @@ func (r *AIPilotRepository) AccountScoreHistory(ctx context.Context, accountID i
 	return out, rows.Err()
 }
 
-// PruneAccountScores deletes scores older than keepDays.
+// PruneAccountScores deletes scores older than keepDays and scores whose
+// account is missing or soft-deleted (delete-account cascade safety net).
 func (r *AIPilotRepository) PruneAccountScores(ctx context.Context, keepDays int) (int64, error) {
-	if keepDays <= 0 {
-		return 0, nil
+	var total int64
+	if keepDays > 0 {
+		res, err := r.db.ExecContext(ctx, `
+			DELETE FROM ai_account_scores WHERE ts < NOW() - ($1 || ' days')::interval
+		`, keepDays)
+		if err != nil {
+			return 0, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
 	}
 	res, err := r.db.ExecContext(ctx, `
-		DELETE FROM ai_account_scores WHERE ts < NOW() - ($1 || ' days')::interval
-	`, keepDays)
+		DELETE FROM ai_account_scores s
+		WHERE NOT EXISTS (
+			SELECT 1 FROM accounts a
+			WHERE a.id = s.account_id AND a.deleted_at IS NULL
+		)
+	`)
 	if err != nil {
-		return 0, err
+		return total, err
 	}
-	return res.RowsAffected()
+	n, _ := res.RowsAffected()
+	return total + n, nil
 }
 
 // AggregateAccountTrafficOne aggregates one account in [from,to).
