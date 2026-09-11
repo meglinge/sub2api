@@ -582,6 +582,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	// Generate session hash (header first; fallback to prompt_cache_key)
 	sessionHash := h.gatewayService.GenerateSessionHash(c, sessionHashBody)
+	c.Request = c.Request.WithContext(service.WithOpenAIPreviousResponseID(c.Request.Context(), previousResponseID))
 	if h.rejectIfCyberSessionBlocked(c, apiKey, sessionHashBody, reqModel, cyberBlockFormatResponses) {
 		return
 	}
@@ -873,7 +874,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 							continue
 						}
 					}
-					// first-output hang 与容量过载解绑 sticky；429/502 仍保持原绑定以保住 prompt cache。
+					// first-output hang、容量过载、以及 reseller API-key 502/503/504/524 解绑 sticky；
+					// 429 与官方 OAuth 的短暂 502 仍保持原绑定以保住 prompt cache。
 					h.gatewayService.HandleOpenAIFailoverStickyFailure(c.Request.Context(), apiKey.GroupID, sessionHash, account, failoverErr)
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
@@ -907,7 +909,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					continue
 				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, result), false, nil, err)
-				h.gatewayService.ClearStickyIfCapacityShedAfterOutput(c.Request.Context(), c, apiKey.GroupID, sessionHash)
+				h.gatewayService.HandleOpenAIPostOutputStickyFailure(c.Request.Context(), c, apiKey.GroupID, sessionHash, account, err)
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
@@ -1466,7 +1468,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					return
 				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, result), false, nil, err)
-				h.gatewayService.ClearStickyIfCapacityShedAfterOutput(c.Request.Context(), c, apiKey.GroupID, sessionHash)
+				h.gatewayService.HandleOpenAIPostOutputStickyFailure(c.Request.Context(), c, apiKey.GroupID, sessionHash, account, err)
 				wroteFallback := h.ensureAnthropicErrorResponse(c, streamStarted)
 				reqLog.Warn("openai_messages.forward_failed",
 					zap.Int64("account_id", account.ID),
@@ -2408,6 +2410,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		firstMessage,
 		openAIWSIngressFallbackSessionSeed(subject.UserID, apiKey.ID, apiKey.GroupID),
 	)
+	ctx = service.WithOpenAIPreviousResponseID(ctx, previousResponseID)
 	ctx = service.WithOpenAIGuardianParentAffinity(ctx, c, firstMessage, reqModel)
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0

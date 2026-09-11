@@ -2240,6 +2240,70 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseSticky(
 	}
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseStickyEscapeByErrorRate(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(10103)
+	dead := Account{
+		ID:          21301,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+		GroupIDs:    []int64{groupID},
+		Extra: map[string]any{
+			"openai_apikey_responses_websockets_v2_enabled": true,
+		},
+	}
+	healthy := Account{
+		ID:          21302,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    1,
+		GroupIDs:    []int64{groupID},
+	}
+	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:session_hash_prev_escape": 21301}}
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIScheduler.StickyEscapeEnabled = true
+	cfg.Gateway.OpenAIScheduler.StickyEscapeTTFTMs = 15000
+	cfg.Gateway.OpenAIScheduler.StickyEscapeErrorRate = 0.5
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{dead, healthy}},
+		cache:              cache,
+		cfg:                cfg,
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{acquireResults: map[int64]bool{21301: false, 21302: true}}),
+		openaiAccountStats: newOpenAIAccountRuntimeStats(),
+	}
+	store := svc.getOpenAIWSStateStore()
+	require.NoError(t, store.BindResponseAccount(ctx, groupID, "resp_prev_escape", dead.ID, time.Hour))
+	for i := 0; i < 5; i++ {
+		svc.openaiAccountStats.report(dead.ID, false, nil)
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "resp_prev_escape", "session_hash_prev_escape", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, healthy.ID, selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	require.False(t, decision.StickyPreviousHit)
+	require.Equal(t, healthy.ID, cache.sessionBindings["openai:session_hash_prev_escape"])
+	got, err := store.GetResponseAccount(ctx, groupID, "resp_prev_escape")
+	require.NoError(t, err)
+	require.Equal(t, int64(0), got, "previous_response sticky must be dropped on error-rate escape")
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionSticky(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10)

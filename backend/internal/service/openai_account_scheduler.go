@@ -417,6 +417,26 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			}
 		}
 		if selection != nil && selection.Account != nil {
+			if s.service != nil {
+				escapeCfg := s.service.openAIStickyEscapeConfig()
+				if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyAccount(selection.Account.ID, escapeCfg); shouldEscape {
+					slog.Info("sticky_escape_triggered",
+						"account_id", selection.Account.ID,
+						"reason", reason,
+						"error_rate", errorRate,
+						"ttft", ttft,
+						"layer", "previous_response_id",
+					)
+					if selection.ReleaseFunc != nil {
+						selection.ReleaseFunc()
+					}
+					s.service.ClearStickySessionOnFailure(ctx, req.GroupID, req.SessionHash, "sticky_escape_previous_response")
+					s.service.clearPreviousResponseSticky(ctx, req.GroupID, previousResponseID)
+					selection = nil
+				}
+			}
+		}
+		if selection != nil && selection.Account != nil {
 			decision.Layer = openAIAccountScheduleLayerPreviousResponse
 			decision.StickyPreviousHit = true
 			decision.SelectedAccountID = selection.Account.ID

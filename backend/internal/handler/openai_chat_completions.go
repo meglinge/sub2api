@@ -383,7 +383,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					continue
 				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, nil), false, nil, err)
-				h.gatewayService.ClearStickyIfCapacityShedAfterOutput(c.Request.Context(), c, apiKey.GroupID, sessionHash)
+				h.gatewayService.HandleOpenAIPostOutputStickyFailure(c.Request.Context(), c, apiKey.GroupID, sessionHash, account, err)
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
