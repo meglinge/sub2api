@@ -83,6 +83,24 @@ func TestShouldClearStickyOnOpenAIStreamFailure(t *testing.T) {
 	require.True(t, ShouldClearStickyOnOpenAIStreamFailure(errors.New("Upstream produced no output before the deadline"), reseller))
 	require.True(t, ShouldClearStickyOnOpenAIStreamFailure(errors.New("Upstream request failed"), reseller))
 	require.True(t, ShouldClearStickyOnOpenAIStreamFailure(errors.New("Request could not be completed"), reseller))
+	require.True(t, ShouldClearStickyOnOpenAIStreamFailure(
+		errors.New("upstream response failed: Our servers are currently overloaded. Please try again later."),
+		reseller,
+	))
+}
+
+func TestOpenAIStickySkipExcludesAccountForSession(t *testing.T) {
+	t.Parallel()
+	resetOpenAIStickySkipForTest()
+	t.Cleanup(resetOpenAIStickySkipForTest)
+
+	rememberOpenAIStickySkip("sess-skip", 6509)
+	got := openAIStickySkipAccountIDs("sess-skip")
+	require.Contains(t, got, int64(6509))
+	merged := mergeOpenAIStickySkipExclusions("sess-skip", map[int64]struct{}{1: {}})
+	require.Contains(t, merged, int64(6509))
+	require.Contains(t, merged, int64(1))
+	require.Nil(t, openAIStickySkipAccountIDs("other"))
 }
 
 func TestOpenAIPoolModeSameAccountRetryLimit_Skips429(t *testing.T) {

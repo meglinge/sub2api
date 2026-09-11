@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -140,7 +141,9 @@ func isOpenAIStickyStreamDeathError(err error) bool {
 		strings.Contains(msg, "produced no output") ||
 		strings.Contains(msg, "produced no semantic output") ||
 		strings.Contains(msg, "upstream request failed") ||
-		strings.Contains(msg, "request could not be completed")
+		strings.Contains(msg, "request could not be completed") ||
+		strings.Contains(msg, "currently overloaded") ||
+		strings.Contains(msg, "overloaded")
 }
 
 // MarkOpenAICapacityShedAfterOutput records that this request saw an upstream
@@ -247,7 +250,7 @@ func (s *OpenAIGatewayService) HandleOpenAIFailoverStickyFailure(
 			reason = "first_output_timeout"
 		}
 	}
-	s.abandonOpenAISticky(ctx, groupID, sessionHash, openAIPreviousResponseIDFromCtx(ctx), reason)
+	s.abandonOpenAIStickyForAccount(ctx, groupID, sessionHash, openAIPreviousResponseIDFromCtx(ctx), account, reason)
 }
 
 // HandleOpenAIPostOutputStickyFailure drops sticky when the stream already
@@ -263,11 +266,11 @@ func (s *OpenAIGatewayService) HandleOpenAIPostOutputStickyFailure(
 ) {
 	previousResponseID := openAIPreviousResponseIDFromCtx(ctx)
 	if OpenAICapacityShedAfterOutput(c) {
-		s.abandonOpenAISticky(ctx, groupID, sessionHash, previousResponseID, "capacity_shed_after_output")
+		s.abandonOpenAIStickyForAccount(ctx, groupID, sessionHash, previousResponseID, account, "capacity_shed_after_output")
 		return
 	}
 	if ShouldClearStickyOnOpenAIStreamFailure(err, account) {
-		s.abandonOpenAISticky(ctx, groupID, sessionHash, previousResponseID, "stream_failure")
+		s.abandonOpenAIStickyForAccount(ctx, groupID, sessionHash, previousResponseID, account, "stream_failure")
 	}
 }
 
@@ -294,6 +297,20 @@ func (s *OpenAIGatewayService) abandonOpenAISticky(
 	s.clearPreviousResponseSticky(ctx, groupID, previousResponseID)
 }
 
+func (s *OpenAIGatewayService) abandonOpenAIStickyForAccount(
+	ctx context.Context,
+	groupID *int64,
+	sessionHash string,
+	previousResponseID string,
+	account *Account,
+	reason string,
+) {
+	s.abandonOpenAISticky(ctx, groupID, sessionHash, previousResponseID, reason)
+	if account != nil {
+		rememberOpenAIStickySkip(sessionHash, account.ID)
+	}
+}
+
 func (s *OpenAIGatewayService) clearPreviousResponseSticky(ctx context.Context, groupID *int64, previousResponseID string) {
 	previousResponseID = strings.TrimSpace(previousResponseID)
 	if s == nil || previousResponseID == "" {
@@ -317,4 +334,88 @@ func (s *OpenAIGatewayService) clearPreviousResponseSticky(ctx context.Context, 
 		"openai.previous_response_sticky_cleared",
 		zap.Int64("group_id", derefGroupID(groupID)),
 	)
+}
+
+// Session-scoped skip: after a dead-supplier / overload abandon, the next
+// continue must not immediately re-select the same still-schedulable account
+// (legacy load-balance is priority+LRU; advanced scheduler is off in prod).
+const openAIStickySkipTTL = 10 * time.Minute
+
+type openAIStickySkipSet struct {
+	mu      sync.Mutex
+	expires map[int64]int64 // accountID -> unix nano
+}
+
+var openAIStickySkipBySession sync.Map // sessionHash -> *openAIStickySkipSet
+
+func rememberOpenAIStickySkip(sessionHash string, accountID int64) {
+	sessionHash = strings.TrimSpace(sessionHash)
+	if sessionHash == "" || accountID <= 0 {
+		return
+	}
+	now := time.Now()
+	raw, _ := openAIStickySkipBySession.LoadOrStore(sessionHash, &openAIStickySkipSet{
+		expires: make(map[int64]int64),
+	})
+	set, _ := raw.(*openAIStickySkipSet)
+	if set == nil {
+		return
+	}
+	set.mu.Lock()
+	if set.expires == nil {
+		set.expires = make(map[int64]int64)
+	}
+	set.expires[accountID] = now.Add(openAIStickySkipTTL).UnixNano()
+	set.mu.Unlock()
+}
+
+func openAIStickySkipAccountIDs(sessionHash string) map[int64]struct{} {
+	sessionHash = strings.TrimSpace(sessionHash)
+	if sessionHash == "" {
+		return nil
+	}
+	raw, ok := openAIStickySkipBySession.Load(sessionHash)
+	if !ok {
+		return nil
+	}
+	set, _ := raw.(*openAIStickySkipSet)
+	if set == nil {
+		return nil
+	}
+	now := time.Now().UnixNano()
+	set.mu.Lock()
+	defer set.mu.Unlock()
+	out := make(map[int64]struct{}, len(set.expires))
+	for id, exp := range set.expires {
+		if exp <= now {
+			delete(set.expires, id)
+			continue
+		}
+		out[id] = struct{}{}
+	}
+	if len(set.expires) == 0 {
+		openAIStickySkipBySession.Delete(sessionHash)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func mergeOpenAIStickySkipExclusions(sessionHash string, excludedIDs map[int64]struct{}) map[int64]struct{} {
+	skip := openAIStickySkipAccountIDs(sessionHash)
+	if len(skip) == 0 {
+		return excludedIDs
+	}
+	if excludedIDs == nil {
+		return skip
+	}
+	for id := range skip {
+		excludedIDs[id] = struct{}{}
+	}
+	return excludedIDs
+}
+
+func resetOpenAIStickySkipForTest() {
+	openAIStickySkipBySession = sync.Map{}
 }
