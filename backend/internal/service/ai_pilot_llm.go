@@ -187,6 +187,11 @@ func isGeminiPilotModel(model string) bool {
 	return strings.HasPrefix(m, "gemini")
 }
 
+func isGrokPilotModel(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(m, "grok")
+}
+
 // geminiGenerateContentURL builds CCH/Google Gemini generateContent endpoint.
 // baseURL may be bare host, .../v1, or .../v1beta.
 func geminiGenerateContentURL(baseURL, model string, stream bool) string {
@@ -425,10 +430,15 @@ func (p *AIPilotService) callLLMMessagesOnce(ctx context.Context, cfg AIAutopilo
 			"messages":    messages,
 			"temperature": 0.2,
 			"stream":      true,
-			// Cap runaway completions (prod saw 11k tokens / 3min). Full decision JSON fits.
-			"max_tokens": 8192,
+			// Compact actions JSON only — backend overwrites scores. Prod grok-4.6
+			// was emitting 13–19k tokens (incl. reasoning) and taking 4–6 minutes.
+			"max_tokens": 2048,
 			// Ask providers that support it to include usage on the final SSE chunk.
 			"stream_options": map[string]any{"include_usage": true},
+		}
+		if isGrokPilotModel(cfg.Model) {
+			body["reasoning_effort"] = "low"
+			body["max_completion_tokens"] = 2048
 		}
 		raw, _ = json.Marshal(body)
 	}

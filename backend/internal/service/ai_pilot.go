@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1172,15 +1173,17 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 					case AIActionRejected:
 						rejected++
 					}
+				}
+				for _, a := range compactPilotMemoryActions(list, 8) {
 					item := map[string]any{
 						"accountId": a.AccountID, "accountName": a.AccountName,
 						"op": a.Op, "before": a.Before, "after": a.After,
 						"state": a.State, "confidence": a.Confidence,
-						"reason":       truncateStr(a.Reason, 100),
-						"rejectReason": truncateStr(a.RejectReason, 80),
+						"reason":       truncateStr(a.Reason, 80),
+						"rejectReason": truncateStr(a.RejectReason, 60),
 					}
 					if strings.TrimSpace(a.Outcome) != "" {
-						item["outcome"] = truncateStr(a.Outcome, 160)
+						item["outcome"] = truncateStr(a.Outcome, 100)
 					}
 					acts = append(acts, item)
 				}
@@ -1269,6 +1272,46 @@ func (p *AIPilotService) buildSnapshot(ctx context.Context, from, to time.Time, 
 		"channels": chs, // keep key name channels for prompt compatibility; values are accounts
 	}
 	return snap, accounts, managed, probeMemo, traffic, recentTraffic, nil
+}
+
+func compactPilotMemoryActions(list []AIAction, max int) []AIAction {
+	if max <= 0 || len(list) == 0 {
+		return nil
+	}
+	if len(list) <= max {
+		return list
+	}
+	rank := func(op string) int {
+		switch op {
+		case AIOpDisable, AIOpEnable:
+			return 0
+		case AIOpSetPriority:
+			return 1
+		default:
+			return 2
+		}
+	}
+	// Keep original order among equal rank so the newest run still reads left-to-right.
+	idx := make([]int, len(list))
+	for i := range list {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(i, j int) bool {
+		ri, rj := rank(list[idx[i]].Op), rank(list[idx[j]].Op)
+		if ri != rj {
+			return ri < rj
+		}
+		return idx[i] < idx[j]
+	})
+	out := make([]AIAction, 0, max)
+	for _, i := range idx {
+		if len(out) >= max {
+			break
+		}
+		out = append(out, list[i])
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 type decision struct {
@@ -1628,8 +1671,9 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 2) **disable 仅硬失败/余额耗尽**;过贵号仅 pressureOn 时 p200+weight=0,禁止半池 ai_disabled
 3) disable 必须考虑 minAvailablePerGroup
 4) **恢复与停用同等重要**:每一轮扫 aiDisabled=true。
-   - 近窗无硬失败 → 应 enable(后端会自动解过度 disable)
-   - 近窗过半失败 / 401/403 额度 → 可保持停用; 502/503/超时探测失败 → 应 enable
+   - 近窗无硬失败且长窗不是尸体(SR≥50% 或样本不足) → 可 enable
+   - 近窗过半失败 / 长窗 SR<50% 且样本充足 / 401/403 额度 → 保持停用
+   - 探测 slow 或 502/503/超时 ≠ 应 enable; 那只说明 ping 通了,生产流可能仍在死
 5) 性价比/cost 必须看 money.rateConfidence.trustedComposite 与 groups[].peers 比价
    - compositeRate = rateMultiplier/rechargeMultiplier
    - **池内最便宜/次便宜且 probe pass** 若仍在 p≥150、而主层正在失败 → 应 set_priority 100,不要只 +weight
@@ -1643,14 +1687,15 @@ const aiPilotSystemPrompt = `你是 sub2api 号池的运维助手(自动驾驶)�
 
 【速度 — 必须遵守】
 - **优先单轮出最终 JSON**,不要轻易 probeRequests。snapshot 已带 activation;后端也会自动 enable/解埋。
-- summary ≤ 120 字;reason ≤ 80 字;每轮 actions 宁缺毋滥(≤8);scores 只写本轮真有证据的账号。
-- 输出必须是紧凑 JSON,禁止长篇推理。
+- summary ≤ 80 字;reason ≤ 60 字;每轮 actions ≤6。
+- **禁止输出 scores**(必须 [])。禁止复述号池。禁止长篇推理。紧凑 JSON 即可。
 
 【探测已绿的停用号 — 该放回来】
-- aiDisabled=true 且 activation.verdict=pass|slow → **应该 enable**(不是「可以考虑」)。
+- aiDisabled=true 且 activation.verdict=pass 且长窗不是尸体 → 可 enable,先留 p150,不要立刻抬到 100。
+- verdict=slow 或长窗/近窗过半失败 → **禁止 enable**(CoCo 类垃圾号会 ping 通 8s 然后生产全灭)。
 - **禁止**对 aiDisabled 账号只 set_weight「做准备」—— 它吃不到流量,纯空转。
 - 若 aiHistory 里 outcome 写着「改后零流量」,不要再同方向降级。
 
 最终轮必须输出 JSON(不要 markdown):
-{"summary":"...","actions":[{"accountId":1,"op":"set_priority","value":"100","reason":"...","confidence":0.8}],"scores":[{"accountId":1,"stability":80,"latency":70,"throughput":75,"cost":85,"overall":76.5,"confidence":0.85,"note":"..."}],"observations":[{"group":"1","note":"..."}],"notices":[],"probeRequests":[]}
-op 只能取自 policy.allowedOps。value 用字符串。scores 各维 0–100,越高越好;有新证据的账号都应打分;overall 按设置权重自洽。`
+{"summary":"...","actions":[{"accountId":1,"op":"set_priority","value":"100","reason":"...","confidence":0.8}],"scores":[],"observations":[{"group":"1","note":"..."}],"notices":[],"probeRequests":[]}
+op 只能取自 policy.allowedOps。value 用字符串。**scores 必须是 []**,后端按流量重算;写 scores 只会让 grok-4.6 推理拖到十几分钟。`

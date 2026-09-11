@@ -161,10 +161,10 @@ func injectCachePriorityBands(decision *decision, accounts []Account, cfg AIAuto
 		st := cacheStatsForScoring(rec, lg)
 		q, enough := cacheQualityOf(st)
 		c := cacheBandCand{acc: acc, stats: st, recent: rec, quality: q, eligible: enough, target: acc.Priority}
-		if recentWindowHardFail(rec) {
+		if recentWindowHardFail(rec) || longWindowDisableWorthy(lg) {
 			// Cache quality is a long-window signal. A live 502 failover storm
-			// must not keep the account in the main layer just because prefix
-			// cache used to look good.
+			// (or a 60-minute SR<50% corpse) must not keep/promote the account
+			// in the main layer just because prefix cache used to look good.
 			c.hardFail = true
 			c.eligible = true
 			c.target = AIPriorityBuriedThreshold

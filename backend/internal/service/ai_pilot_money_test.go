@@ -494,6 +494,15 @@ func TestWeightCrushAndDisableGates(t *testing.T) {
 	if reason := disableHealthyGateReasonEx(acc, long, recent, &quotaProbe); reason != "" {
 		t.Fatalf("quota 403 should allow disable: %s", reason)
 	}
+	// Long-window corpse (CoCo: SR 20% n=41) must be disableable even if recent n<10.
+	longDead := AccountTrafficStats{Requests: 8, Successes: 8, Errors: 33}
+	recentThin := AccountTrafficStats{Requests: 2, Successes: 1, Errors: 4}
+	if !longWindowDisableWorthy(longDead) {
+		t.Fatal("long SR 20% n=41 should be disable-worthy")
+	}
+	if reason := disableHealthyGateReason(acc, longDead, recentThin); reason != "" {
+		t.Fatalf("long-window corpse should allow disable: %s", reason)
+	}
 }
 
 func TestCooldownZeroHonorsNoFloor(t *testing.T) {

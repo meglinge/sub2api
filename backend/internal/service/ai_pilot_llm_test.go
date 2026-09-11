@@ -10,6 +10,45 @@ import (
 	"testing"
 )
 
+func TestIsGrokPilotModel(t *testing.T) {
+	t.Parallel()
+	if !isGrokPilotModel("grok-4.6") || !isGrokPilotModel("Grok-4") {
+		t.Fatal("grok models should match")
+	}
+	if isGrokPilotModel("gpt-5.5") || isGrokPilotModel("claude-sonnet-4-6") {
+		t.Fatal("non-grok must not match")
+	}
+}
+
+func TestCallLLMMessages_GrokSendsLowReasoningEffort(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body := string(raw)
+		if !strings.Contains(body, `"reasoning_effort":"low"`) {
+			t.Errorf("expected reasoning_effort=low body=%s", body)
+		}
+		if !strings.Contains(body, `"max_tokens":2048`) {
+			t.Errorf("expected max_tokens=2048 body=%s", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"{\"summary\":\"ok\",\"actions\":[],\"scores\":[]}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer srv.Close()
+
+	p := &AIPilotService{HTTP: srv.Client()}
+	cfg := DefaultAIAutopilotSettings()
+	cfg.BaseURL = srv.URL
+	cfg.APIKey = "sk-test"
+	cfg.Model = "grok-4.6"
+	cfg.TimeoutSeconds = 30
+	if _, _, _, err := p.callLLMMessages(context.Background(), cfg, []map[string]string{
+		{"role": "user", "content": "hi"},
+	}); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestCallLLMMessages_StreamOK(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -113,5 +152,7 @@ type simpleErr string
 
 func (e simpleErr) Error() string { return string(e) }
 
-func errTrunc() error { return simpleErr("LLM 响应截断或不完整 JSON: unexpected end of JSON input") }
-func errHard() error  { return simpleErr("LLM HTTP 401: unauthorized") }
+func errTrunc() error {
+	return simpleErr("LLM 响应截断或不完整 JSON: unexpected end of JSON input")
+}
+func errHard() error { return simpleErr("LLM HTTP 401: unauthorized") }

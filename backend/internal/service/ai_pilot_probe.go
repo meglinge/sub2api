@@ -808,6 +808,21 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 		if pr.Verdict != "pass" && pr.Verdict != "slow" {
 			continue
 		}
+		st := AccountTrafficStats{}
+		if longTraffic != nil {
+			st = longTraffic[acc.ID]
+		}
+		rst := AccountTrafficStats{}
+		if recentTraffic != nil {
+			rst = recentTraffic[acc.ID]
+		}
+		// Production corpse: a 8s ping / 502 "slow" must not undo a hard-fail disable.
+		if accountLooksDead(st, rst) {
+			continue
+		}
+		if pr.Verdict == "slow" && (st.Requests+st.Errors) >= 10 && !longWindowHealthyEnough(st) {
+			continue
+		}
 		// Depleted balance: do not auto-enable.
 		if reason := balanceGateReason(AIOpEnable, acc); reason != "" {
 			continue
@@ -841,23 +856,25 @@ func injectRecoveryEnables(decision *decision, accounts []Account, probes map[in
 		// Cost pressure: expensive accounts stay in spare (150) after enable — only deep exile lifts.
 		if !havePri[acc.ID] && cfg.OpAllowed(AIOpSetPriority) {
 			deep := ShouldUnburyPriority(acc.Priority)
-			soft := ShouldSoftUnburySpareTier(acc.Priority) && !costBlocksMainPromotion(acc, accounts, cfg, recentTraffic)
-			if deep || soft {
-				obs := RecoveryObservationPriority(acc.Priority)
-				if deep && costBlocksMainPromotion(acc, accounts, cfg, recentTraffic) {
-					// Lift out of 9000-class exile but keep spare tier, not main.
-					obs = AIPriorityBuriedThreshold
-				}
-				decision.Actions = append(decision.Actions, decisionAction{
-					AccountID:  acc.ID,
-					Op:         AIOpSetPriority,
-					Value:      strconv.Itoa(obs),
-					Reason:     fmt.Sprintf("恢复观察层: enable 后 priority 从 %d 提到 %d,避免埋葬层永久无流量", acc.Priority, obs),
-					Confidence: conf,
-				})
-				havePri[acc.ID] = true
-				injected++
+			if !deep {
+				// Spare-tier enable stays at p150 until a later healthy-long
+				// soft-unbury. Lifting to p100 on a ping put CoCo back on
+				// the main layer the same cycle it was disabled.
+				continue
 			}
+			obs := RecoveryObservationPriority(acc.Priority)
+			if costBlocksMainPromotion(acc, accounts, cfg, recentTraffic) {
+				obs = AIPriorityBuriedThreshold
+			}
+			decision.Actions = append(decision.Actions, decisionAction{
+				AccountID:  acc.ID,
+				Op:         AIOpSetPriority,
+				Value:      strconv.Itoa(obs),
+				Reason:     fmt.Sprintf("恢复观察层: enable 后 priority 从 %d 提到 %d,避免埋葬层永久无流量", acc.Priority, obs),
+				Confidence: conf,
+			})
+			havePri[acc.ID] = true
+			injected++
 		}
 	}
 	return injected

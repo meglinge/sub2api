@@ -403,6 +403,26 @@ func recentWindowDisableWorthy(st AccountTrafficStats) bool {
 	return sr < 0.50
 }
 
+// longWindowDisableWorthy is a 60-minute corpse: enough samples and SR still
+// below half. CoCo-class relays sat at long SR 20% n=41 / 168 errors while
+// the 3-minute recent window had n<10 after a disable, so
+// recentWindowDisableWorthy was false and disableHealthyGate rejected the
+// stop — then injectRecoveryEnables revived them on a slow ping.
+func longWindowDisableWorthy(st AccountTrafficStats) bool {
+	n := st.Requests + st.Errors
+	if n < 20 {
+		return false
+	}
+	sr := float64(st.Successes) / float64(n)
+	return sr < 0.50
+}
+
+// accountLooksDead is the shared "do not put this back on the main path"
+// signal: live outage, recent majority-fail, or a clearly dead long window.
+func accountLooksDead(long, recent AccountTrafficStats) bool {
+	return recentWindowHardFail(recent) || recentWindowDisableWorthy(recent) || longWindowDisableWorthy(long)
+}
+
 // softUnburyEligible gates automatic 150→100 lift for the classic path.
 // Requires real long-window sample health; refuses when recent is hard-failing.
 //
@@ -808,7 +828,7 @@ func disableHealthyGateReasonEx2(acc *Account, long, recent AccountTrafficStats,
 	if st, _, _ := balanceViewFromAccount(acc); strings.EqualFold(st, "depleted") {
 		return ""
 	}
-	if recentWindowDisableWorthy(recent) {
+	if recentWindowDisableWorthy(recent) || longWindowDisableWorthy(long) {
 		return ""
 	}
 	// Only fatal probe (401/403/quota). Transient 502/503/timeout is "slow", not fail.

@@ -11,6 +11,26 @@ import (
 	"time"
 )
 
+func TestCompactPilotMemoryActions_PrefersDisableEnable(t *testing.T) {
+	t.Parallel()
+	list := []AIAction{
+		{ID: 1, Op: AIOpSetWeight, AccountID: 1},
+		{ID: 2, Op: AIOpDisable, AccountID: 2},
+		{ID: 3, Op: AIOpSetWeight, AccountID: 3},
+		{ID: 4, Op: AIOpEnable, AccountID: 4},
+		{ID: 5, Op: AIOpSetPriority, AccountID: 5},
+	}
+	got := compactPilotMemoryActions(list, 3)
+	if len(got) != 3 {
+		t.Fatalf("len=%d", len(got))
+	}
+	ops := []string{got[0].Op, got[1].Op, got[2].Op}
+	joined := strings.Join(ops, ",")
+	if !strings.Contains(joined, AIOpDisable) || !strings.Contains(joined, AIOpEnable) {
+		t.Fatalf("should keep disable/enable, got %v", ops)
+	}
+}
+
 func TestCollectRecoveryProbeRequests_PrioritizesAIDisabled(t *testing.T) {
 	t.Parallel()
 	accounts := []Account{
@@ -38,6 +58,34 @@ func TestCollectRecoveryProbeRequests_PrioritizesAIDisabled(t *testing.T) {
 	capped := collectRecoveryProbeRequests(accounts, traffic, 1)
 	if len(capped) != 1 || capped[0].AccountID != 2 {
 		t.Fatalf("cap=1 should take first disabled: %+v", capped)
+	}
+}
+
+func TestInjectRecoveryEnables_SlowProbeDoesNotReviveDeadAccount(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultAIAutopilotSettings()
+	accounts := []Account{
+		{ID: 6520, Name: "CoCo", AIDisabled: true, Priority: 150, ScheduleWeight: 16,
+			Status: StatusActive, Schedulable: true},
+	}
+	probes := map[int64]activationResult{
+		6520: {AccountID: 6520, Verdict: "slow", Fresh: true, TTFBMs: 8000, Source: "upstream"},
+	}
+	long := map[int64]AccountTrafficStats{
+		6520: {Requests: 8, Successes: 8, Errors: 33},
+	}
+	recent := map[int64]AccountTrafficStats{
+		6520: {Requests: 1, Successes: 1, Errors: 22},
+	}
+	d := decision{}
+	n := injectRecoveryEnables(&d, accounts, probes, long, recent, cfg, nil, time.Time{})
+	for _, a := range d.Actions {
+		if a.AccountID == 6520 && a.Op == AIOpEnable {
+			t.Fatalf("dead CoCo must not be re-enabled on slow ping, n=%d acts=%+v", n, d.Actions)
+		}
+		if a.AccountID == 6520 && a.Op == AIOpSetPriority {
+			t.Fatalf("dead CoCo must not be lifted to main, n=%d acts=%+v", n, d.Actions)
+		}
 	}
 }
 
