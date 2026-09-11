@@ -514,7 +514,7 @@ func (p *AIPilotService) Analyze(ctx context.Context, trigger string) (AIRun, er
 		p.Log.Info("ai pilot injected cost isolations", "count", n, "trigger", trigger)
 	}
 	// Cheap peers boom/temp-unsched/hard-fail → re-enable cost-isolated expensive as fallback.
-	if n := injectCostIsolationReleases(&finalDecision, accounts, cfg, recentTraffic); n > 0 && p.Log != nil {
+	if n := injectCostIsolationReleases(&finalDecision, accounts, cfg, recentTraffic, longTraffic); n > 0 && p.Log != nil {
 		p.Log.Info("ai pilot injected cost isolation releases", "count", n, "trigger", trigger)
 	}
 	// Last: rewrite schedule_weight from overall so leftover 3万权 / ±20 微调不能盖过设置比例.

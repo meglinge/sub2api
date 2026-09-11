@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
@@ -188,7 +189,11 @@ func (s *OpenAIGatewayService) ClearStickySessionOnFailure(
 	if s == nil || strings.TrimSpace(sessionHash) == "" {
 		return
 	}
-	if err := s.deleteStickySessionAccountID(ctx, groupID, sessionHash); err != nil {
+	// Request ctx is often already canceled (client gone / stream abort).
+	// Cleanup must still reach Redis or the next continue re-pins the dead account.
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := s.deleteStickySessionAccountID(cleanupCtx, groupID, sessionHash); err != nil {
 		logger.L().With(zap.String("component", "service.openai_gateway")).Warn(
 			"openai.sticky_session_clear_failed",
 			zap.Int64("group_id", derefGroupID(groupID)),
@@ -298,7 +303,9 @@ func (s *OpenAIGatewayService) clearPreviousResponseSticky(ctx context.Context, 
 	if store == nil {
 		return
 	}
-	if err := store.DeleteResponseAccount(ctx, derefGroupID(groupID), previousResponseID); err != nil {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := store.DeleteResponseAccount(cleanupCtx, derefGroupID(groupID), previousResponseID); err != nil {
 		logger.L().With(zap.String("component", "service.openai_gateway")).Warn(
 			"openai.previous_response_sticky_clear_failed",
 			zap.Int64("group_id", derefGroupID(groupID)),

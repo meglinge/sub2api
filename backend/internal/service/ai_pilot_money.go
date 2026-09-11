@@ -1455,9 +1455,13 @@ func injectCostIsolations(decision *decision, accounts []Account, cfg AIAutopilo
 // for cost, and restores p200+weight=0 soft-quarantine when the account is no
 // longer very-expensive vs a *healthy* cheapest peer (2chat vs dead 梦幻 0.045).
 // Hard-fail / depleted stays disabled / quarantined.
-func injectCostIsolationReleases(decision *decision, accounts []Account, cfg AIAutopilotSettings, recent map[int64]AccountTrafficStats) int {
+func injectCostIsolationReleases(decision *decision, accounts []Account, cfg AIAutopilotSettings, recent map[int64]AccountTrafficStats, long ...map[int64]AccountTrafficStats) int {
 	if decision == nil {
 		return 0
+	}
+	var longTraffic map[int64]AccountTrafficStats
+	if len(long) > 0 {
+		longTraffic = long[0]
 	}
 	haveEnable := map[int64]bool{}
 	havePri := map[int64]bool{}
@@ -1481,11 +1485,16 @@ func injectCostIsolationReleases(decision *decision, accounts []Account, cfg AIA
 		if reason := balanceGateReason(AIOpEnable, acc); reason != "" {
 			continue
 		}
-		var rst AccountTrafficStats
+		var rst, lst AccountTrafficStats
 		if recent != nil {
 			rst = recent[acc.ID]
 		}
-		if recentWindowHardFail(rst) {
+		if longTraffic != nil {
+			lst = longTraffic[acc.ID]
+		}
+		// Empty recent after a hard-fail disable is not "over-disable".
+		// CoCo was re-enabled next cycle because the 3-minute window went quiet.
+		if accountLooksDead(lst, rst) {
 			continue
 		}
 		sig := accountCostSignalOf(acc)

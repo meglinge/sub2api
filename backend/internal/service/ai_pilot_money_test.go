@@ -750,6 +750,16 @@ func TestCostIsolationDisableAndBlockEnable(t *testing.T) {
 	if n := injectCostIsolationReleases(&d4, pool, cfg, hard); n != 0 {
 		t.Fatalf("hard-fail must stay disabled, n=%d acts=%+v", n, d4.Actions)
 	}
+	// Long-window corpse with empty recent (just disabled) must stay disabled.
+	pool[1].AIDisabled = true
+	d5 := decision{}
+	emptyRecent := map[int64]AccountTrafficStats{2: {}}
+	longDead := map[int64]AccountTrafficStats{
+		2: {Requests: 8, Successes: 8, Errors: 120},
+	}
+	if n := injectCostIsolationReleases(&d5, pool, cfg, emptyRecent, longDead); n != 0 {
+		t.Fatalf("long-window corpse must not be released as over-disable, n=%d acts=%+v", n, d5.Actions)
+	}
 
 	// 麻豆-class 0.06 vs 0.04 should soft-unbury from p200.
 	madou := Account{
