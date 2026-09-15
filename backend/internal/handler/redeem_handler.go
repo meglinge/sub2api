@@ -3,6 +3,7 @@ package handler
 import (
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -82,4 +83,26 @@ func (h *RedeemHandler) GetHistory(c *gin.Context) {
 		out = append(out, *dto.RedeemCodeFromService(&codes[i]))
 	}
 	response.Success(c, out)
+}
+
+// GetMonthStats returns the current calendar-month recharge total for the user.
+// GET /api/v1/redeem/month-stats
+func (h *RedeemHandler) GetMonthStats(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	amount, period, err := h.redeemService.CurrentMonthRecharged(c.Request.Context(), subject.UserID, timezone.Now())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"period":   period,
+		"amount":   amount,
+		"timezone": timezone.Name(),
+	})
 }

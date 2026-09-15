@@ -57,6 +57,12 @@ type GatewayHandler struct {
 	maxAccountSwitchesGemini  int
 	cfg                       *config.Config
 	settingService            *service.SettingService
+	monthRechargeLookup       monthRechargeLookup
+}
+
+// monthRechargeLookup is optional: KeyBillingInfo omits month recharge when nil.
+type monthRechargeLookup interface {
+	CurrentMonthRecharged(ctx context.Context, userID int64, now time.Time) (amount float64, period string, err error)
 }
 
 // NewGatewayHandler creates a new GatewayHandler

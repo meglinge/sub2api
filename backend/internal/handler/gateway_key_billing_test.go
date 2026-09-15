@@ -64,6 +64,41 @@ func newKeyBillingContext(apiKey *service.APIKey) (*gin.Context, *httptest.Respo
 	return c, w
 }
 
+type fakeMonthRechargeLookup struct {
+	amount float64
+	period string
+	err    error
+}
+
+func (f fakeMonthRechargeLookup) CurrentMonthRecharged(context.Context, int64, time.Time) (float64, string, error) {
+	return f.amount, f.period, f.err
+}
+
+func TestGatewayHandlerKeyBillingInfoIncludesMonthRecharge(t *testing.T) {
+	groupID := int64(7)
+	apiKey := &service.APIKey{
+		UserID:  11,
+		GroupID: &groupID,
+		Key:     "sk-sensitive-value",
+		Group: &service.Group{
+			ID:             groupID,
+			RateMultiplier: 0.75,
+		},
+	}
+	c, w := newKeyBillingContext(apiKey)
+	h := newKeyBillingHandler(nil)
+	amount := 18.25
+	h.monthRechargeLookup = fakeMonthRechargeLookup{amount: amount, period: "2026-09"}
+	h.KeyBillingInfo(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var got keyBillingInfoResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.NotNil(t, got.MonthRechargedUSD)
+	require.Equal(t, 18.25, *got.MonthRechargedUSD)
+	require.Equal(t, "2026-09", got.MonthRechargedPeriod)
+}
+
 func TestGatewayHandlerKeyBillingInfoUsesGroupRate(t *testing.T) {
 	groupID := int64(7)
 	apiKey := &service.APIKey{

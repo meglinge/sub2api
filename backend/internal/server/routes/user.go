@@ -124,6 +124,7 @@ func RegisterUserRoutes(
 		{
 			redeem.POST("", h.Redeem.Redeem)
 			redeem.GET("/history", h.Redeem.GetHistory)
+			redeem.GET("/month-stats", h.Redeem.GetMonthStats)
 		}
 
 		// 用户订阅

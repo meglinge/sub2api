@@ -3968,6 +3968,16 @@ const syncFormFromAccount = (newAccount: Account | null) => {
         })
       )
     }
+    const monthUsd = Number(extra?.ai_month_recharged_usd)
+    const monthPeriod = typeof extra?.ai_month_recharged_period === 'string' ? extra.ai_month_recharged_period : ''
+    if (monthPeriod && Number.isFinite(monthUsd) && monthUsd >= 0) {
+      parts.push(
+        t('admin.accounts.autopilotMoney.statusMonthRecharged', {
+          usd: monthUsd.toFixed(2),
+          period: monthPeriod
+        })
+      )
+    }
     autopilotMoneyStatusLine.value = parts.join(' · ')
   }
 

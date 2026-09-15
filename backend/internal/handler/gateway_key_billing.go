@@ -28,6 +28,11 @@ type keyBillingInfoResponse struct {
 	EffectiveRateMultiplier float64   `json:"effective_rate_multiplier"`
 	Timezone                *string   `json:"timezone,omitempty"`
 	ObservedAt              time.Time `json:"observed_at"`
+	// MonthRechargedUSD is the current calendar-month sum of positive
+	// balance credits (redeem codes + admin adds). Omitted when the lookup
+	// is unavailable so older clients and failed sums do not look like $0.
+	MonthRechargedUSD    *float64 `json:"month_recharged_usd,omitempty"`
+	MonthRechargedPeriod string   `json:"month_recharged_period,omitempty"`
 }
 
 // KeyBillingInfo returns the token billing multiplier effective for the authenticated API key.
@@ -58,7 +63,21 @@ func (h *GatewayHandler) KeyBillingInfo(c *gin.Context) {
 	}
 
 	c.Header("Cache-Control", "no-store")
-	c.JSON(http.StatusOK, buildKeyBillingInfo(apiKey, resolvedRate, timezone.Now()))
+	info := buildKeyBillingInfo(apiKey, resolvedRate, timezone.Now())
+	h.attachMonthRecharge(c, apiKey, &info)
+	c.JSON(http.StatusOK, info)
+}
+
+func (h *GatewayHandler) attachMonthRecharge(c *gin.Context, apiKey *service.APIKey, info *keyBillingInfoResponse) {
+	if h == nil || h.monthRechargeLookup == nil || apiKey == nil || info == nil {
+		return
+	}
+	amount, period, err := h.monthRechargeLookup.CurrentMonthRecharged(c.Request.Context(), apiKey.UserID, timezone.Now())
+	if err != nil || period == "" {
+		return
+	}
+	info.MonthRechargedUSD = &amount
+	info.MonthRechargedPeriod = period
 }
 
 func (h *GatewayHandler) resolveKeyBillingRate(c *gin.Context, apiKey *service.APIKey) (float64, bool) {

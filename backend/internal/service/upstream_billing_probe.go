@@ -179,6 +179,8 @@ type upstreamBillingProbeResponse struct {
 	EffectiveRateMultiplier *float64 `json:"effective_rate_multiplier"`
 	Timezone                *string  `json:"timezone"`
 	ObservedAt              string   `json:"observed_at"`
+	MonthRechargedUSD       *float64 `json:"month_recharged_usd"`
+	MonthRechargedPeriod    string   `json:"month_recharged_period"`
 }
 
 // GetUpstreamBillingProbeSettings returns defaults when the setting is absent.
@@ -1011,7 +1013,21 @@ func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {
 	if !equalBillingMultiplier(*response.EffectiveRateMultiplier, *response.ResolvedRateMultiplier*appliedPeak) {
 		return nil, fmt.Errorf("inconsistent effective billing multiplier")
 	}
+	if amount, period, ok := monthRechargeFromMap(map[string]any{
+		"month_recharged_usd":    anyFromFloatPtr(response.MonthRechargedUSD),
+		"month_recharged_period": response.MonthRechargedPeriod,
+	}); ok {
+		data["month_recharged_usd"] = amount
+		data["month_recharged_period"] = period
+	}
 	return data, nil
+}
+
+func anyFromFloatPtr(v *float64) any {
+	if v == nil {
+		return nil
+	}
+	return *v
 }
 
 func upstreamBillingRateAt(data map[string]any, now time.Time) (float64, bool) {

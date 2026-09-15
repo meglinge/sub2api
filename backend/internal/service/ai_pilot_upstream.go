@@ -8,9 +8,12 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
 
 // OneAPIGroup is a user-visible group with billing ratio.
@@ -286,6 +289,205 @@ func ParseSub2APIBillingRate(body []byte) (rate float64, ok bool) {
 	return 0, false
 }
 
+var monthPeriodPattern = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)
+
+func shouldRefreshSub2APIMonth(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "newapi", "oneapi":
+		return false
+	default:
+		return true
+	}
+}
+
+func currentMonthPeriod() string {
+	return timezone.StartOfMonth(timezone.Now()).Format("2006-01")
+}
+
+func monthRechargeStale(acc *Account) bool {
+	if acc == nil {
+		return true
+	}
+	ts := extraString(acc.Extra, ExtraAIMonthRechargedAt)
+	if ts == "" {
+		return true
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil || time.Since(t) > AIMonthRechargeCacheMaxAge {
+		return true
+	}
+	period := extraString(acc.Extra, ExtraAIMonthRechargedPeriod)
+	if period != "" && period != currentMonthPeriod() {
+		return true
+	}
+	return false
+}
+
+func probeSnapshotMonthMap(acc *Account) map[string]any {
+	if acc == nil {
+		return nil
+	}
+	snap := decodeUpstreamBillingProbeSnapshot(acc.Extra)
+	if snap == nil {
+		return nil
+	}
+	return snap.Data
+}
+
+func ParseSub2APIMonthRecharge(body []byte) (amount float64, period string, ok bool) {
+	var obj map[string]any
+	if json.Unmarshal(body, &obj) != nil {
+		return 0, "", false
+	}
+	if inner, ok := obj["data"].(map[string]any); ok {
+		if amount, period, ok := monthRechargeFromMap(inner); ok {
+			return amount, period, true
+		}
+	}
+	return monthRechargeFromMap(obj)
+}
+
+func monthRechargeFromMap(obj map[string]any) (amount float64, period string, ok bool) {
+	if obj == nil {
+		return 0, "", false
+	}
+	period = strAny(obj["month_recharged_period"])
+	if period == "" {
+		period = strAny(obj["period"])
+	}
+	if !monthPeriodPattern.MatchString(period) {
+		return 0, "", false
+	}
+	if _, hasUSD := obj["month_recharged_usd"]; hasUSD {
+		amount = anyToFloat64(obj["month_recharged_usd"])
+	} else if _, hasAmount := obj["amount"]; hasAmount {
+		amount = anyToFloat64(obj["amount"])
+	} else {
+		return 0, "", false
+	}
+	if amount < 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
+		return 0, "", false
+	}
+	return amount, period, true
+}
+
+func parseSub2APIMonthStats(body []byte) (amount float64, period string, ok bool) {
+	return ParseSub2APIMonthRecharge(body)
+}
+
+func parseSub2APIRedeemHistoryMonth(body []byte, monthStart, monthEnd time.Time) (amount float64, partial bool, ok bool) {
+	items := unwrapJSONArray(body)
+	if items == nil {
+		return 0, false, false
+	}
+	ok = true
+	var oldest time.Time
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		if m == nil {
+			continue
+		}
+		typ := strAny(m["type"])
+		if typ != RedeemTypeBalance && typ != AdjustmentTypeAdminBalance {
+			continue
+		}
+		value := anyToFloat64(m["value"])
+		if value <= 0 {
+			continue
+		}
+		usedAt := parseJSONTime(m["used_at"])
+		if usedAt.IsZero() {
+			usedAt = parseJSONTime(m["created_at"])
+		}
+		if usedAt.IsZero() {
+			continue
+		}
+		if oldest.IsZero() || usedAt.Before(oldest) {
+			oldest = usedAt
+		}
+		if !usedAt.Before(monthStart) && usedAt.Before(monthEnd) {
+			amount += value
+		}
+	}
+	if !oldest.IsZero() && !oldest.Before(monthStart) && len(items) >= 25 {
+		partial = true
+	}
+	return amount, partial, true
+}
+
+func unwrapJSONArray(body []byte) []any {
+	var root any
+	if json.Unmarshal(body, &root) != nil {
+		return nil
+	}
+	switch v := root.(type) {
+	case []any:
+		return v
+	case map[string]any:
+		if d, ok := v["data"].([]any); ok {
+			return d
+		}
+		if d, ok := v["data"].(map[string]any); ok {
+			if items, ok := d["items"].([]any); ok {
+				return items
+			}
+		}
+	}
+	return nil
+}
+
+func parseJSONTime(v any) time.Time {
+	switch t := v.(type) {
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return time.Time{}
+		}
+		for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+			if parsed, err := time.Parse(layout, s); err == nil {
+				return parsed
+			}
+		}
+	case float64:
+		if t > 1e12 {
+			return time.UnixMilli(int64(t))
+		}
+		if t > 0 {
+			return time.Unix(int64(t), 0)
+		}
+	}
+	return time.Time{}
+}
+
+func (p *AIPilotService) fetchSub2APIMonthRechargeFromPanel(ctx context.Context, acc *Account, base string) (amount float64, period string, partial bool, source string, ok bool) {
+	jwt, err := p.ensureSub2APIPanelJWT(ctx, acc, base)
+	if err != nil || jwt == "" {
+		return 0, "", false, "", false
+	}
+	for _, path := range []string{"/api/v1/redeem/month-stats", "/redeem/month-stats"} {
+		st, body, e := p.sub2apiPanelDo(ctx, base, jwt, http.MethodGet, path, nil)
+		if e != nil || st != 200 {
+			continue
+		}
+		if amt, per, parsed := parseSub2APIMonthStats(body); parsed {
+			return amt, per, false, "month_stats", true
+		}
+	}
+	monthStart := timezone.StartOfMonth(timezone.Now())
+	monthEnd := monthStart.AddDate(0, 1, 0)
+	for _, path := range []string{"/api/v1/redeem/history", "/redeem/history"} {
+		st, body, e := p.sub2apiPanelDo(ctx, base, jwt, http.MethodGet, path, nil)
+		if e != nil || st != 200 {
+			continue
+		}
+		amt, part, parsed := parseSub2APIRedeemHistoryMonth(body, monthStart, monthEnd)
+		if parsed {
+			return amt, monthStart.Format("2006-01"), part, "redeem_history", true
+		}
+	}
+	return 0, "", false, "", false
+}
+
 // RemainQuotaToBalance converts new-api remain_quota units to status+USD.
 func RemainQuotaToBalance(remain int64) (status string, usd float64) {
 	if remain < 0 {
@@ -310,6 +512,7 @@ func (p *AIPilotService) ForceResolveAccountMoney(ctx context.Context, acc *Acco
 	if acc != nil && acc.Extra != nil {
 		delete(acc.Extra, ExtraAIRateCheckedAt)
 		delete(acc.Extra, ExtraAIBalanceCheckedAt)
+		delete(acc.Extra, ExtraAIMonthRechargedAt)
 	}
 	return p.ResolveAccountMoney(ctx, acc)
 }
@@ -319,6 +522,7 @@ func (p *AIPilotService) ForceResolveAccountMoney(ctx context.Context, acc *Acco
 //  2. account API key → /v1/sub2api/billing rate, else /v1/usage actual_cost/cost
 //     (older sub2api forks such as codekey have usage but no billing endpoint)
 //     + /v1/usage or /api/usage/token balance
+//
 // otherwise uses cached extra / billing probe / defaults. Never invents multi-group rates.
 // When a live refresh succeeds, mutations are written to acc.Extra and persisted via
 // Accounts.UpdateExtra so applyDecisionActions (GetByID) sees depleted/rate state.
@@ -399,13 +603,80 @@ func (p *AIPilotService) ResolveAccountMoney(ctx context.Context, acc *Account) 
 	}
 	// sub2api key billing when cache is stale. Gated on *kind* (newapi/oneapi
 	// stay on the mgmt path) and skip when a newer official probe already won.
-	if base != "" && apiKey != "" && !rateCacheFresh(acc) && shouldRefreshSub2APIBilling(kind, gotRate) {
-		if r, ok := p.fetchSub2APIRate(ctx, base, apiKey); ok {
-			writeRate(r, "sub2api")
-			gotRate = true
-		} else if r, ok := p.fetchSub2APIUsageRate(ctx, base, apiKey); ok {
+	var billingBody []byte
+	haveBilling := false
+	wantSub2APIBilling := base != "" && apiKey != "" && shouldRefreshSub2APIBilling(kind, false)
+	needBillingHTTP := wantSub2APIBilling && ((!rateCacheFresh(acc) && !gotRate) || monthRechargeStale(acc))
+	if needBillingHTTP {
+		billingBody, haveBilling = p.fetchSub2APIBilling(ctx, base, apiKey)
+	}
+	if haveBilling {
+		if !gotRate && !rateCacheFresh(acc) {
+			if r, ok := ParseSub2APIBillingRate(billingBody); ok {
+				writeRate(r, "sub2api")
+				gotRate = true
+			}
+		}
+	} else if base != "" && apiKey != "" && !rateCacheFresh(acc) && shouldRefreshSub2APIBilling(kind, gotRate) {
+		if r, ok := p.fetchSub2APIUsageRate(ctx, base, apiKey); ok {
 			writeRate(r, "sub2api_usage")
 			gotRate = true
+		}
+	}
+	if !gotRate && haveBilling {
+		if r, ok := p.fetchSub2APIUsageRate(ctx, base, apiKey); ok {
+			writeRate(r, "sub2api_usage")
+			gotRate = true
+		}
+	}
+
+	gotMonth := !monthRechargeStale(acc)
+	writeMonth := func(amount float64, period, src string, partial bool) {
+		if acc.Extra == nil {
+			acc.Extra = map[string]any{}
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		acc.Extra[ExtraAIMonthRechargedUSD] = amount
+		acc.Extra[ExtraAIMonthRechargedPeriod] = period
+		acc.Extra[ExtraAIMonthRechargedAt] = now
+		acc.Extra[ExtraAIMonthRechargedSource] = src
+		persist[ExtraAIMonthRechargedUSD] = amount
+		persist[ExtraAIMonthRechargedPeriod] = period
+		persist[ExtraAIMonthRechargedAt] = now
+		persist[ExtraAIMonthRechargedSource] = src
+		if partial {
+			acc.Extra[ExtraAIMonthRechargedPartial] = true
+			persist[ExtraAIMonthRechargedPartial] = true
+		} else {
+			delete(acc.Extra, ExtraAIMonthRechargedPartial)
+			persist[ExtraAIMonthRechargedPartial] = false
+		}
+		gotMonth = true
+	}
+	stampMonthAttempt := func() {
+		if acc.Extra == nil {
+			acc.Extra = map[string]any{}
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		acc.Extra[ExtraAIMonthRechargedAt] = now
+		persist[ExtraAIMonthRechargedAt] = now
+	}
+	if !gotMonth && shouldRefreshSub2APIMonth(kind) {
+		if amount, period, ok := monthRechargeFromMap(probeSnapshotMonthMap(acc)); ok {
+			writeMonth(amount, period, "billing_probe", false)
+		}
+		if !gotMonth && haveBilling {
+			if amount, period, ok := ParseSub2APIMonthRecharge(billingBody); ok {
+				writeMonth(amount, period, "billing", false)
+			}
+		}
+		if !gotMonth && strings.EqualFold(kind, "sub2api") && base != "" {
+			if amount, period, partial, src, ok := p.fetchSub2APIMonthRechargeFromPanel(ctx, acc, base); ok {
+				writeMonth(amount, period, src, partial)
+			}
+		}
+		if !gotMonth {
+			stampMonthAttempt()
 		}
 	}
 
@@ -575,13 +846,13 @@ func (p *AIPilotService) fetchNewAPIBalance(ctx context.Context, base, token, us
 	return ParseOneAPIBalanceSelf(body)
 }
 
-// fetchSub2APIRate probes /v1/sub2api/billing with the account API key.
-func (p *AIPilotService) fetchSub2APIRate(ctx context.Context, base, apiKey string) (float64, bool) {
+// fetchSub2APIBilling probes GET /v1/sub2api/billing with the account API key.
+func (p *AIPilotService) fetchSub2APIBilling(ctx context.Context, base, apiKey string) ([]byte, bool) {
 	st, body, err := p.apiKeyDo(ctx, base, apiKey, http.MethodGet, "/v1/sub2api/billing")
 	if err != nil || st != 200 {
-		return 0, false
+		return nil, false
 	}
-	return ParseSub2APIBillingRate(body)
+	return body, true
 }
 
 // fetchSub2APIUsageRate infers the group rate from GET /v1/usage actual_cost/cost.

@@ -408,6 +408,34 @@ func (r *redeemCodeRepository) SumPositiveBalanceByUser(ctx context.Context, use
 	return result[0].Sum, nil
 }
 
+func (r *redeemCodeRepository) SumPositiveBalanceByUserInRange(ctx context.Context, userID int64, from, to time.Time) (float64, error) {
+	var result []struct {
+		Sum float64 `json:"sum"`
+	}
+	q := r.client.RedeemCode.Query().
+		Where(
+			redeemcode.UsedByEQ(userID),
+			redeemcode.ValueGT(0),
+			redeemcode.TypeIn("balance", "admin_balance"),
+			redeemcode.UsedAtNotNil(),
+		)
+	if !from.IsZero() {
+		q = q.Where(redeemcode.UsedAtGTE(from))
+	}
+	if !to.IsZero() {
+		q = q.Where(redeemcode.UsedAtLT(to))
+	}
+	err := q.Aggregate(dbent.As(dbent.Sum(redeemcode.FieldValue), "sum")).
+		Scan(ctx, &result)
+	if err != nil {
+		return 0, err
+	}
+	if len(result) == 0 {
+		return 0, nil
+	}
+	return result[0].Sum, nil
+}
+
 func redeemCodeEntityToService(m *dbent.RedeemCode) *service.RedeemCode {
 	if m == nil {
 		return nil

@@ -162,6 +162,10 @@ func (r *paymentOrderLifecycleRedeemRepo) SumPositiveBalanceByUser(context.Conte
 	panic("unexpected call")
 }
 
+func (r *paymentOrderLifecycleRedeemRepo) SumPositiveBalanceByUserInRange(context.Context, int64, time.Time, time.Time) (float64, error) {
+	panic("unexpected call")
+}
+
 func TestVerifyOrderByOutTradeNoBackfillsTradeNoFromPaidQuery(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentOrderLifecycleTestClient(t)

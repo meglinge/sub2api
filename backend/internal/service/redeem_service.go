@@ -13,6 +13,7 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
 
 var (
@@ -66,6 +67,9 @@ type RedeemCodeRepository interface {
 	ListByUserPaginated(ctx context.Context, userID int64, params pagination.PaginationParams, codeType string) ([]RedeemCode, *pagination.PaginationResult, error)
 	// SumPositiveBalanceByUser returns the total recharged amount (sum of positive balance values) for a user.
 	SumPositiveBalanceByUser(ctx context.Context, userID int64) (float64, error)
+	// SumPositiveBalanceByUserInRange returns positive balance/admin_balance credits
+	// whose used_at falls in [from, to).
+	SumPositiveBalanceByUserInRange(ctx context.Context, userID int64, from, to time.Time) (float64, error)
 }
 
 // GenerateCodesRequest 生成兑换码请求
@@ -660,6 +664,24 @@ func (s *RedeemService) GetUserHistory(ctx context.Context, userID int64, limit 
 		return nil, fmt.Errorf("get user redeem history: %w", err)
 	}
 	return codes, nil
+}
+
+// CurrentMonthRecharged sums positive balance credits (redeem + admin add) in the
+// current calendar month of the configured timezone.
+func (s *RedeemService) CurrentMonthRecharged(ctx context.Context, userID int64, now time.Time) (amount float64, period string, err error) {
+	if s == nil || s.redeemRepo == nil {
+		return 0, "", fmt.Errorf("redeem repository is unavailable")
+	}
+	if now.IsZero() {
+		now = timezone.Now()
+	}
+	start := timezone.StartOfMonth(now)
+	end := start.AddDate(0, 1, 0)
+	amount, err = s.redeemRepo.SumPositiveBalanceByUserInRange(ctx, userID, start, end)
+	if err != nil {
+		return 0, "", fmt.Errorf("sum month recharged: %w", err)
+	}
+	return amount, start.Format("2006-01"), nil
 }
 
 // reduceOrCancelSubscription 缩短订阅天数，剩余天数 <= 0 时取消订阅

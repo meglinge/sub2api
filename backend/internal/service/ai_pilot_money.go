@@ -46,6 +46,9 @@ const (
 	// AIRateCacheMaxAge: soft cache for 计费倍率 (newapi/sub2api rate). Rates change
 	// rarely; 5m matches the default upstream billing probe cadence and cuts probe load.
 	AIRateCacheMaxAge = 5 * time.Minute
+	// AIMonthRechargeCacheMaxAge: monthly recharge totals only change when the
+	// operator tops up. 30m is enough for cost scanning without extra panel logins.
+	AIMonthRechargeCacheMaxAge = 30 * time.Minute
 	// AISuggestionMaxAge auto-dismisses pending suggestions older than this.
 	AISuggestionMaxAge = 2 * time.Hour
 
@@ -72,6 +75,14 @@ const (
 	ExtraAIRateMultiplier   = "ai_rate_multiplier" // last resolved group rate
 	ExtraAIRateSource       = "ai_rate_source"
 	ExtraAIRateCheckedAt    = "ai_rate_checked_at"
+	// ExtraAIMonthRechargedUSD is the current calendar-month positive balance
+	// credit total on the upstream sub2api (redeem + admin add). Used as a
+	// cost signal in account management. new-api is not populated.
+	ExtraAIMonthRechargedUSD     = "ai_month_recharged_usd"
+	ExtraAIMonthRechargedPeriod  = "ai_month_recharged_period" // YYYY-MM
+	ExtraAIMonthRechargedAt      = "ai_month_recharged_at"
+	ExtraAIMonthRechargedSource  = "ai_month_recharged_source" // billing | billing_probe | month_stats | redeem_history
+	ExtraAIMonthRechargedPartial = "ai_month_recharged_partial"
 	// ExtraExcludeFromSchedule marks control-plane / LLM-only accounts (e.g. GPTX for
 	// AI autopilot). They never enter normal gateway traffic scheduling; only
 	// requests tagged with X-Sub2API-Client: ai-autopilot may select them.

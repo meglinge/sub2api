@@ -583,6 +583,42 @@ func TestUpstreamBillingProbeWithoutSyncIgnoresUnusableDeclaredRate(t *testing.T
 	require.Nil(t, account.RateMultiplier)
 }
 
+func TestUpstreamBillingProbeParsesOptionalMonthRecharge(t *testing.T) {
+	data, err := parseUpstreamBillingProbeResponse([]byte(`{
+		"object":"sub2api.key_billing",
+		"schema_version":1,
+		"billing_scope":"token",
+		"group_rate_multiplier":0.8,
+		"resolved_rate_multiplier":0.8,
+		"peak_rate_enabled":false,
+		"effective_rate_multiplier":0.8,
+		"observed_at":"2026-07-13T01:00:00Z",
+		"month_recharged_usd":42.5,
+		"month_recharged_period":"2026-09"
+	}`))
+	require.NoError(t, err)
+	require.Equal(t, 42.5, data["month_recharged_usd"])
+	require.Equal(t, "2026-09", data["month_recharged_period"])
+}
+
+func TestUpstreamBillingProbeIgnoresMissingMonthRecharge(t *testing.T) {
+	data, err := parseUpstreamBillingProbeResponse([]byte(`{
+		"object":"sub2api.key_billing",
+		"schema_version":1,
+		"billing_scope":"token",
+		"group_rate_multiplier":0.8,
+		"resolved_rate_multiplier":0.8,
+		"peak_rate_enabled":false,
+		"effective_rate_multiplier":0.8,
+		"observed_at":"2026-07-13T01:00:00Z"
+	}`))
+	require.NoError(t, err)
+	_, hasUSD := data["month_recharged_usd"]
+	_, hasPeriod := data["month_recharged_period"]
+	require.False(t, hasUSD)
+	require.False(t, hasPeriod)
+}
+
 func TestUpstreamBillingProbeRejectsMissingRequiredMultiplier(t *testing.T) {
 	_, err := parseUpstreamBillingProbeResponse([]byte(`{
 		"object":"sub2api.key_billing",

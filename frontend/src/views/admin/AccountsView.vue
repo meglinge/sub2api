@@ -415,6 +415,25 @@
             </span>
             <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
           </template>
+          <template #header-upstream_month_recharged="{ column }">
+            <div class="flex items-center gap-1">
+              <span>{{ column.label }}</span>
+              <span @click.stop>
+                <HelpTooltip :content="t('admin.accounts.upstreamMonthRecharged.hint')" width-class="w-80" />
+              </span>
+            </div>
+          </template>
+          <template #cell-upstream_month_recharged="{ row }">
+            <span
+              v-if="showMonthRecharged(row)"
+              class="text-sm font-mono tabular-nums text-gray-800 dark:text-gray-200"
+              :title="monthRechargedTitle(row)"
+              data-testid="account-upstream-month-recharged"
+            >
+              {{ formatMonthRecharged(row) }}
+            </span>
+            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+          </template>
           <template #cell-priority="{ value }">
             <span class="text-sm text-gray-700 dark:text-gray-300">{{ value }}</span>
           </template>
@@ -1036,6 +1055,42 @@ const upstreamBalanceClass = (row: Account): string => {
   if (st === 'depleted' || st === 'error') return 'text-red-600 dark:text-red-400'
   if (st === 'ok' || st === 'unlimited') return 'text-emerald-700 dark:text-emerald-400'
   return 'text-gray-500 dark:text-gray-400'
+}
+
+const monthRechargedValue = (row: Account): { usd: number; period: string; partial: boolean; source: string } | null => {
+  const extra = (row.extra || {}) as Record<string, unknown>
+  const probe = extra.upstream_billing_probe as { data?: Record<string, unknown> } | undefined
+  const period =
+    (typeof extra.ai_month_recharged_period === 'string' && extra.ai_month_recharged_period) ||
+    (typeof probe?.data?.month_recharged_period === 'string' ? probe.data.month_recharged_period : '')
+  const usdRaw = extra.ai_month_recharged_usd ?? probe?.data?.month_recharged_usd
+  const usd = Number(usdRaw)
+  if (!period || !Number.isFinite(usd) || usd < 0) return null
+  return {
+    usd,
+    period,
+    partial: extra.ai_month_recharged_partial === true,
+    source: typeof extra.ai_month_recharged_source === 'string' ? extra.ai_month_recharged_source : ''
+  }
+}
+const showMonthRecharged = (row: Account): boolean => {
+  if (row.type !== 'apikey') return false
+  const extra = (row.extra || {}) as Record<string, unknown>
+  if (extra.upstream_kind === 'sub2api') return true
+  return monthRechargedValue(row) != null
+}
+const formatMonthRecharged = (row: Account): string => {
+  const value = monthRechargedValue(row)
+  if (!value) return t('admin.accounts.upstreamMonthRecharged.unknown')
+  const prefix = value.partial ? '~' : ''
+  return `${prefix}$${value.usd.toFixed(2)}`
+}
+const monthRechargedTitle = (row: Account): string => {
+  const value = monthRechargedValue(row)
+  if (!value) return ''
+  const parts = [t('admin.accounts.upstreamMonthRecharged.period', { period: value.period })]
+  if (value.partial) parts.push(t('admin.accounts.upstreamMonthRecharged.partial'))
+  return parts.join(' · ')
 }
 
 const formatSchedulerScoreGroup = (score: AccountSchedulerGroupScore): string => {
@@ -1916,6 +1971,7 @@ const allColumns = computed(() => {
     { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true },
     { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true },
     { key: 'upstream_balance', label: t('admin.accounts.columns.upstreamBalance'), sortable: false },
+    { key: 'upstream_month_recharged', label: t('admin.accounts.columns.upstreamMonthRecharged'), sortable: false },
     { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true },
     { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true },
     { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true },

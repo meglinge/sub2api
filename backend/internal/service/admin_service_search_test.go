@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/stretchr/testify/require"
@@ -164,6 +165,10 @@ func (s *redeemRepoStubForAdminList) ListByUserPaginated(_ context.Context, user
 
 func (s *redeemRepoStubForAdminList) SumPositiveBalanceByUser(_ context.Context, userID int64) (float64, error) {
 	panic("unexpected SumPositiveBalanceByUser call")
+}
+
+func (s *redeemRepoStubForAdminList) SumPositiveBalanceByUserInRange(_ context.Context, userID int64, from, to time.Time) (float64, error) {
+	panic("unexpected SumPositiveBalanceByUserInRange call")
 }
 
 func TestAdminService_ListAccounts_WithSearch(t *testing.T) {

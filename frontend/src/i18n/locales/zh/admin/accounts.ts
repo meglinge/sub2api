@@ -107,6 +107,7 @@ export default {
         billingRateMultiplier: '账号倍率',
         upstreamBillingRate: '上游声明倍率',
         upstreamBalance: '上游余额',
+        upstreamMonthRecharged: '本月充值',
         weight: '权重',
         schedulerScore: '调度权值',
         status: '状态',
@@ -190,6 +191,12 @@ export default {
         unlimited: '不限',
         unknown: '未探测'
       },
+      upstreamMonthRecharged: {
+        hint: '当前自然月在上游兑换/充值记录中的正数余额合计（兑换码与管理员加额），用于估算本月成本。仅 sub2api 上游会拉取；不需要浏览器 Cookie，优先用 API Key 读 /v1/sub2api/billing，否则用面板 JWT 读兑换记录。',
+        unknown: '未探测',
+        period: '{period}',
+        partial: '可能不完整（上游只返回最近 25 条）'
+      },
       autopilotMoney: {
         title: '自动驾驶 · 上游管理令牌（可选）',
         hint: 'new-api 用管理令牌；sub2api 用面板邮箱密码可自动切换上游分组。纯手动成本请改「充值倍率」。',
@@ -213,6 +220,7 @@ export default {
         statusBalance: '缓存余额：{status} · ${usd}',
         statusBalanceOnly: '缓存余额：{status}',
         statusRate: '缓存上游倍率：{rate}x（{source}）',
+        statusMonthRecharged: '本月充值：${usd}（{period}）',
         compositeRate: '综合成本倍率：{composite}x（计费 {rate} ÷ 充值 {recharge}）— 性价比按此比价'
       },
       upstreamBilling: {

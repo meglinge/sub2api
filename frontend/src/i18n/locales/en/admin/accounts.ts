@@ -214,6 +214,7 @@ export default {
         billingRateMultiplier: 'Billing Rate',
         upstreamBillingRate: 'Upstream Declared Rate',
         upstreamBalance: 'Upstream Balance',
+        upstreamMonthRecharged: 'Month Recharge',
         weight: 'Weight',
         schedulerScore: 'Scheduler Score',
         status: 'Status',
@@ -297,6 +298,12 @@ export default {
         unlimited: 'Unlimited',
         unknown: 'Not probed'
       },
+      upstreamMonthRecharged: {
+        hint: 'Sum of positive balance credits this calendar month on the upstream (redeem codes and admin adds). sub2api only. No browser cookie: API key reads /v1/sub2api/billing first, then panel JWT redeem history.',
+        unknown: 'Not probed',
+        period: '{period}',
+        partial: 'May be incomplete (upstream only returns the latest 25 records)'
+      },
       autopilotMoney: {
         title: 'Autopilot · upstream management token (optional)',
         hint: 'new-api uses management token; sub2api panel email/password enables upstream group switch. For manual cost set Recharge multiplier above.',
@@ -320,6 +327,7 @@ export default {
         statusBalance: 'Cached balance: {status} · ${usd}',
         statusBalanceOnly: 'Cached balance: {status}',
         statusRate: 'Cached upstream rate: {rate}x ({source})',
+        statusMonthRecharged: 'Month recharge: ${usd} ({period})',
         compositeRate: 'Composite cost rate: {composite}x (billing {rate} ÷ recharge {recharge}) — used for cost ranking'
       },
       upstreamBilling: {
