@@ -63,8 +63,10 @@ func ShouldClearStickyOnOpenAIFailover(failoverErr *UpstreamFailoverError) bool 
 // retry the same garbage account. Official OAuth 502/524 still keep sticky
 // (shared pool, prompt cache) unless first-output hang or capacity-shed.
 //
-// Transient 429 still keep sticky. Rate-limit windows are short-lived, and
-// clearing them splits one Codex session across suppliers.
+// Official OAuth 429 still keeps sticky (short-lived, prompt cache). Reseller
+// API-key 429 does not: newapi "Too many pending requests" is that supplier's
+// concurrency ceiling, and keeping sticky turns Codex reconnect 5/5 into a
+// fail loop on the same dead key.
 //
 // Intentionally does NOT temp-unschedule the account: first_output timeouts
 // and brief overload bursts would continuously empty the pool. Account health
@@ -80,7 +82,7 @@ func shouldClearOpenAIStickyForFailover(failoverErr *UpstreamFailoverError, acco
 		return true
 	}
 	if failoverErr.StatusCode == http.StatusTooManyRequests {
-		return false
+		return openAIStickyResellerAccount(account)
 	}
 	return openAIStickyResellerAccount(account) && openAIStickyDeadSupplierStatus(failoverErr.StatusCode)
 }
@@ -143,7 +145,9 @@ func isOpenAIStickyStreamDeathError(err error) bool {
 		strings.Contains(msg, "upstream request failed") ||
 		strings.Contains(msg, "request could not be completed") ||
 		strings.Contains(msg, "currently overloaded") ||
-		strings.Contains(msg, "overloaded")
+		strings.Contains(msg, "overloaded") ||
+		strings.Contains(msg, "too many pending") ||
+		strings.Contains(msg, "temporarily unavailable")
 }
 
 // MarkOpenAICapacityShedAfterOutput records that this request saw an upstream
@@ -214,9 +218,8 @@ func (s *OpenAIGatewayService) ClearStickySessionOnFailure(
 
 // HandleOpenAIFailoverStickyFailure clears the session→account sticky binding
 // after a first-output hang, a recognized capacity-shed/overload, or a dead
-// reseller (API-key 502/503/504/524). Transient 429 failovers keep the original
-// binding so the next request retries the same supplier (prompt cache). Official
-// OAuth 502/524 also keep sticky unless first-output hang or capacity-shed.
+// reseller (API-key 502/503/504/524/429). Official OAuth 429 and 502/524 keep
+// sticky for prompt cache unless first-output hang or capacity-shed.
 //
 // Does not temp-unschedule the account (see shouldClearOpenAIStickyForFailover).
 func (s *OpenAIGatewayService) HandleOpenAIFailoverStickyFailure(
@@ -236,7 +239,7 @@ func (s *OpenAIGatewayService) HandleOpenAIFailoverStickyFailure(
 	reason := "failover"
 	if failoverErr != nil && failoverErr.IsOpenAICapacityShed() {
 		reason = "capacity_shed"
-	} else if openAIStickyResellerAccount(account) && openAIStickyDeadSupplierStatus(status) {
+	} else if openAIStickyResellerAccount(account) && (openAIStickyDeadSupplierStatus(status) || status == http.StatusTooManyRequests) {
 		reason = "dead_supplier"
 	} else if status > 0 {
 		reason = "failover_" + http.StatusText(status)

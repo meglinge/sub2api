@@ -77,6 +77,30 @@ func TestStreamFailedEventCapacityShedRetriesOnSameAccount(t *testing.T) {
 	require.False(t, openAIStreamFailedEventRetryableOnSameAccount(nonPool, other, "boom"))
 }
 
+func TestPendingRequestsIsCapacityShedAndClearsSticky(t *testing.T) {
+	payload := []byte(`{"type":"error","error":{"type":"rate_limit_error","message":"Too many pending requests, please retry later (request id: 202609150600301349607038268d9d6EHIT7lCv)"}}`)
+	message := "Too many pending requests, please retry later (request id: 202609150600301349607038268d9d6EHIT7lCv)"
+	require.True(t, isOpenAICapacityShedMessage(message))
+	require.True(t, isOpenAIUpstreamCapacityShedEvent(payload))
+	require.True(t, isOpenAIRequestScopedCapacityShed(message, payload))
+
+	apiKey := &Account{ID: 6402, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	require.False(t, openAIStreamFailedEventRetryableOnSameAccount(apiKey, payload, message),
+		"reseller pending must switch accounts instead of retrying the same newapi key")
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	failoverErr := svc.newOpenAIStreamFailoverErrorWithModel(nil, apiKey, false, "rid-pending", payload, message, "gpt-5.6-terra")
+	require.True(t, failoverErr.IsOpenAICapacityShed())
+	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.True(t, shouldClearOpenAIStickyForFailover(failoverErr, apiKey))
+
+	unavailable := []byte(`{"error":{"message":"Service temporarily unavailable (request id: 202609150615523868842048268d9d6Efo2v8Nv)"}}`)
+	require.True(t, isOpenAIRequestScopedCapacityShed(
+		"Service temporarily unavailable (request id: 202609150615523868842048268d9d6Efo2v8Nv)",
+		unavailable,
+	))
+}
+
 func TestStreamFailedEventCapacityShedAPIKeySwitchesImmediately(t *testing.T) {
 	payload := []byte(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_error","message":"Our servers are currently overloaded. Please try again later."}}`)
 	message := "Our servers are currently overloaded. Please try again later."

@@ -436,6 +436,12 @@ func (s *defaultOpenAIAccountScheduler) Select(
 				}
 			}
 		}
+		if selection != nil && selection.Account != nil && skipOpenAIStickyForNativeCompaction(ctx, selection.Account) {
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+			selection = nil
+		}
 		if selection != nil && selection.Account != nil {
 			decision.Layer = openAIAccountScheduleLayerPreviousResponse
 			decision.StickyPreviousHit = true
@@ -561,9 +567,15 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		clearBinding()
 		return nil, false, nil
 	}
+	if skipOpenAIStickyForNativeCompaction(ctx, account) {
+		return nil, false, nil
+	}
 	account = s.service.recheckSelectedOpenAIAccountFromDB(ctx, account, req.GroupID, req.Platform, req.RequestedModel, req.RequireCompact, req.RequiredCapability)
 	if account == nil || !s.service.openAIAccountMatchesSchedulingGroup(account, req.GroupID) || !s.isAccountRequestCompatible(ctx, account, req) || !s.isAccountTransportCompatible(account, req.RequiredTransport) {
 		clearBinding()
+		return nil, false, nil
+	}
+	if skipOpenAIStickyForNativeCompaction(ctx, account) {
 		return nil, false, nil
 	}
 	// Free-tier soft gate: sticky session must not pin an over-quota free OAuth account.

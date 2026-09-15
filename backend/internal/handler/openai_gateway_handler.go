@@ -875,8 +875,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 							continue
 						}
 					}
-					// first-output hang、容量过载、以及 reseller API-key 502/503/504/524 解绑 sticky；
-					// 429 与官方 OAuth 的短暂 502 仍保持原绑定以保住 prompt cache。
+					// first-output hang、容量过载、以及 reseller API-key 502/503/504/524/429 解绑 sticky；
+					// 官方 OAuth 的 429 与短暂 502 仍保持原绑定以保住 prompt cache。
 					h.gatewayService.HandleOpenAIFailoverStickyFailure(c.Request.Context(), apiKey.GroupID, sessionHash, account, failoverErr)
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -15,11 +16,55 @@ const openAINativeCompactionV2Key = "openai_native_compaction_v2"
 
 const openAIRemoteCompactionV2Feature = "remote_compaction_v2"
 
+type openAINativeCompactionV2CtxKey struct{}
+
 // MarkOpenAINativeCompactionV2 由 handler 在识别出原生 v2 压缩请求时调用。
 func MarkOpenAINativeCompactionV2(c *gin.Context) {
 	if c != nil {
 		c.Set(openAINativeCompactionV2Key, true)
+		if c.Request != nil {
+			c.Request = c.Request.WithContext(WithOpenAINativeCompactionV2Context(c.Request.Context()))
+		}
 	}
+}
+
+// WithOpenAINativeCompactionV2Context marks the request context so account
+// selection can skip reseller sticky that cannot produce a compaction item.
+func WithOpenAINativeCompactionV2Context(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, openAINativeCompactionV2CtxKey{}, true)
+}
+
+func isOpenAINativeCompactionV2Context(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	flag, _ := ctx.Value(openAINativeCompactionV2CtxKey{}).(bool)
+	return flag
+}
+
+// skipOpenAIStickyForNativeCompaction reports whether session / previous-
+// response sticky should be ignored for this native v2 compact request.
+// The binding is left in place so a later chat turn can still reuse it.
+//
+// Reseller API-key accounts only keep sticky when compact has been probed
+// supported. Unknown newapi clones accept /responses but emit no compaction
+// item, which Codex surfaces as "remote compaction stream ended before
+// completion". Official OAuth keeps sticky unless compact is known-off.
+func skipOpenAIStickyForNativeCompaction(ctx context.Context, account *Account) bool {
+	if !isOpenAINativeCompactionV2Context(ctx) {
+		return false
+	}
+	if account == nil {
+		return true
+	}
+	if openAIStickyResellerAccount(account) {
+		supported, known := account.OpenAICompactSupportKnown()
+		return !(known && supported)
+	}
+	return openAICompactSupportTier(account) == 0
 }
 
 // NormalizeCompactionTriggerInputOrder keeps a single compaction trigger as

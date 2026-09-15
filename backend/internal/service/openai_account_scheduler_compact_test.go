@@ -500,3 +500,80 @@ func TestOpenAICompactSupportTier(t *testing.T) {
 		})
 	}
 }
+
+func TestSkipOpenAIStickyForNativeCompaction(t *testing.T) {
+	ctx := WithOpenAINativeCompactionV2Context(context.Background())
+	resellerUnknown := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	resellerSupported := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra:    map[string]any{"openai_compact_supported": true},
+	}
+	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	require.False(t, skipOpenAIStickyForNativeCompaction(context.Background(), resellerUnknown))
+	require.True(t, skipOpenAIStickyForNativeCompaction(ctx, resellerUnknown))
+	require.False(t, skipOpenAIStickyForNativeCompaction(ctx, resellerSupported))
+	require.False(t, skipOpenAIStickyForNativeCompaction(ctx, oauth))
+}
+
+func TestSelectAccount_NativeCompactionSkipsUnknownResellerSticky(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	groupID := int64(91040)
+	stickyUnknown := Account{
+		ID:          6402,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    1,
+		Extra:       map[string]any{"openai_responses_supported": true},
+	}
+	compactCapable := Account{
+		ID:          71100,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+		Extra: map[string]any{
+			"openai_responses_supported": true,
+			"openai_compact_supported":   true,
+		},
+	}
+	cache := &schedulerTestGatewayCache{
+		sessionBindings: map[string]int64{"openai:sess-coco": 6402},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.LoadBatchEnabled = false
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{stickyUnknown, compactCapable}},
+		cache:              cache,
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	ctx := WithOpenAINativeCompactionV2Context(context.Background())
+	selection, _, err := svc.SelectAccountWithSchedulerForCapability(
+		ctx,
+		&groupID,
+		"",
+		"sess-coco",
+		"gpt-5.6-terra",
+		nil,
+		OpenAIUpstreamTransportAny,
+		OpenAIEndpointCapabilityResponses,
+		false,
+		false,
+		false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, int64(71100), selection.Account.ID,
+		"native compact must skip unknown reseller sticky and pick a compact-capable account")
+	_, stillBound := cache.sessionBindings["openai:sess-coco"]
+	require.True(t, stillBound, "compact skip must not delete chat sticky")
+}

@@ -182,15 +182,37 @@ func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string
 
 func isOpenAICapacityShedMessage(text string) bool {
 	lower := strings.ToLower(strings.TrimSpace(text))
-	return strings.Contains(lower, "server is overloaded") ||
+	if lower == "" {
+		return false
+	}
+	if strings.Contains(lower, "server is overloaded") ||
 		strings.Contains(lower, "servers are overloaded") ||
-		strings.Contains(lower, "servers are currently overloaded")
+		strings.Contains(lower, "servers are currently overloaded") {
+		return true
+	}
+	// Reseller/newapi dumps. Official OpenAI uses rate_limit_exceeded /
+	// server_is_overloaded; these phrases pin Codex windows to a dead API-key.
+	if strings.Contains(lower, "too many pending requests") {
+		return true
+	}
+	if strings.Contains(lower, "all available accounts are currently rate-limited") {
+		return true
+	}
+	return strings.Contains(lower, "service temporarily unavailable")
 }
 
 func isOpenAIRequestScopedCapacityShed(upstreamMsg string, upstreamBody []byte) bool {
-	return isOpenAIUpstreamCapacityShedEvent(upstreamBody) ||
-		isOpenAICapacityShedMessage(upstreamMsg) ||
-		(!gjson.ValidBytes(upstreamBody) && isOpenAICapacityShedMessage(string(upstreamBody)))
+	if isOpenAIUpstreamCapacityShedEvent(upstreamBody) || isOpenAICapacityShedMessage(upstreamMsg) {
+		return true
+	}
+	if len(upstreamBody) == 0 {
+		return false
+	}
+	if isOpenAICapacityShedMessage(gjson.GetBytes(upstreamBody, "error.message").String()) ||
+		isOpenAICapacityShedMessage(gjson.GetBytes(upstreamBody, "response.error.message").String()) {
+		return true
+	}
+	return !gjson.ValidBytes(upstreamBody) && isOpenAICapacityShedMessage(string(upstreamBody))
 }
 
 func isOpenAIContextWindowError(upstreamMsg string, upstreamBody []byte) bool {

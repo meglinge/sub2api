@@ -58,8 +58,10 @@ func TestShouldClearStickyOnOpenAIFailover(t *testing.T) {
 	require.False(t, shouldClearOpenAIStickyForFailover(gatewayTimeout, oauth),
 		"official OAuth 502 still keeps sticky for prompt cache")
 	require.True(t, shouldClearOpenAIStickyForFailover(&UpstreamFailoverError{StatusCode: 524}, reseller))
-	require.False(t, shouldClearOpenAIStickyForFailover(&UpstreamFailoverError{StatusCode: http.StatusTooManyRequests}, reseller),
-		"429 still keeps sticky")
+	require.True(t, shouldClearOpenAIStickyForFailover(&UpstreamFailoverError{StatusCode: http.StatusTooManyRequests}, reseller),
+		"reseller API-key 429 must drop sticky so continue leaves a pending newapi key")
+	require.False(t, shouldClearOpenAIStickyForFailover(&UpstreamFailoverError{StatusCode: http.StatusTooManyRequests}, oauth),
+		"official OAuth 429 still keeps sticky for prompt cache")
 }
 
 func TestShouldClearStickyOnOpenAIStreamFailure(t *testing.T) {
@@ -85,6 +87,14 @@ func TestShouldClearStickyOnOpenAIStreamFailure(t *testing.T) {
 	require.True(t, ShouldClearStickyOnOpenAIStreamFailure(errors.New("Request could not be completed"), reseller))
 	require.True(t, ShouldClearStickyOnOpenAIStreamFailure(
 		errors.New("upstream response failed: Our servers are currently overloaded. Please try again later."),
+		reseller,
+	))
+	require.True(t, ShouldClearStickyOnOpenAIStreamFailure(
+		errors.New("Too many pending requests, please retry later"),
+		reseller,
+	))
+	require.True(t, ShouldClearStickyOnOpenAIStreamFailure(
+		errors.New("Service temporarily unavailable (request id: 202609150615523868842048268d9d6Efo2v8Nv)"),
 		reseller,
 	))
 }
@@ -223,7 +233,7 @@ func TestHandleOpenAIFailoverStickyFailure_OAuth502KeepsSticky(t *testing.T) {
 	require.Equal(t, int64(99), cache.sessionBindings["openai:sess-oauth"], "official OAuth 502 must keep sticky")
 }
 
-func TestHandleOpenAIFailoverStickyFailure_429KeepsSticky(t *testing.T) {
+func TestHandleOpenAIFailoverStickyFailure_OAuth429KeepsSticky(t *testing.T) {
 	cache := &stubGatewayCache{
 		sessionBindings: map[string]int64{
 			"openai:sess-429": 99,
@@ -236,11 +246,41 @@ func TestHandleOpenAIFailoverStickyFailure_429KeepsSticky(t *testing.T) {
 		context.Background(),
 		&groupID,
 		"sess-429",
-		&Account{ID: 99, Platform: PlatformOpenAI},
+		&Account{ID: 99, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
 		&UpstreamFailoverError{StatusCode: http.StatusTooManyRequests, NextAccountAction: NextAccountRetry},
 	)
 
-	require.Equal(t, int64(99), cache.sessionBindings["openai:sess-429"], "429 failover must keep original sticky")
+	require.Equal(t, int64(99), cache.sessionBindings["openai:sess-429"], "official OAuth 429 failover must keep original sticky")
+}
+
+func TestHandleOpenAIFailoverStickyFailure_Reseller429ClearsSticky(t *testing.T) {
+	cache := &stubGatewayCache{
+		sessionBindings: map[string]int64{
+			"openai:sess-pending": 6402,
+		},
+	}
+	svc := &OpenAIGatewayService{cache: cache}
+	groupID := int64(2)
+	body := []byte(`{"error":{"type":"rate_limit_error","message":"Too many pending requests, please retry later (request id: 202609150600301349607038268d9d6EHIT7lCv)"}}`)
+	failoverErr := newOpenAIUpstreamFailoverError(
+		http.StatusTooManyRequests,
+		nil,
+		body,
+		"Too many pending requests, please retry later (request id: 202609150600301349607038268d9d6EHIT7lCv)",
+		false,
+	)
+	require.True(t, failoverErr.IsOpenAICapacityShed())
+
+	svc.HandleOpenAIFailoverStickyFailure(
+		context.Background(),
+		&groupID,
+		"sess-pending",
+		&Account{ID: 6402, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+		failoverErr,
+	)
+
+	_, exists := cache.sessionBindings["openai:sess-pending"]
+	require.False(t, exists, "reseller pending 429 must delete sticky so Codex reconnect leaves the dead key")
 }
 
 func TestHandleOpenAIFailoverStickyFailure_CapacityShedClearsSticky(t *testing.T) {
