@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -153,7 +154,10 @@ type AIAutopilotSettings struct {
 	ActivationProbeFreshMinutes   int    `json:"activation_probe_fresh_minutes"`
 	ActivationProbePrompt         string `json:"activation_probe_prompt"`
 	ActivationProbeJuice          bool   `json:"activation_probe_juice"`
-	MaxProbeTurns                 int    `json:"max_probe_turns"`
+	// ActivationProbeModels is a comma-separated list tried first on enable
+	// probes (e.g. "gpt-5.6-sol"). Empty falls back to gpt-5.6-sol.
+	ActivationProbeModels string `json:"activation_probe_models"`
+	MaxProbeTurns         int    `json:"max_probe_turns"`
 
 	// Op permission gates (nil/true = on).
 	OpDisable     *bool `json:"op_disable"`
@@ -216,6 +220,7 @@ func DefaultAIAutopilotSettings() AIAutopilotSettings {
 		ActivationProbeFreshMinutes:   10,
 		ActivationProbePrompt:         DefaultActivationProbePrompt,
 		ActivationProbeJuice:          false,
+		ActivationProbeModels:         "gpt-5.6-sol",
 		MaxProbeTurns:                 5,
 		OpDisable:                     boolPtr(true),
 		OpEnable:                      boolPtr(true),
@@ -362,6 +367,11 @@ func (s AIAutopilotSettings) Normalize() AIAutopilotSettings {
 	}
 	if stringsTrimSpaceEmpty(s.ActivationProbePrompt) {
 		s.ActivationProbePrompt = d.ActivationProbePrompt
+	}
+	if parsed := parseActivationProbeModels(s.ActivationProbeModels); len(parsed) > 0 {
+		s.ActivationProbeModels = strings.Join(parsed, ", ")
+	} else {
+		s.ActivationProbeModels = d.ActivationProbeModels
 	}
 	if s.MaxProbeTurns <= 0 {
 		s.MaxProbeTurns = d.MaxProbeTurns

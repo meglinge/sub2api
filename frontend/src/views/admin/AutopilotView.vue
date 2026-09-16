@@ -509,6 +509,15 @@
             <input v-model="settings.activation_probe_enabled" type="checkbox" class="rounded" />
             <span>{{ t('admin.autopilot.activationProbe') }}</span>
           </label>
+          <div class="md:col-span-2">
+            <label class="mb-1 block text-xs font-medium">{{ t('admin.autopilot.probeModels') }}</label>
+            <input
+              v-model="settings.activation_probe_models"
+              class="input w-full"
+              :placeholder="t('admin.autopilot.probeModelsPlaceholder')"
+            />
+            <p class="mt-1 text-xs text-gray-500">{{ t('admin.autopilot.probeModelsHint') }}</p>
+          </div>
         </div>
         <h4 class="mb-2 mt-6 text-sm font-semibold">{{ t('admin.autopilot.sectionOps') }}</h4>
         <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">

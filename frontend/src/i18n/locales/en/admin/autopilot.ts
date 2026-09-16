@@ -77,7 +77,10 @@ export default {
     scoreWeightsExample: 'Default Stability 40 / Latency 30 / Throughput 20 / Cost 10. For cost pressure try 30/20/15/35.',
     activationProbe: 'Activation probe policy',
     activationProbeHint:
-      'Idle / AI-disabled accounts have empty stats. Policy is injected into the prompt; live probing lands in later phases.',
+      'Idle / AI-disabled accounts have empty stats. Autopilot sends a tiny request with the models below before enable/weight lift.',
+    probeModels: 'Activation probe models',
+    probeModelsPlaceholder: 'gpt-5.6-sol',
+    probeModelsHint: 'Comma-separated, tried in order. Change this when vendors drop a model. Default gpt-5.6-sol.',
     probeTimeout: 'Probe timeout (s)',
     probeTtfb: 'Slow TTFB threshold (ms)',
     probeMaxPerRun: 'Max probes per run',

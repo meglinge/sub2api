@@ -146,6 +146,8 @@ export interface AIAutopilotSettings {
   activation_probe_fresh_minutes?: number
   activation_probe_prompt?: string
   activation_probe_juice?: boolean
+  /** Comma-separated models tried first on enable probes. Default gpt-5.6-sol. */
+  activation_probe_models?: string
   max_probe_turns?: number
   op_disable?: boolean
   op_enable?: boolean

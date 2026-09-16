@@ -812,12 +812,13 @@ func (p *AIPilotService) probeViaUpstreamWithKey(
 	if client == nil {
 		client = http.DefaultClient
 	}
-	models := probeModelCandidates(acc)
-	if len(models) == 0 {
-		models = []string{"gpt-5", "gpt-4o-mini"}
+	cfg := DefaultAIAutopilotSettings()
+	if p != nil {
+		cfg = p.loadSettings(ctx)
 	}
-	if len(models) > 2 {
-		models = models[:2]
+	models := resolveActivationProbeModels(cfg, acc)
+	if len(models) == 0 {
+		models = []string{"gpt-5.6-sol", "gpt-5"}
 	}
 	useResponses := true
 	if acc != nil && acc.Extra != nil {

@@ -236,6 +236,36 @@ func TestProbeViaUpstream_PassAndFail(t *testing.T) {
 	}
 }
 
+func TestResolveActivationProbeModels_SettingsFirst(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultAIAutopilotSettings()
+	cfg.ActivationProbeModels = "gpt-5.6-sol"
+	acc := &Account{
+		Extra: map[string]any{"probe_model": "gpt-5.6-terra"},
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{"gpt-5.6-terra": "gpt-5.6-terra"},
+		},
+	}
+	got := resolveActivationProbeModels(cfg, acc)
+	if len(got) == 0 || got[0] != "gpt-5.6-sol" {
+		t.Fatalf("operator setting must be first, got=%v", got)
+	}
+	empty := DefaultAIAutopilotSettings()
+	empty.ActivationProbeModels = ""
+	got = resolveActivationProbeModels(empty.Normalize(), &Account{})
+	if len(got) == 0 || got[0] != "gpt-5.6-sol" {
+		t.Fatalf("empty setting must default to gpt-5.6-sol, got=%v", got)
+	}
+}
+
+func TestParseActivationProbeModels(t *testing.T) {
+	t.Parallel()
+	got := parseActivationProbeModels("gpt-5.6-sol, gpt-5.4，gpt-5")
+	if len(got) != 3 || got[0] != "gpt-5.6-sol" || got[1] != "gpt-5.4" || got[2] != "gpt-5" {
+		t.Fatalf("got=%v", got)
+	}
+}
+
 func TestProbeViaUpstream_RetriesModelNotFound(t *testing.T) {
 	t.Parallel()
 	var tried []string
@@ -274,6 +304,7 @@ func TestProbeViaUpstream_RetriesModelNotFound(t *testing.T) {
 	p := &AIPilotService{HTTP: srv.Client()}
 	cfg := DefaultAIAutopilotSettings()
 	cfg.ActivationProbeMaxTtfbMs = 0
+	cfg.ActivationProbeModels = "nope-model"
 	acc := &Account{
 		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "sk-x", "base_url": srv.URL},

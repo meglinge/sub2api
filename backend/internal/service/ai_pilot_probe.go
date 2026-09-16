@@ -234,11 +234,9 @@ func (p *AIPilotService) probeViaUpstream(
 		client = http.DefaultClient
 	}
 
-	// Account mapping / probe_model only — do NOT GET /v1/models (slow + wrong catalog).
-	models := probeModelCandidates(acc)
-	if len(models) > 2 {
-		models = models[:2]
-	}
+	// Operator setting first, then account mapping / probe_model.
+	// Do NOT GET /v1/models (slow + wrong catalog).
+	models := resolveActivationProbeModels(cfg, acc)
 
 	// Default to Responses for OpenAI pool; only force chat when probe said unsupported.
 	useResponses := true
@@ -440,6 +438,44 @@ func joinOpenAIURL(base, path string) string {
 	return base + "/v1" + path
 }
 
+func parseActivationProbeModels(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	s = strings.ReplaceAll(s, "，", ",")
+	s = strings.ReplaceAll(s, ";", ",")
+	s = strings.ReplaceAll(s, "；", ",")
+	s = strings.ReplaceAll(s, "\n", ",")
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]bool{}
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		low := strings.ToLower(p)
+		if strings.Contains(low, "embed") || strings.Contains(low, "whisper") || strings.Contains(low, "tts") || strings.Contains(low, "dall-e") || strings.Contains(low, "image") {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+		if len(out) >= 4 {
+			break
+		}
+	}
+	return out
+}
+
+func resolveActivationProbeModels(cfg AIAutopilotSettings, acc *Account) []string {
+	preferred := parseActivationProbeModels(cfg.ActivationProbeModels)
+	if len(preferred) == 0 {
+		preferred = []string{"gpt-5.6-sol"}
+	}
+	return mergeProbeModels(preferred, probeModelCandidates(acc))
+}
+
 func probeModelCandidates(acc *Account) []string {
 	out := []string{}
 	seen := map[string]bool{}
@@ -468,9 +504,9 @@ func probeModelCandidates(acc *Account) []string {
 			add(k)
 		}
 	}
-	// Prefer models that match real pool traffic (Responses/Codex). Keep short.
+	// Last-resort fallbacks if the operator list and account extras are empty.
 	for _, m := range []string{
-		"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.4", "gpt-5",
+		"gpt-5.6-sol", "gpt-5.4", "gpt-5",
 	} {
 		add(m)
 	}
