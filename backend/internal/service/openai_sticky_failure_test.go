@@ -100,17 +100,47 @@ func TestShouldClearStickyOnOpenAIStreamFailure(t *testing.T) {
 }
 
 func TestOpenAIStickySkipExcludesAccountForSession(t *testing.T) {
-	t.Parallel()
 	resetOpenAIStickySkipForTest()
 	t.Cleanup(resetOpenAIStickySkipForTest)
 
 	rememberOpenAIStickySkip("sess-skip", 6509)
 	got := openAIStickySkipAccountIDs("sess-skip")
 	require.Contains(t, got, int64(6509))
-	merged := mergeOpenAIStickySkipExclusions("sess-skip", map[int64]struct{}{1: {}})
+	original := map[int64]struct{}{1: {}}
+	merged := mergeOpenAIStickySkipExclusions("sess-skip", original)
 	require.Contains(t, merged, int64(6509))
 	require.Contains(t, merged, int64(1))
+	require.NotContains(t, original, int64(6509), "merge must not mutate the request exclusion set")
 	require.Nil(t, openAIStickySkipAccountIDs("other"))
+}
+
+func TestStickySkipExclusionsOrKeepPool_KeepsSoleAccount(t *testing.T) {
+	resetOpenAIStickySkipForTest()
+	t.Cleanup(resetOpenAIStickySkipForTest)
+
+	rememberOpenAIStickySkip("sess-pool1", 6554)
+	got := stickySkipExclusionsOrKeepPool("sess-pool1", nil, []int64{6554})
+	require.Empty(t, got, "pool=1 must not sticky-skip the only account")
+}
+
+func TestStickySkipExclusionsOrKeepPool_SkipsWhenAnotherAccountRemains(t *testing.T) {
+	resetOpenAIStickySkipForTest()
+	t.Cleanup(resetOpenAIStickySkipForTest)
+
+	rememberOpenAIStickySkip("sess-pool2", 6554)
+	got := stickySkipExclusionsOrKeepPool("sess-pool2", nil, []int64{6554, 6555})
+	require.Contains(t, got, int64(6554))
+	require.NotContains(t, got, int64(6555))
+}
+
+func TestStickySkipExclusionsOrKeepPool_KeepsRequestFailoverExclusions(t *testing.T) {
+	resetOpenAIStickySkipForTest()
+	t.Cleanup(resetOpenAIStickySkipForTest)
+
+	rememberOpenAIStickySkip("sess-fail", 6554)
+	requestExcluded := map[int64]struct{}{6554: {}}
+	got := stickySkipExclusionsOrKeepPool("sess-fail", requestExcluded, []int64{6554})
+	require.Contains(t, got, int64(6554), "this-request failover must still exclude the failed account")
 }
 
 func TestOpenAIPoolModeSameAccountRetryLimit_Skips429(t *testing.T) {

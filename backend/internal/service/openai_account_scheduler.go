@@ -394,7 +394,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			req.GroupID,
 			previousResponseID,
 			req.RequestedModel,
-			req.ExcludedIDs,
+			mergeOpenAIStickySkipExclusions(req.SessionHash, req.ExcludedIDs),
 			req.RequiredCapability,
 			req.RequireCompact,
 		)
@@ -542,8 +542,8 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	if accountID <= 0 {
 		return nil, false, nil
 	}
-	if req.ExcludedIDs != nil {
-		if _, excluded := req.ExcludedIDs[accountID]; excluded {
+	if excludedIDs := mergeOpenAIStickySkipExclusions(sessionHash, req.ExcludedIDs); excludedIDs != nil {
+		if _, excluded := excludedIDs[accountID]; excluded {
 			return nil, false, nil
 		}
 	}
@@ -1450,6 +1450,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	if len(accounts) == 0 {
 		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, openAISelectionFilterStats{}.summary(""))
 	}
+	req.ExcludedIDs = stickySkipExclusionsOrKeepPool(req.SessionHash, req.ExcludedIDs, accountIDsFromOpenAIAccounts(accounts))
 	// Local free-tier soft gate on the Grok scheduling path only (not admin probe).
 	accounts = s.filterGrokFreeQuotaAccounts(ctx, accounts)
 	if len(accounts) == 0 {
@@ -2295,7 +2296,6 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	excludedIDs = mergeOpenAIStickySkipExclusions(sessionHash, excludedIDs)
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)
 	// 分组利润控制：唯一文本调度入口的防御性装门。handler 文本

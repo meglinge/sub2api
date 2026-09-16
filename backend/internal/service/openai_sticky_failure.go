@@ -405,18 +405,65 @@ func openAIStickySkipAccountIDs(sessionHash string) map[int64]struct{} {
 	return out
 }
 
+func cloneInt64Set(in map[int64]struct{}) map[int64]struct{} {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[int64]struct{}, len(in))
+	for id := range in {
+		out[id] = struct{}{}
+	}
+	return out
+}
+
 func mergeOpenAIStickySkipExclusions(sessionHash string, excludedIDs map[int64]struct{}) map[int64]struct{} {
 	skip := openAIStickySkipAccountIDs(sessionHash)
 	if len(skip) == 0 {
 		return excludedIDs
 	}
-	if excludedIDs == nil {
+	if len(excludedIDs) == 0 {
 		return skip
 	}
-	for id := range skip {
-		excludedIDs[id] = struct{}{}
+	merged := cloneInt64Set(excludedIDs)
+	if merged == nil {
+		merged = make(map[int64]struct{}, len(skip))
 	}
-	return excludedIDs
+	for id := range skip {
+		merged[id] = struct{}{}
+	}
+	return merged
+}
+
+func accountIDsFromOpenAIAccounts(accounts []Account) []int64 {
+	if len(accounts) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(accounts))
+	for i := range accounts {
+		ids[i] = accounts[i].ID
+	}
+	return ids
+}
+
+// stickySkipExclusionsOrKeepPool applies session sticky-skip unless that would
+// exclude every account in the pool. Skip exists so a multi-account group can
+// leave a dead reseller; with pool=1 one Coco 502 otherwise becomes 10 minutes
+// of 30ms "no available accounts" for that session.
+func stickySkipExclusionsOrKeepPool(sessionHash string, requestExcludedIDs map[int64]struct{}, accountIDs []int64) map[int64]struct{} {
+	skip := openAIStickySkipAccountIDs(sessionHash)
+	if len(skip) == 0 {
+		return requestExcludedIDs
+	}
+	merged := mergeOpenAIStickySkipExclusions(sessionHash, requestExcludedIDs)
+	if len(accountIDs) == 0 {
+		return merged
+	}
+	for _, id := range accountIDs {
+		if _, excluded := merged[id]; !excluded {
+			return merged
+		}
+	}
+	return requestExcludedIDs
 }
 
 func resetOpenAIStickySkipForTest() {
