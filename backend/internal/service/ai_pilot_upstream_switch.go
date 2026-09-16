@@ -835,14 +835,15 @@ func (p *AIPilotService) probeViaUpstreamWithKey(
 		body func(string) map[string]any
 	}
 	var paths []pathSpec
+	prompt := activationProbeInput(cfg)
 	if useResponses {
 		paths = []pathSpec{{"/responses", func(m string) map[string]any {
-			return map[string]any{"model": m, "input": "ping", "max_output_tokens": 16, "stream": true}
+			return map[string]any{"model": m, "input": prompt, "stream": true}
 		}}}
 	} else {
 		paths = []pathSpec{{"/chat/completions", func(m string) map[string]any {
 			return map[string]any{
-				"model": m, "messages": []map[string]string{{"role": "user", "content": "ping"}},
+				"model": m, "messages": []map[string]string{{"role": "user", "content": prompt}},
 				"max_tokens": 1, "temperature": 0, "stream": false,
 			}
 		}}}

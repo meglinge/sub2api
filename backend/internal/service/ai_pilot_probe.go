@@ -246,40 +246,50 @@ func (p *AIPilotService) probeViaUpstream(
 		}
 	}
 
-	type probePath struct {
+	type probeAttempt struct {
 		name string
 		path string
-		body func(model string) map[string]any
+		body map[string]any
 	}
-	responsesBody := func(model string) map[string]any {
-		// Stream so TTFB is headers, not a full non-stream completion.
-		// 麻豆/中转站 non-stream ping on gpt-5.6-sol often exceeds the 8s cap,
-		// then fallback models like gpt-5 404 and overwrite the timeout as fail.
-		return map[string]any{
-			"model":             model,
-			"input":             "ping",
-			"max_output_tokens": 16,
-			"stream":            true,
-		}
-	}
-	chatBody := func(model string) map[string]any {
-		return map[string]any{
-			"model": model,
-			"messages": []map[string]string{
-				{"role": "user", "content": "ping"},
-			},
-			"max_tokens":  1,
-			"temperature": 0,
-			"stream":      false,
-		}
-	}
-
-	var paths []probePath
+	prompt := activationProbeInput(cfg)
+	var attemptsPlan []probeAttempt
 	if useResponses {
-		// Responses only — no chat/messages fallback for Codex pools.
-		paths = []probePath{{"responses", "/responses", responsesBody}}
+		// No max_output_tokens: 麻豆/部分中转会 400 invalid_request。
+		// No literal "ping": same vendors treat it as invalid_request.
+		// Stream so TTFB is headers, not a full completion.
+		for _, model := range models {
+			if model == "" {
+				continue
+			}
+			attemptsPlan = append(attemptsPlan, probeAttempt{
+				name: "responses", path: "/responses",
+				body: map[string]any{"model": model, "input": prompt, "stream": true},
+			})
+			if prompt != "ok" {
+				attemptsPlan = append(attemptsPlan, probeAttempt{
+					name: "responses", path: "/responses",
+					body: map[string]any{"model": model, "input": "ok", "stream": true},
+				})
+			}
+		}
 	} else {
-		paths = []probePath{{"chat", "/chat/completions", chatBody}}
+		for _, model := range models {
+			if model == "" {
+				continue
+			}
+			attemptsPlan = append(attemptsPlan, probeAttempt{
+				name: "chat", path: "/chat/completions",
+				body: map[string]any{
+					"model": model,
+					"messages": []map[string]string{
+						{"role": "user", "content": prompt},
+					},
+					"max_tokens":  1,
+					"temperature": 0,
+					"stream":      false,
+				},
+			})
+		}
 	}
 
 	// Per-attempt cap so a hung relay cannot burn the whole analyze cycle.
@@ -291,69 +301,68 @@ func (p *AIPilotService) probeViaUpstream(
 	var attempts []string
 	var lastTTFB int64
 	sawTransient := false
-	for _, pe := range paths {
+	for _, pe := range attemptsPlan {
+		model, _ := pe.body["model"].(string)
 		url := joinOpenAIURL(base, pe.path)
-		for _, model := range models {
-			if model == "" {
+		raw, _ := json.Marshal(pe.body)
+		reqCtx, cancel := context.WithTimeout(ctx, attemptTO)
+		httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(raw))
+		if err != nil {
+			cancel()
+			res.Verdict = "fail"
+			res.Error = err.Error()
+			return res, true
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		httpReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; sub2api-activation-probe/1.0)")
+		start := time.Now()
+		resp, err := client.Do(httpReq)
+		ttfb := time.Since(start).Milliseconds()
+		lastTTFB = ttfb
+		if err != nil {
+			cancel()
+			msg := fmt.Sprintf("%s model=%s: %v", pe.name, model, err)
+			attempts = append(attempts, msg)
+			if probeErrorIsTransient(err.Error()) {
+				sawTransient = true
 				continue
 			}
-			raw, _ := json.Marshal(pe.body(model))
-			reqCtx, cancel := context.WithTimeout(ctx, attemptTO)
-			httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(raw))
-			if err != nil {
-				cancel()
-				res.Verdict = "fail"
-				res.Error = err.Error()
-				return res, true
+			res.TTFBMs = ttfb
+			res.Verdict = "fail"
+			res.Error = strings.Join(attempts, " | ")
+			return res, true
+		}
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		_ = resp.Body.Close()
+		cancel()
+		if resp.StatusCode >= 300 {
+			msg := fmt.Sprintf("HTTP %d %s model=%s: %s", resp.StatusCode, pe.name, model, truncateStr(string(respBody), 160))
+			attempts = append(attempts, msg)
+			if isModelNotFoundBody(string(respBody)) || resp.StatusCode == 404 {
+				continue
 			}
-			httpReq.Header.Set("Content-Type", "application/json")
-			httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-			httpReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; sub2api-activation-probe/1.0)")
-			start := time.Now()
-			resp, err := client.Do(httpReq)
-			ttfb := time.Since(start).Milliseconds()
-			lastTTFB = ttfb
-			if err != nil {
-				cancel()
-				msg := fmt.Sprintf("%s model=%s: %v", pe.name, model, err)
-				attempts = append(attempts, msg)
-				if probeErrorIsTransient(err.Error()) {
-					sawTransient = true
-					continue
-				}
-				res.TTFBMs = ttfb
-				res.Verdict = "fail"
-				res.Error = strings.Join(attempts, " | ")
-				return res, true
-			}
-			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
-			_ = resp.Body.Close()
-			cancel()
-			if resp.StatusCode >= 300 {
-				msg := fmt.Sprintf("HTTP %d %s model=%s: %s", resp.StatusCode, pe.name, model, truncateStr(string(respBody), 160))
-				attempts = append(attempts, msg)
-				if isModelNotFoundBody(string(respBody)) || resp.StatusCode == 400 || resp.StatusCode == 404 {
-					continue
-				}
-				res.TTFBMs = ttfb
-				if probeHTTPIsTransient(resp.StatusCode) {
-					sawTransient = true
-					continue
-				}
-				res.Verdict = "fail"
-				res.Error = strings.Join(attempts, " | ")
-				return res, true
+			if resp.StatusCode == 400 {
+				continue // next payload variant / model
 			}
 			res.TTFBMs = ttfb
-			if cfg.ActivationProbeMaxTtfbMs > 0 && ttfb > int64(cfg.ActivationProbeMaxTtfbMs) {
-				res.Verdict = "slow"
-				res.Reason = fmt.Sprintf("%s via=%s model=%s", reason, pe.name, model)
-				return res, true
+			if probeHTTPIsTransient(resp.StatusCode) {
+				sawTransient = true
+				continue
 			}
-			res.Verdict = "pass"
+			res.Verdict = "fail"
+			res.Error = strings.Join(attempts, " | ")
+			return res, true
+		}
+		res.TTFBMs = ttfb
+		if cfg.ActivationProbeMaxTtfbMs > 0 && ttfb > int64(cfg.ActivationProbeMaxTtfbMs) {
+			res.Verdict = "slow"
 			res.Reason = fmt.Sprintf("%s via=%s model=%s", reason, pe.name, model)
 			return res, true
 		}
+		res.Verdict = "pass"
+		res.Reason = fmt.Sprintf("%s via=%s model=%s", reason, pe.name, model)
+		return res, true
 	}
 	res.TTFBMs = lastTTFB
 	if len(attempts) == 0 {
@@ -441,6 +450,15 @@ func joinOpenAIURL(base, path string) string {
 		return base + path
 	}
 	return base + "/v1" + path
+}
+
+func activationProbeInput(cfg AIAutopilotSettings) string {
+	s := strings.TrimSpace(cfg.ActivationProbePrompt)
+	// HTTP 探测必须极短。"ping" 被麻豆等中转 400；默认控制面 prompt 也不适合当 input。
+	if s == "" || strings.EqualFold(s, "ping") || s == DefaultActivationProbePrompt || len([]rune(s)) > 16 {
+		return "ok"
+	}
+	return s
 }
 
 func parseActivationProbeModels(s string) []string {

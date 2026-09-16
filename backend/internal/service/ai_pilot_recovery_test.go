@@ -325,6 +325,38 @@ func TestProbeViaUpstream_RetriesModelNotFound(t *testing.T) {
 	}
 }
 
+func TestProbeViaUpstream_PayloadOmitsPingAndMaxOutputTokens(t *testing.T) {
+	t.Parallel()
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &got)
+		_, _ = io.WriteString(w, `{"id":"resp_ok"}`)
+	}))
+	defer srv.Close()
+	p := &AIPilotService{HTTP: srv.Client()}
+	cfg := DefaultAIAutopilotSettings()
+	cfg.ActivationProbeMaxTtfbMs = 0
+	acc := &Account{
+		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-x", "base_url": srv.URL},
+		Extra:       map[string]any{"openai_responses_supported": true},
+	}
+	res, ok := p.probeViaUpstream(context.Background(), acc, 5*time.Second, "r", cfg)
+	if !ok || res.Verdict != "pass" {
+		t.Fatalf("ok=%v res=%+v", ok, res)
+	}
+	if got["input"] != "ok" {
+		t.Fatalf("input=%v want ok", got["input"])
+	}
+	if got["stream"] != true {
+		t.Fatalf("stream=%v", got["stream"])
+	}
+	if _, exists := got["max_output_tokens"]; exists {
+		t.Fatalf("max_output_tokens must be omitted: %+v", got)
+	}
+}
+
 func TestProbeViaUpstream_TimeoutOnConfiguredModelIsSlowNotGPT5(t *testing.T) {
 	t.Parallel()
 	var tried []string
