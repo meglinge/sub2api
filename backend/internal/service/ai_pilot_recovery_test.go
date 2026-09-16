@@ -349,6 +349,9 @@ func TestProbeViaUpstream_PayloadOmitsPingAndMaxOutputTokens(t *testing.T) {
 	if got["input"] != "ok" {
 		t.Fatalf("input=%v want ok", got["input"])
 	}
+	if got["instructions"] != "ok" {
+		t.Fatalf("instructions=%v want ok", got["instructions"])
+	}
 	if got["stream"] != true {
 		t.Fatalf("stream=%v", got["stream"])
 	}

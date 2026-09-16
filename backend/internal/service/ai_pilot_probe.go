@@ -261,16 +261,12 @@ func (p *AIPilotService) probeViaUpstream(
 			if model == "" {
 				continue
 			}
+			// 麻豆 gpt-5.6-sol HTTP /v1/responses 无 instructions 会 400 invalid_request；
+			// 生产 Codex 请求都带 instructions，所以线上能通、探测不通。
 			attemptsPlan = append(attemptsPlan, probeAttempt{
 				name: "responses", path: "/responses",
-				body: map[string]any{"model": model, "input": prompt, "stream": true},
+				body: map[string]any{"model": model, "instructions": "ok", "input": prompt, "stream": true},
 			})
-			if prompt != "ok" {
-				attemptsPlan = append(attemptsPlan, probeAttempt{
-					name: "responses", path: "/responses",
-					body: map[string]any{"model": model, "input": "ok", "stream": true},
-				})
-			}
 		}
 	} else {
 		for _, model := range models {
