@@ -252,12 +252,14 @@ func (p *AIPilotService) probeViaUpstream(
 		body func(model string) map[string]any
 	}
 	responsesBody := func(model string) map[string]any {
-		// Minimal Responses health ping (no tools). String input is widely accepted.
+		// Stream so TTFB is headers, not a full non-stream completion.
+		// 麻豆/中转站 non-stream ping on gpt-5.6-sol often exceeds the 8s cap,
+		// then fallback models like gpt-5 404 and overwrite the timeout as fail.
 		return map[string]any{
 			"model":             model,
 			"input":             "ping",
 			"max_output_tokens": 16,
-			"stream":            false,
+			"stream":            true,
 		}
 	}
 	chatBody := func(model string) map[string]any {
@@ -286,8 +288,9 @@ func (p *AIPilotService) probeViaUpstream(
 		attemptTO = 8 * time.Second
 	}
 
-	var lastErr string
+	var attempts []string
 	var lastTTFB int64
+	sawTransient := false
 	for _, pe := range paths {
 		url := joinOpenAIURL(base, pe.path)
 		for _, model := range models {
@@ -312,32 +315,33 @@ func (p *AIPilotService) probeViaUpstream(
 			lastTTFB = ttfb
 			if err != nil {
 				cancel()
-				lastErr = fmt.Sprintf("%s model=%s: %v", pe.name, model, err)
-				// Timeout / transient network: try next model; never treat as fatal fail.
+				msg := fmt.Sprintf("%s model=%s: %v", pe.name, model, err)
+				attempts = append(attempts, msg)
 				if probeErrorIsTransient(err.Error()) {
+					sawTransient = true
 					continue
 				}
 				res.TTFBMs = ttfb
 				res.Verdict = "fail"
-				res.Error = lastErr
+				res.Error = strings.Join(attempts, " | ")
 				return res, true
 			}
-			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 			_ = resp.Body.Close()
 			cancel()
 			if resp.StatusCode >= 300 {
 				msg := fmt.Sprintf("HTTP %d %s model=%s: %s", resp.StatusCode, pe.name, model, truncateStr(string(respBody), 160))
-				lastErr = msg
+				attempts = append(attempts, msg)
 				if isModelNotFoundBody(string(respBody)) || resp.StatusCode == 400 || resp.StatusCode == 404 {
-					continue // next model
+					continue
 				}
 				res.TTFBMs = ttfb
 				if probeHTTPIsTransient(resp.StatusCode) {
-					// 429/502/503/504: keep trying models, then fall through as slow.
+					sawTransient = true
 					continue
 				}
 				res.Verdict = "fail"
-				res.Error = msg
+				res.Error = strings.Join(attempts, " | ")
 				return res, true
 			}
 			res.TTFBMs = ttfb
@@ -352,13 +356,14 @@ func (p *AIPilotService) probeViaUpstream(
 		}
 	}
 	res.TTFBMs = lastTTFB
-	if lastErr == "" {
-		lastErr = "no usable probe model"
+	if len(attempts) == 0 {
+		res.Error = "no usable probe model"
+	} else {
+		res.Error = strings.Join(attempts, " | ")
 	}
-	res.Error = lastErr
-	// Exhausted models: transient upstream (502/503/timeout) is slow, not fail.
-	// fail here would both allow disable AND block enable — the prod ratchet.
-	if probeErrorIsTransient(lastErr) || probeErrorLooksTransientHTTP(lastErr) {
+	// Exhausted models: any timeout/502 on the configured model is slow, not fail.
+	// A later gpt-5 404 must not overwrite that into a hard reject (麻豆 0.1.272).
+	if sawTransient || probeErrorIsTransient(res.Error) || probeErrorLooksTransientHTTP(res.Error) {
 		res.Verdict = "slow"
 	} else {
 		res.Verdict = "fail"
@@ -473,7 +478,13 @@ func resolveActivationProbeModels(cfg AIAutopilotSettings, acc *Account) []strin
 	if len(preferred) == 0 {
 		preferred = []string{"gpt-5.6-sol"}
 	}
-	return mergeProbeModels(preferred, probeModelCandidates(acc))
+	// Operator list is authoritative. Merging account mapping / gpt-5 fallbacks
+	// made a timeout on gpt-5.6-sol fall through to gpt-5 404 and reject enable.
+	_ = acc
+	if len(preferred) > 3 {
+		return preferred[:3]
+	}
+	return preferred
 }
 
 func probeModelCandidates(acc *Account) []string {

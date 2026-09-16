@@ -818,7 +818,7 @@ func (p *AIPilotService) probeViaUpstreamWithKey(
 	}
 	models := resolveActivationProbeModels(cfg, acc)
 	if len(models) == 0 {
-		models = []string{"gpt-5.6-sol", "gpt-5"}
+		models = []string{"gpt-5.6-sol"}
 	}
 	useResponses := true
 	if acc != nil && acc.Extra != nil {
@@ -837,7 +837,7 @@ func (p *AIPilotService) probeViaUpstreamWithKey(
 	var paths []pathSpec
 	if useResponses {
 		paths = []pathSpec{{"/responses", func(m string) map[string]any {
-			return map[string]any{"model": m, "input": "ping", "max_output_tokens": 16, "stream": false}
+			return map[string]any{"model": m, "input": "ping", "max_output_tokens": 16, "stream": true}
 		}}}
 	} else {
 		paths = []pathSpec{{"/chat/completions", func(m string) map[string]any {
@@ -848,6 +848,7 @@ func (p *AIPilotService) probeViaUpstreamWithKey(
 		}}}
 	}
 	var lastErr string
+	sawTransient := false
 	for _, pe := range paths {
 		url := joinOpenAIURL(base, pe.path)
 		for _, model := range models {
@@ -868,10 +869,13 @@ func (p *AIPilotService) probeViaUpstreamWithKey(
 			ttfb := time.Since(start).Milliseconds()
 			if err != nil {
 				cancel()
-				lastErr = err.Error()
+				lastErr = fmt.Sprintf("model=%s: %v", model, err)
+				if probeErrorIsTransient(err.Error()) {
+					sawTransient = true
+				}
 				continue
 			}
-			b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 			resp.Body.Close()
 			cancel()
 			res.TTFBMs = ttfb
@@ -882,17 +886,24 @@ func (p *AIPilotService) probeViaUpstreamWithKey(
 				}
 				return res
 			}
-			lastErr = fmt.Sprintf("HTTP %d %s", resp.StatusCode, truncateStr(string(b), 120))
-			// model not found → try next model
+			lastErr = fmt.Sprintf("HTTP %d model=%s %s", resp.StatusCode, model, truncateStr(string(b), 120))
+			if probeHTTPIsTransient(resp.StatusCode) {
+				sawTransient = true
+				continue
+			}
 			if resp.StatusCode == 404 || strings.Contains(strings.ToLower(string(b)), "model") {
 				continue
 			}
 		}
 	}
-	res.Verdict = "fail"
 	res.Error = lastErr
 	if res.Error == "" {
 		res.Error = "probe failed"
+	}
+	if sawTransient {
+		res.Verdict = "slow"
+	} else {
+		res.Verdict = "fail"
 	}
 	return res
 }

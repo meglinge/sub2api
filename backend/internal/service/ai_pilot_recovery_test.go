@@ -247,14 +247,14 @@ func TestResolveActivationProbeModels_SettingsFirst(t *testing.T) {
 		},
 	}
 	got := resolveActivationProbeModels(cfg, acc)
-	if len(got) == 0 || got[0] != "gpt-5.6-sol" {
-		t.Fatalf("operator setting must be first, got=%v", got)
+	if len(got) != 1 || got[0] != "gpt-5.6-sol" {
+		t.Fatalf("operator list must be exclusive (no mapping/gpt-5 fallbacks), got=%v", got)
 	}
 	empty := DefaultAIAutopilotSettings()
 	empty.ActivationProbeModels = ""
 	got = resolveActivationProbeModels(empty.Normalize(), &Account{})
-	if len(got) == 0 || got[0] != "gpt-5.6-sol" {
-		t.Fatalf("empty setting must default to gpt-5.6-sol, got=%v", got)
+	if len(got) != 1 || got[0] != "gpt-5.6-sol" {
+		t.Fatalf("empty setting must default to gpt-5.6-sol only, got=%v", got)
 	}
 }
 
@@ -304,7 +304,7 @@ func TestProbeViaUpstream_RetriesModelNotFound(t *testing.T) {
 	p := &AIPilotService{HTTP: srv.Client()}
 	cfg := DefaultAIAutopilotSettings()
 	cfg.ActivationProbeMaxTtfbMs = 0
-	cfg.ActivationProbeModels = "nope-model"
+	cfg.ActivationProbeModels = "nope-model, gpt-5.6-sol"
 	acc := &Account{
 		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "sk-x", "base_url": srv.URL},
@@ -323,6 +323,61 @@ func TestProbeViaUpstream_RetriesModelNotFound(t *testing.T) {
 	if !strings.Contains(res.Reason, "via=responses") {
 		t.Fatalf("expected responses path, reason=%q", res.Reason)
 	}
+}
+
+func TestProbeViaUpstream_TimeoutOnConfiguredModelIsSlowNotGPT5(t *testing.T) {
+	t.Parallel()
+	var tried []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body struct {
+			Model  string `json:"model"`
+			Stream bool   `json:"stream"`
+		}
+		_ = json.Unmarshal(raw, &body)
+		tried = append(tried, body.Model)
+		if !body.Stream {
+			t.Errorf("responses probe must stream, model=%s", body.Model)
+		}
+		if body.Model == "gpt-5.6-sol" {
+			time.Sleep(3 * time.Second)
+			return
+		}
+		w.WriteHeader(404)
+		_, _ = io.WriteString(w, `{"error":{"code":"model_not_found","message":"Model \"gpt-5\" is not available for this group"}}`)
+	}))
+	defer srv.Close()
+	p := &AIPilotService{HTTP: srv.Client()}
+	cfg := DefaultAIAutopilotSettings()
+	cfg.ActivationProbeMaxTtfbMs = 0
+	cfg.ActivationProbeModels = "gpt-5.6-sol"
+	acc := &Account{
+		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-x", "base_url": srv.URL},
+		Extra:       map[string]any{"openai_responses_supported": true},
+	}
+	res, ok := p.probeViaUpstream(context.Background(), acc, time.Second, "r", cfg)
+	if !ok {
+		t.Fatal("expected upstream path")
+	}
+	if res.Verdict != "slow" {
+		t.Fatalf("timeout on configured model must be slow, got %s err=%s tried=%v", res.Verdict, res.Error, tried)
+	}
+	if strings.Contains(res.Error, "gpt-5:") || containsString(tried, "gpt-5") {
+		t.Fatalf("must not fall through to gpt-5, tried=%v err=%s", tried, res.Error)
+	}
+	if !strings.Contains(res.Error, "gpt-5.6-sol") {
+		t.Fatalf("error should name configured model, err=%s", res.Error)
+	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, s := range items {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestProbeViaUpstream_503IsSlowNotFail(t *testing.T) {
