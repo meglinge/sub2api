@@ -137,8 +137,14 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 			headers.Set("conversation_id", sessionResolution.ConversationID)
 		}
 	}
-	if state := strings.TrimSpace(turnState); state != "" {
-		headers.Set(openAIWSTurnStateHeader, state)
+	handshakeTurnState := strings.TrimSpace(turnState)
+	if account != nil {
+		if stored := account.GetCodexTurnState(strings.TrimSpace(routingModel)); stored != "" {
+			handshakeTurnState = stored
+		}
+	}
+	if handshakeTurnState != "" {
+		headers.Set(openAIWSTurnStateHeader, handshakeTurnState)
 	}
 	if metadata := strings.TrimSpace(turnMetadata); metadata != "" {
 		headers.Set(openAIWSTurnMetadataHeader, metadata)

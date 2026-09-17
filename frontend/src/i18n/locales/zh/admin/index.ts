@@ -8,6 +8,7 @@ import audit from './audit'
 import promptAudit from './promptAudit'
 import autopilot from './autopilot'
 import plugins from './plugins'
+import codexTurnState from './codexTurnState'
 
 export default {
   ...overview,
@@ -20,4 +21,5 @@ export default {
   ...promptAudit,
   ...autopilot,
   ...plugins,
+  ...codexTurnState,
 }

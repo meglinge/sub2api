@@ -243,6 +243,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, errors.New("openai ws v1 is temporarily unsupported; use ws v2")
 	}
 	if passthroughEnabled {
+		preparedBody, prepareErr := s.prepareCodexTurnState(ctx, c, account, body)
+		if prepareErr != nil {
+			return nil, prepareErr
+		}
+		body = preparedBody
 		attemptImageIntentInvalidated := false
 		if isCodexCLI && codexImageGenerationExplicitToolPolicy == codexImageGenerationExplicitToolPolicyStrip {
 			strippedBody, changed, stripErr := stripOpenAIImageGenerationToolsFromRawPayload(body)
@@ -738,6 +743,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, err
 	}
 	SetOpsUpstreamModel(c, upstreamModel)
+
+	if mappedBody, prepareErr := s.prepareCodexTurnState(ctx, c, account, body); prepareErr != nil {
+		return nil, prepareErr
+	} else {
+		body = mappedBody
+	}
 
 	// 命中 WS 时仅走 WebSocket Mode；不再自动回退 HTTP。
 	if wsDecision.Transport == OpenAIUpstreamTransportResponsesWebsocketV2 {
@@ -1371,6 +1382,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// 客户端回带的 x-codex-turn-state 若已知由其他账号铸造（failover 换号），
 	// 剥离后再出站——异账号 blob 与本账号的（指纹收敛后）出站身份自相矛盾。
 	s.guardOpenAICodexTurnStateEcho(c, account, req.Header)
+	s.injectStoredCodexTurnStateHeaders(ctx, account, strings.TrimSpace(gjson.GetBytes(body, "model").String()), req.Header)
 	if account.UsesOpenAICodexProtocol() {
 		compatMessagesBridge := isOpenAICompatMessagesBridgeContext(c) || isOpenAICompatMessagesBridgeBody(body)
 		// 清除客户端透传的 session 头，后续用隔离后的值重新设置，防止跨用户会话碰撞。

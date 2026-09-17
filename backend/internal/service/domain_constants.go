@@ -541,6 +541,8 @@ const (
 	SettingKeyOpenAIImagesOAuthUnavailableCooldownSettings = "openai_images_oauth_unavailable_cooldown_settings"
 	// SettingKeyOpenAIAPIKeyHealthBreakerSettings stores the opt-in OpenAI pool API-key breaker config.
 	SettingKeyOpenAIAPIKeyHealthBreakerSettings = "openai_apikey_health_breaker_settings"
+	// SettingKeyCodexTurnStateCacheSettings stores last-hop X-Codex-Turn-State anti-degradation cache config.
+	SettingKeyCodexTurnStateCacheSettings = "codex_turn_state_cache_settings"
 
 	// =========================
 	// Stream Timeout Handling

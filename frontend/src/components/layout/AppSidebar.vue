@@ -278,6 +278,21 @@ const DashboardIcon = {
     )
 }
 
+const BrainIcon = {
+  render: () =>
+    h(
+      'svg',
+      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
+      [
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          d: 'M8.25 7.5A3.75 3.75 0 0112 3.75 3.75 3.75 0 0115.75 7.5v.188c1.53.27 2.25 1.36 2.25 2.812 0 .75-.23 1.42-.62 1.97.78.55 1.12 1.5.87 2.41-.3 1.08-1.32 1.87-2.5 1.87H8.25c-1.18 0-2.2-.79-2.5-1.87-.25-.91.09-1.86.87-2.41A3.24 3.24 0 016 10.5c0-1.452.72-2.542 2.25-2.812V7.5zM9 16.5v2.25m6-2.25v2.25M9.75 21h4.5'
+        })
+      ]
+    )
+}
+
 const KeyIcon = {
   render: () =>
     h(
@@ -775,6 +790,7 @@ const adminNavItems = computed((): NavItem[] => {
     },
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
+    { path: '/admin/codex-turn-state', label: t('nav.codexTurnState'), icon: BrainIcon },
     { path: '/admin/autopilot', label: t('nav.autopilot'), icon: ChartIcon },
     { path: '/admin/plugins', label: t('nav.plugins'), icon: PluginIcon, featureFlag: flagPluginManagement },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },

@@ -57,6 +57,7 @@ func (s *OpenAIGatewayService) relayOpenAICodexTurnState(c *gin.Context, account
 	}
 	c.Writer.Header().Set(canonical, state)
 	s.noteOpenAICodexTurnStateProvenance(c, account)
+	s.observeInboundCodexTurnState(account, upstream)
 }
 
 // stageOpenAICodexTurnState 将上游 turn-state 暂存到延迟提交的响应头集合
