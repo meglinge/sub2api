@@ -433,6 +433,14 @@ func isOpenAIHTTPUpstreamAccessStateError(_ int, _ string, body []byte) bool {
 	return isOpenAIUpstreamAccessStateError("", body)
 }
 
+// openAIAPIKeyPaymentRequiredSkipsAccessStatePenalty reports whether a 402
+// should skip the credential-death fast path. Aggregator/API-key 402s are
+// recoverable billing blips; treating wrapped access-state codes as a dead
+// workspace permanently disables the account and requires a manual recover.
+func openAIAPIKeyPaymentRequiredSkipsAccessStatePenalty(account *Account, statusCode int) bool {
+	return statusCode == http.StatusPaymentRequired && account != nil && !isOpenAIOAuthAccount(account)
+}
+
 func openAICapacityShedClientMessage(upstreamMsg string, body []byte) string {
 	for _, candidate := range []string{
 		upstreamMsg,

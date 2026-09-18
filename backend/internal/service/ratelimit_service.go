@@ -89,6 +89,10 @@ const (
 	openAI403CooldownMinutesDefault = 10
 	openAI403DisableThreshold       = 3
 	openAI403CounterWindowMinutes   = 180
+	// Aggregator / API-key 402s are recoverable billing blips. Park the account
+	// instead of SetError so scheduling resumes without a manual recover.
+	openAI402CooldownMinutesDefault = 30
+	paymentRequiredReasonPrefix     = "payment_required"
 )
 
 // NewRateLimitService 创建RateLimitService实例
@@ -333,12 +337,15 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 
 	// 池模式默认不标记本地账号状态；但管理员显式配置的临时不可调度规则优先。
 	// 401 保留现有认证错误语义，不在这里改变池模式的认证处理。
+	// 402 是可恢复的余额/计费问题：即使上游是中转池，也应临时停调而不是继续选中该号。
 	if account.IsPoolMode() && !customErrorCodesEnabled {
-		if statusCode != http.StatusUnauthorized && s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
+		if statusCode != http.StatusUnauthorized && statusCode != http.StatusPaymentRequired && s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
 			return true
 		}
-		slog.Info("pool_mode_error_skipped", "account_id", account.ID, "status_code", statusCode)
-		return false
+		if statusCode != http.StatusPaymentRequired {
+			slog.Info("pool_mode_error_skipped", "account_id", account.ID, "status_code", statusCode)
+			return false
+		}
 	}
 
 	// apikey 类型账号：检查自定义错误码配置
@@ -513,19 +520,16 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			shouldDisable = true
 			break
 		}
-		// OpenAI: deactivated_workspace 表示工作区已停用，直接标记 error
-		if account.Platform == PlatformOpenAI && gjson.GetBytes(responseBody, "detail.code").String() == "deactivated_workspace" {
+		// OpenAI OAuth: deactivated_workspace 表示 ChatGPT Team 工作区已停用，直接标记 error。
+		// 中转 apikey 即使 body 带同类 code，也只是上游池里某条渠道挂了，不能永久禁用本号。
+		if isOpenAITerminalDeactivatedWorkspace402(account, responseBody) {
 			msg := "Workspace deactivated (402): workspace has been deactivated"
 			s.handleAuthError(ctx, account, msg)
 			shouldDisable = true
 			break
 		}
-		// 支付要求：余额不足或计费问题，停止调度
-		msg := "Payment required (402): insufficient balance or billing issue"
-		if upstreamMsg != "" {
-			msg = "Payment required (402): " + upstreamMsg
-		}
-		s.handleAuthError(ctx, account, msg)
+		// 其余 402（余额不足、Payment Required、中转偶发计费错误）：临时停调，到期自动恢复。
+		s.handlePaymentRequiredTempUnschedulable(ctx, account, upstreamMsg)
 		shouldDisable = true
 	case 403:
 		logger.LegacyPrintf(
@@ -943,6 +947,39 @@ func (s *RateLimitService) handleAuthError(ctx context.Context, account *Account
 		return
 	}
 	slog.Warn("account_disabled_auth_error", "account_id", account.ID, "error", errorMsg)
+}
+
+func isOpenAITerminalDeactivatedWorkspace402(account *Account, responseBody []byte) bool {
+	return isOpenAIOAuthAccount(account) &&
+		gjson.GetBytes(responseBody, "detail.code").String() == "deactivated_workspace"
+}
+
+func paymentRequiredTempUnschedReason(upstreamMsg string) string {
+	if msg := strings.TrimSpace(upstreamMsg); msg != "" {
+		return paymentRequiredReasonPrefix + ": " + msg
+	}
+	return paymentRequiredReasonPrefix + ": Payment required (402)"
+}
+
+// handlePaymentRequiredTempUnschedulable parks the account for a billing 402.
+// Unlike handleAuthError, status stays active and scheduling resumes when the
+// cooldown expires — aggregator Payment Required blips must not need a manual recover.
+func (s *RateLimitService) handlePaymentRequiredTempUnschedulable(ctx context.Context, account *Account, upstreamMsg string) {
+	if account == nil || s.accountRepo == nil {
+		return
+	}
+	until := time.Now().Add(time.Duration(openAI402CooldownMinutesDefault) * time.Minute)
+	reason := paymentRequiredTempUnschedReason(upstreamMsg)
+	s.notifyAccountSchedulingBlocked(account, until, "payment_required")
+	if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, reason); err != nil {
+		slog.Warn("payment_required_set_temp_unschedulable_failed", "account_id", account.ID, "error", err)
+		return
+	}
+	slog.Info("account_payment_required_temp_unschedulable",
+		"account_id", account.ID,
+		"platform", account.Platform,
+		"until", until.UTC(),
+	)
 }
 
 func buildForbiddenErrorMessage(prefix string, upstreamMsg string, responseBody []byte, fallback string) string {

@@ -141,6 +141,29 @@ func TestOpenAIStreamEchoedAccessStateMessageDoesNotDisableOrFailover(t *testing
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 }
 
+func TestOpenAIAPIKey402AccessStateDoesNotPermanentlyDisable(t *testing.T) {
+	repo := &openAIAuthPolicyAccountRepo{}
+	rateLimits := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	svc := &OpenAIGatewayService{rateLimitService: rateLimits}
+	rateLimits.SetAccountRuntimeBlocker(svc)
+	account := &Account{
+		ID:          6509,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"pool_mode": true},
+	}
+	body := []byte(`{"error":{"code":"organization_deactivated","message":"Payment Required"}}`)
+
+	require.True(t, isOpenAIHTTPUpstreamAccessStateError(http.StatusPaymentRequired, "", body))
+	require.True(t, openAIAPIKeyPaymentRequiredSkipsAccessStatePenalty(account, http.StatusPaymentRequired))
+	require.True(t, svc.handleOpenAIAccountUpstreamError(context.Background(), account, http.StatusPaymentRequired, nil, body))
+	require.Zero(t, repo.setErrorCalls)
+	require.Equal(t, 1, repo.tempCalls)
+	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+}
+
 func TestOpenAIHTTPAccessStateTrustsStructuredCode(t *testing.T) {
 	repo := &openAIStream403AccountRepo{}
 	svc := &OpenAIGatewayService{rateLimitService: &RateLimitService{accountRepo: repo}}

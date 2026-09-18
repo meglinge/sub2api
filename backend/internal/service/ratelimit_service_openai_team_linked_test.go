@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
@@ -22,6 +23,8 @@ type teamLinkedAccountRepoStub struct {
 	setErrorIDs  []int64
 	setErrorMsgs map[int64]string
 	failSetError map[int64]error
+	tempIDs      []int64
+	tempReasons  map[int64]string
 }
 
 // ListByPlatform 镜像真实仓库语义：仅返回该平台的 active 账户。
@@ -48,6 +51,15 @@ func (r *teamLinkedAccountRepoStub) SetError(ctx context.Context, id int64, erro
 		r.setErrorMsgs = make(map[int64]string)
 	}
 	r.setErrorMsgs[id] = errorMsg
+	return nil
+}
+
+func (r *teamLinkedAccountRepoStub) SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error {
+	r.tempIDs = append(r.tempIDs, id)
+	if r.tempReasons == nil {
+		r.tempReasons = make(map[int64]string)
+	}
+	r.tempReasons[id] = reason
 	return nil
 }
 
@@ -121,8 +133,10 @@ func TestTeamLinkedError_GenericPaymentErrorDoesNotFanout(t *testing.T) {
 
 	rl.HandleUpstreamError(context.Background(), &trigger, http.StatusPaymentRequired, http.Header{}, []byte(`{"error":{"message":"insufficient balance"}}`))
 
-	require.Equal(t, []int64{1}, repo.setErrorIDs)
-	require.Contains(t, repo.setErrorMsgs[1], "Payment required (402)")
+	require.Empty(t, repo.setErrorIDs)
+	require.Equal(t, []int64{1}, repo.tempIDs)
+	require.Contains(t, repo.tempReasons[1], "payment_required")
+	require.Contains(t, repo.tempReasons[1], "insufficient balance")
 	require.Zero(t, repo.listCalls)
 }
 
@@ -148,7 +162,9 @@ func TestTeamLinkedError_APIKeyTriggerDoesNotFanout(t *testing.T) {
 
 	rl.HandleUpstreamError(context.Background(), &trigger, http.StatusPaymentRequired, http.Header{}, []byte(teamLinkedDeactivatedBody))
 
-	require.Equal(t, []int64{4}, repo.setErrorIDs)
+	require.Empty(t, repo.setErrorIDs)
+	require.Equal(t, []int64{4}, repo.tempIDs)
+	require.Contains(t, repo.tempReasons[4], paymentRequiredReasonPrefix)
 	require.Zero(t, repo.listCalls)
 }
 

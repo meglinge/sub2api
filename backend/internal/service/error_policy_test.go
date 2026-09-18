@@ -395,6 +395,31 @@ func TestHandleUpstreamError_PoolModePolicies(t *testing.T) {
 		require.Equal(t, 1, repo.tempCalls)
 	})
 
+	t.Run("pool_mode_402_temporarily_unschedules_instead_of_skipping", func(t *testing.T) {
+		repo := &errorPolicyRepoStub{}
+		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		account := &Account{
+			ID:       34,
+			Type:     AccountTypeAPIKey,
+			Platform: PlatformOpenAI,
+			Credentials: map[string]any{
+				"pool_mode": true,
+			},
+		}
+
+		shouldDisable := svc.HandleUpstreamError(
+			context.Background(),
+			account,
+			http.StatusPaymentRequired,
+			http.Header{},
+			[]byte(`{"error":{"message":"Payment Required"}}`),
+		)
+
+		require.True(t, shouldDisable)
+		require.Equal(t, 0, repo.setErrCalls)
+		require.Equal(t, 1, repo.tempCalls)
+	})
+
 	t.Run("pool_mode_temp_rule_miss_still_skips", func(t *testing.T) {
 		repo := &errorPolicyRepoStub{}
 		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
