@@ -46,9 +46,6 @@ func RegisterAdminRoutes(
 		// 账号管理
 		registerAccountRoutes(admin, h, stepUpAuth)
 
-		// Codex turn-state 智力缓存
-		registerCodexTurnStateRoutes(admin, h)
-
 		// 公告管理
 		registerAnnouncementRoutes(admin, h)
 
@@ -456,22 +453,6 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/exchange-setup-token-code", h.Admin.OAuth.ExchangeSetupTokenCode)
 		accounts.POST("/cookie-auth", h.Admin.OAuth.CookieAuth)
 		accounts.POST("/setup-token-cookie-auth", h.Admin.OAuth.SetupTokenCookieAuth)
-	}
-}
-
-func registerCodexTurnStateRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
-	if h == nil || h.Admin == nil || h.Admin.CodexTurnState == nil {
-		return
-	}
-	turn := admin.Group("/codex-turn-states")
-	{
-		turn.GET("/config", h.Admin.CodexTurnState.GetConfig)
-		turn.PUT("/config", h.Admin.CodexTurnState.UpdateConfig)
-		turn.GET("/overview", h.Admin.CodexTurnState.Overview)
-		turn.GET("/events", h.Admin.CodexTurnState.Events)
-		turn.POST("/refresh", h.Admin.CodexTurnState.Refresh)
-		turn.POST("/clear-cooldown", h.Admin.CodexTurnState.ClearCooldown)
-		turn.POST("/invalidate", h.Admin.CodexTurnState.Invalidate)
 	}
 }
 

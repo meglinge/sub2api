@@ -176,7 +176,6 @@ export default {
     modelPlaza: 'Model Plaza',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
-    codexTurnState: 'Codex Intelligence',
     autopilot: 'AI Autopilot',
     plugins: 'Plugins',
     proxies: 'Proxies',

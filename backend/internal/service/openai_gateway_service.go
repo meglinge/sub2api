@@ -489,9 +489,6 @@ type OpenAIGatewayService struct {
 	// 剥离跨账号回带（openai_codex_turn_state.go）。
 	openaiCodexTurnStateOrigins sync.Map
 	openaiCodexTurnStateWrites  atomic.Uint64
-
-	codexTurnStateCacheOnce sync.Once
-	codexTurnStateCache     *codexTurnStateCache
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService

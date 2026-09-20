@@ -44,7 +44,6 @@ type AdminHandlers struct {
 	Compliance             *admin.ComplianceHandler
 	AuditLog               *admin.AuditLogHandler
 	AIPilot                *admin.AIPilotHandler
-	CodexTurnState         *admin.CodexTurnStateHandler
 }
 
 // Handlers contains all HTTP handlers
