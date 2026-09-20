@@ -323,7 +323,7 @@ func TestBulkUpdateProbeEligibilityMismatchRollsBack(t *testing.T) {
 
 	enabled := true
 	mock.ExpectBegin()
-	mock.ExpectExec(`(?s)UPDATE accounts SET extra = .* WHERE id = ANY\(\$2\) AND deleted_at IS NULL AND type = \$3`).
+	mock.ExpectExec(`(?s)UPDATE accounts SET manual_touched_at = NOW\(\), extra = .* WHERE id = ANY\(\$2\) AND deleted_at IS NULL AND type = \$3`).
 		WithArgs(sqlmock.AnyArg(), `{27,28}`, service.AccountTypeAPIKey).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectRollback()
@@ -477,7 +477,7 @@ func updatedAccountRows(id int64, extra string) *sqlmock.Rows {
 	return sqlmock.NewRows(dbaccount.Columns).AddRow(
 		id, now, now, nil, "test", nil, service.PlatformOpenAI, service.AccountTypeAPIKey,
 		[]byte(`{"api_key":"sk-test"}`), []byte(extra), nil, nil, 1, nil, 1, 1.0,
-		service.StatusActive, nil, nil, nil, false, true, nil, nil, nil, nil, nil, nil,
+		service.StatusActive, nil, nil, nil, false, true, false, true, false, 10, nil, nil, nil, nil, nil, nil, nil,
 		nil, nil, nil, service.QuotaDimensionGlobal,
 	)
 }

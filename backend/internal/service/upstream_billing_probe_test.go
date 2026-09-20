@@ -223,7 +223,11 @@ func newUpstreamBillingProbeTestService(
 		AllowInsecureHTTP: true,
 	}}}
 	accountTestService := &AccountTestService{accountRepo: repo, httpUpstream: upstream, cfg: cfg}
-	return NewUpstreamBillingProbeService(repo, accountTestService, NewSettingService(settingRepo, cfg))
+	svc := NewUpstreamBillingProbeService(repo, accountTestService, NewSettingService(settingRepo, cfg))
+	svc.moneyProbeHTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusNotFound, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: req}, nil
+	})}
+	return svc
 }
 
 func TestUpstreamBillingProbeSettingsDefaultsAndValidation(t *testing.T) {
@@ -233,7 +237,7 @@ func TestUpstreamBillingProbeSettingsDefaultsAndValidation(t *testing.T) {
 	settings, err := settingsService.GetUpstreamBillingProbeSettings(context.Background())
 	require.NoError(t, err)
 	require.True(t, settings.Enabled)
-	require.Equal(t, 30, settings.IntervalMinutes)
+	require.Equal(t, 5, settings.IntervalMinutes)
 
 	err = settingsService.SetUpstreamBillingProbeSettings(context.Background(), &UpstreamBillingProbeSettings{
 		Enabled:         false,
@@ -261,7 +265,7 @@ func TestUpstreamBillingProbeSettingsDefaultsAndValidation(t *testing.T) {
 	settings, err = settingsService.GetUpstreamBillingProbeSettings(context.Background())
 	require.NoError(t, err)
 	require.False(t, settings.Enabled)
-	require.Equal(t, 30, settings.IntervalMinutes)
+	require.Equal(t, 5, settings.IntervalMinutes)
 
 	repo.values[SettingKeyUpstreamBillingProbeSettings] = `{"enabled":`
 	settings, err = settingsService.GetUpstreamBillingProbeSettings(context.Background())
@@ -321,9 +325,9 @@ func TestUpstreamBillingProbeSuccessPersistsSanitizedSnapshot(t *testing.T) {
 	require.NotNil(t, snapshot.ReceivedAt)
 	require.Equal(t, fixedNow, *snapshot.ReceivedAt)
 	require.NotNil(t, snapshot.FreshUntil)
-	require.Equal(t, fixedNow.Add(time.Hour), *snapshot.FreshUntil)
-	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(24*time.Minute)))
-	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(36*time.Minute)))
+	require.Equal(t, fixedNow.Add(10*time.Minute), *snapshot.FreshUntil)
+	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(4*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(6*time.Minute)))
 	// 写回的是不含高峰因子的 resolved 倍率（0.6），不是探测那一刻含高峰的
 	// effective 倍率（0.9）——否则一个探测周期的峰值会被冻结进静态列。
 	require.NotNil(t, account.RateMultiplier)
@@ -794,7 +798,7 @@ func TestUpstreamBillingProbeFailurePreservesLastSuccessAndRetryAfter(t *testing
 	require.Equal(t, previous.Data, snapshot.Data)
 	require.Equal(t, previous.ReceivedAt, snapshot.ReceivedAt)
 	require.NotNil(t, snapshot.FreshUntil)
-	require.Equal(t, receivedAt.Add(time.Hour), *snapshot.FreshUntil)
+	require.Equal(t, receivedAt.Add(10*time.Minute), *snapshot.FreshUntil)
 	require.Equal(t, 2, snapshot.FailureCount)
 	require.Equal(t, "http_error", snapshot.LastError)
 	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(4*time.Hour)))
@@ -889,14 +893,14 @@ func TestUpstreamBillingProbeEmptyResponseIsPersistedAsFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, UpstreamBillingProbeStatusFailed, snapshot.Status)
 	require.Equal(t, "empty_response", snapshot.LastError)
-	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(24*time.Minute)))
-	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(36*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(4*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(6*time.Minute)))
 
 	snapshot, err = svc.ProbeAccount(context.Background(), account.ID)
 	require.NoError(t, err)
 	require.Equal(t, 2, snapshot.FailureCount)
-	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(24*time.Minute)))
-	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(36*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(4*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(6*time.Minute)))
 }
 
 func TestUpstreamBillingProbeUnsupportedAndAccountToggle(t *testing.T) {
@@ -925,15 +929,15 @@ func TestUpstreamBillingProbeUnsupportedAndAccountToggle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Status)
 	require.Equal(t, "unsupported", snapshot.LastError)
-	// unsupported 走加长退避：默认 30 分钟 interval ⇒ (24~36) * 8 分钟。
-	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(192*time.Minute)))
-	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(288*time.Minute)))
+	// unsupported 走加长退避：默认 5 分钟 interval ⇒ (4~6) * 8 分钟。
+	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(32*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(48*time.Minute)))
 
 	snapshot, err = svc.ProbeAccount(context.Background(), account.ID)
 	require.NoError(t, err)
 	require.Equal(t, 2, snapshot.FailureCount)
-	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(192*time.Minute)))
-	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(288*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(32*time.Minute)))
+	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(48*time.Minute)))
 	require.NoError(t, svc.SetAccountEnabled(context.Background(), account.ID, false))
 	require.Equal(t, false, account.Extra[UpstreamBillingProbeEnabledExtraKey])
 	require.Equal(t, false, account.Extra[UpstreamBillingRateSyncEnabledExtraKey])

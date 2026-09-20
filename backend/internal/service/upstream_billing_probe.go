@@ -250,6 +250,7 @@ type UpstreamBillingProbeService struct {
 	accountRepo        AccountRepository
 	accountTestService *AccountTestService
 	settingService     *SettingService
+	moneyProbeHTTP     *http.Client
 
 	parentCtx    context.Context
 	parentCancel context.CancelFunc
@@ -736,9 +737,13 @@ func (s *UpstreamBillingProbeService) refreshAutopilotMoney(ctx context.Context,
 		return
 	}
 	// Reuse the same HTTP + extra-write path as AI autopilot (no separate wire).
+	client := s.moneyProbeHTTP
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}}
+	}
 	pilot := &AIPilotService{
 		Accounts: s.accountRepo,
-		HTTP:     &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}},
+		HTTP:     client,
 	}
 	// Force re-probe so manual clicks are never blocked by 5m soft cache.
 	_, _, _, _ = pilot.ForceResolveAccountMoney(ctx, account)
@@ -1162,7 +1167,7 @@ func IsUpstreamBillingProbeIdentity(platform, accountType string) bool {
 	}
 	switch platform {
 	case PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformGrok,
-		PlatformKimi, PlatformZhipu, PlatformDeepseek:
+		PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo:
 		return true
 	default:
 		return false
@@ -1200,6 +1205,7 @@ var upstreamBillingProbeOfficialAPIDomains = []string{
 	"kimi.com",
 	"bigmodel.cn",
 	"deepseek.com",
+	"opencode.ai",
 }
 
 func upstreamBillingProbeTargetIsOfficialAPI(baseURL string) bool {

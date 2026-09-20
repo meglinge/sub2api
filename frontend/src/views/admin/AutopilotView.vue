@@ -802,7 +802,7 @@ function ensureScoreWeights(cfg: AIAutopilotSettings): AIAutopilotSettings {
 function normalizeSettingsForSave(cfg: AIAutopilotSettings): AIAutopilotSettings {
   const next = ensureScoreWeights({ ...cfg })
   for (const item of opSwitches) {
-    ;(next as any)[item.key] = (cfg as any)[item.key] !== false
+    (next as any)[item.key] = (cfg as any)[item.key] !== false
   }
   next.enabled = !!next.enabled
   next.managed_group_ids = Array.isArray(next.managed_group_ids) ? next.managed_group_ids : []
