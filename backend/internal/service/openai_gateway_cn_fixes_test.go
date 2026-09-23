@@ -129,7 +129,7 @@ func TestHandle403_CNProviderHTMLBodySkipsAccountPenalty(t *testing.T) {
 	}
 }
 
-func TestHandle403_CNProviderStructured403TempUnschedulableFirstHit(t *testing.T) {
+func TestHandle403_CNProviderStructured403BelowThresholdStaysSchedulable(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	counter := &openAI403CounterCacheStub{counts: []int64{1}}
 	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
@@ -145,9 +145,8 @@ func TestHandle403_CNProviderStructured403TempUnschedulableFirstHit(t *testing.T
 	)
 
 	require.True(t, shouldDisable)
-	require.Equal(t, 0, repo.setErrorCalls, "首次结构化 403 应临时停调而非永久禁用")
-	require.Equal(t, 1, repo.tempCalls)
-	require.Contains(t, repo.lastTempReason, "(1/3)")
+	require.Equal(t, 0, repo.setErrorCalls, "未达阈值不得永久禁用")
+	require.Equal(t, 0, repo.tempCalls, "未达阈值不得临时停调")
 }
 
 func TestIsCNProviderConcurrencyLimit403_ExactClassification(t *testing.T) {

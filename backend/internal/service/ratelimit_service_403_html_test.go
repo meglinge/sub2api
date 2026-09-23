@@ -102,18 +102,17 @@ func TestHandleUpstreamError_OpenAIHTML403RepeatedNeverEscalates(t *testing.T) {
 	h.requireNoAccountPenalty(t)
 }
 
-// 对照不变式：真正的结构化 JSON 403 是账号级证据，处罚链路必须原样保留。
-// 缺了这组断言，上面的跳过逻辑一旦写宽就会把真实的封号 403 也放过去。
+// 对照不变式：结构化 JSON 403 未达阈值只换号，不临时停调；
+// 连续达到阈值仍永久禁用。HTML 豁免不能把这条升级路径也跳过。
 func TestHandleUpstreamError_OpenAIStructured403StillPenalizes(t *testing.T) {
-	t.Run("first_hit_temp_unschedulable", func(t *testing.T) {
+	t.Run("below_threshold_stays_schedulable", func(t *testing.T) {
 		h := newOpenAI403TestHarness(t, 503, 1)
 
 		require.True(t, h.handle(`{"error":{"message":"Your account is not authorized"}}`))
 		require.Equal(t, 1, h.counter.increments)
-		require.Equal(t, 1, h.repo.tempCalls)
+		require.Equal(t, 0, h.repo.tempCalls)
 		require.Equal(t, 0, h.repo.setErrorCalls)
-		require.Contains(t, h.repo.lastTempReason, "Your account is not authorized")
-		require.Len(t, h.blocker.accounts, 1)
+		require.Empty(t, h.blocker.accounts)
 	})
 
 	t.Run("threshold_disables", func(t *testing.T) {
@@ -124,12 +123,14 @@ func TestHandleUpstreamError_OpenAIStructured403StillPenalizes(t *testing.T) {
 		require.Contains(t, h.repo.lastErrorMsg, "workspace forbidden by policy")
 	})
 
-	// 非 HTML 的非结构化响应（纯文本网关错误）不在本次放行范围内，维持原有处罚。
-	t.Run("plain_text_body_unchanged", func(t *testing.T) {
+	// 非 HTML 的纯文本 403（例如 Cloudflare "error code: 1010"）同样不临时停调。
+	t.Run("plain_text_body_stays_schedulable", func(t *testing.T) {
 		h := newOpenAI403TestHarness(t, 505, 1)
 
-		require.True(t, h.handle("Forbidden"))
-		require.Equal(t, 1, h.repo.tempCalls)
+		require.True(t, h.handle("error code: 1010"))
+		require.Equal(t, 1, h.counter.increments)
+		require.Equal(t, 0, h.repo.tempCalls)
+		require.Equal(t, 0, h.repo.setErrorCalls)
 	})
 }
 

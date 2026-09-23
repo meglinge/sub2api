@@ -1039,7 +1039,7 @@ func (s *RateLimitService) handle403(ctx context.Context, account *Account, upst
 	}
 	// 国产供应商与 openai 同口径:HTML 403(CDN/代理拦截页)不构成账号失效证据,
 	// 且 403 在 failover 状态集里会被逐账号重放——直接 SetError 会让一个坏请求/
-	// 一层坏代理连环永久禁用整组账号。走 HTML 豁免 + N 次累计 + 临时冷却。
+	// 一层坏代理连环永久禁用整组账号。走 HTML 豁免；未达阈值只换号，不临时停调。
 	if account.Platform == PlatformOpenAI || IsCNProvider(account.Platform) || account.IsOpenCodeGo() {
 		return s.handleOpenAI403(ctx, account, upstreamMsg, responseBody)
 	}
@@ -1059,9 +1059,10 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 	// {"error":{...}} 结构化错误。这类响应描述的是「这条链路 / 这个端点被挡了」，
 	// 不构成账号凭据或权限失效的证据——例如无效的 /v1/responses 子路径（#5334）。
 	//
-	// 据此写账号状态会把请求级错误放大成账号级处罚：首次即 temp-unschedulable，
-	// 连续 openAI403DisableThreshold 次直接永久禁用；而 403 又在 failover 状态集里，
-	// 同一个坏请求会被逐个账号重放，足以把整组账号打下线。
+	// 未达 openAI403DisableThreshold 只换号，不写临时停调。边缘 403（例如
+	// Cloudflare 1010）会反复出现，临时停调会把还能用的号摘出池子。
+	// 403 又在 failover 状态集里，同一个坏请求会被逐个账号重放，
+	// 未达阈值就写账号状态足以把整组账号打下线。
 	//
 	// 与既有口径一致：count_tokens 路径的 isOpenAIOAuthInputTokensUnsupported 已把
 	// 「HTML 403 page without a structured error」按端点级响应处理；
@@ -1102,21 +1103,14 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 		return true
 	}
 
-	until := time.Now().Add(time.Duration(openAI403CooldownMinutesDefault) * time.Minute)
-	reason := fmt.Sprintf("OpenAI 403 temporary cooldown (%d/%d): %s", count, openAI403DisableThreshold, msg)
-	s.notifyAccountSchedulingBlocked(account, until, "openai_403_temp")
-	if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, reason); err != nil {
-		slog.Warn("openai_403_set_temp_unschedulable_failed", "account_id", account.ID, "error", err)
-		s.handleAuthError(ctx, account, msg)
-		return true
-	}
-
+	// 未达永久禁用阈值：本次请求换号，账号保持可调度。
+	// Cloudflare 1010 这类边缘 403 会反复出现，临时停调会把还能用的号摘出池子。
 	slog.Warn(
-		"openai_403_temp_unschedulable",
+		"openai_403_below_threshold",
 		"account_id", account.ID,
-		"until", until,
 		"count", count,
 		"threshold", openAI403DisableThreshold,
+		"upstream_message", msg,
 	)
 	return true
 }
