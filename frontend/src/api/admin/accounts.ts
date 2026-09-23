@@ -581,7 +581,7 @@ export async function getBatchTodayStats(accountIds: number[]): Promise<BatchTod
   return data
 }
 
-/** Live TTFB/TPS percentiles from recent successful usage_logs (pool-mode / 中转 analog of UR channel table). */
+/** Live TTFB/TPS percentiles from recent successful usage_logs. */
 export interface AccountPerfStats {
   account_id: number
   samples: number

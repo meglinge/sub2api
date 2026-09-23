@@ -131,7 +131,7 @@ export default {
       },
       usageWindowsHint: '“5h / 7d”是上游账号（如 OpenAI ChatGPT、Claude）官方的滚动用量窗口限制，由上游对账号设定，并非 sub2api 配置，也与你映射的模型无关。窗口滚动到期后用量会自动重置，无法在 sub2api 端解除该限制。',
       perf: {
-        ttfbHint: '近 15 分钟成功请求的首字节延迟。上行 p50、下行 p99。池模式中转号最有参考价值。',
+        ttfbHint: '近 15 分钟成功请求的首字节延迟。上行 p50、下行 p99。',
         tpsHint: '近 15 分钟成功请求的生成吞吐（output tokens / 生成段秒数）。上行 p50、下行 p1（尾部最慢）。',
         noSamples: '近 15 分钟没有带 TTFB 的成功请求',
         sampleHint: '基于最近 {n} 条成功请求'

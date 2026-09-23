@@ -258,7 +258,7 @@ export default {
       },
       usageWindowsHint: '"5h / 7d" are the upstream account\'s official rolling usage windows (e.g. OpenAI ChatGPT, Claude). They are imposed by the upstream provider on the account itself — not configured by sub2api, and unrelated to the models you map. Usage resets automatically once each window rolls over, and the limit cannot be lifted from within sub2api.',
       perf: {
-        ttfbHint: 'Time to first token over the last 15 minutes of successful requests. Top p50, bottom p99. Most useful for pool-mode relay accounts.',
+        ttfbHint: 'Time to first token over the last 15 minutes of successful requests. Top p50, bottom p99.',
         tpsHint: 'Generation throughput (output tokens / generation-segment seconds) over the last 15 minutes. Top p50, bottom p1 (slow tail).',
         noSamples: 'No successful requests with TTFB in the last 15 minutes',
         sampleHint: 'Based on the last {n} successful requests'

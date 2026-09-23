@@ -968,18 +968,14 @@ const refreshTodayStatsBatch = async () => {
   }
 }
 
-const isPoolModeAccount = (row: Account): boolean => {
-  if (row.type !== 'apikey') return false
-  const creds = (row.credentials || {}) as Record<string, unknown>
-  return creds.pool_mode === true
-}
-
 const refreshPerfBatch = async () => {
   if (hiddenColumns.has('ttfb') && hiddenColumns.has('tps')) {
     perfLoading.value = false
     return
   }
-  const accountIDs = accounts.value.filter(isPoolModeAccount).map(account => account.id)
+  // 非池模式的中转号（例如只配了 base_url 的 apikey）同样有 first_token_ms。
+  // 只查 pool_mode 会让这些号的 TTFB/TPS 列一直是空的。
+  const accountIDs = accounts.value.map(account => account.id)
   const reqSeq = ++perfReqSeq.value
   if (accountIDs.length === 0) {
     perfByAccountId.value = {}
