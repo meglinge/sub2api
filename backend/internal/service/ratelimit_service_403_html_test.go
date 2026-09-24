@@ -68,6 +68,8 @@ func (h *openAI403TestHarness) requireNoAccountPenalty(t *testing.T) {
 const openAI403HTMLBody = "<!DOCTYPE html>\n<html><head><title>403 Forbidden</title></head>" +
 	"<body><h1>403 Forbidden</h1></body></html>"
 
+const openAI403Cloudflare1010Body = "error code: 1010\n"
+
 func TestHandleUpstreamError_OpenAIHTML403DoesNotPenalizeAccount(t *testing.T) {
 	cases := []struct {
 		name string
@@ -102,8 +104,34 @@ func TestHandleUpstreamError_OpenAIHTML403RepeatedNeverEscalates(t *testing.T) {
 	h.requireNoAccountPenalty(t)
 }
 
+func TestHandleUpstreamError_OpenAICloudflare1010DoesNotPenalizeAccount(t *testing.T) {
+	for _, platform := range []string{PlatformOpenAI, PlatformOpenCodeGo} {
+		t.Run(platform, func(t *testing.T) {
+			repo := &rateLimitAccountRepoStub{}
+			counter := &countingOpenAI403CounterCache{
+				openAI403CounterCacheStub: openAI403CounterCacheStub{counts: []int64{openAI403DisableThreshold}},
+			}
+			blocker := &runtimeBlockRecorder{}
+			svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+			svc.SetOpenAI403CounterCache(counter)
+			svc.SetAccountRuntimeBlocker(blocker)
+			account := &Account{ID: 601, Platform: platform, Type: AccountTypeAPIKey}
+
+			shouldDisable := svc.HandleUpstreamError(
+				context.Background(), account, http.StatusForbidden, http.Header{}, []byte(openAI403Cloudflare1010Body),
+			)
+
+			require.False(t, shouldDisable, "Cloudflare 1010 不得判定账号应下线")
+			require.Equal(t, 0, counter.increments, "Cloudflare 1010 不得递增账号 403 计数")
+			require.Equal(t, 0, repo.setErrorCalls)
+			require.Equal(t, 0, repo.tempCalls)
+			require.Empty(t, blocker.accounts)
+		})
+	}
+}
+
 // 对照不变式：结构化 JSON 403 未达阈值只换号，不临时停调；
-// 连续达到阈值仍永久禁用。HTML 豁免不能把这条升级路径也跳过。
+// 连续达到阈值仍永久禁用。HTML 和 Cloudflare 1010 豁免不能把这条升级路径也跳过。
 func TestHandleUpstreamError_OpenAIStructured403StillPenalizes(t *testing.T) {
 	t.Run("below_threshold_stays_schedulable", func(t *testing.T) {
 		h := newOpenAI403TestHarness(t, 503, 1)
@@ -123,11 +151,11 @@ func TestHandleUpstreamError_OpenAIStructured403StillPenalizes(t *testing.T) {
 		require.Contains(t, h.repo.lastErrorMsg, "workspace forbidden by policy")
 	})
 
-	// 非 HTML 的纯文本 403（例如 Cloudflare "error code: 1010"）同样不临时停调。
+	// 非 HTML、也不是 Cloudflare 1010 的纯文本 403 仍计入次数，但未达阈值不临时停调。
 	t.Run("plain_text_body_stays_schedulable", func(t *testing.T) {
 		h := newOpenAI403TestHarness(t, 505, 1)
 
-		require.True(t, h.handle("error code: 1010"))
+		require.True(t, h.handle("upstream rejected the request"))
 		require.Equal(t, 1, h.counter.increments)
 		require.Equal(t, 0, h.repo.tempCalls)
 		require.Equal(t, 0, h.repo.setErrorCalls)
