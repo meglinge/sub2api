@@ -386,7 +386,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	instructions := gjson.GetBytes(body, "instructions")
 	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
-	if instructionsEmpty && account.UsesOpenAICodexProtocol() && !compatMessagesBridge && !nativeCNResponses {
+	// API Key 上游在 instructions 为空时会自己填一句很短的默认提示词，并在响应里回显。
+	// 客户端会把这句短提示词当成降智。空字段时补上与 OAuth 相同的 Codex base prompt；已有内容不覆盖。
+	if instructionsEmpty && !compatMessagesBridge && !nativeCNResponses &&
+		(account.UsesOpenAICodexProtocol() || account.IsOpenAIApiKey()) {
 		markPatchSet("instructions", defaultCodexSynthInstructions(upstreamModel))
 	}
 	if billingModel != requestedModel {
